@@ -210,8 +210,10 @@ export default function AdminDashboardPage() {
       setIsModalOpen(false);
       resetFormSoal();
       loadData();
-    } catch {
-      setStatusMsg({ text: 'Gagal menyimpan soal', type: 'error' });
+    } catch (err: unknown) {
+      console.error('Error save question:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menyimpan soal: ${msg}`, type: 'error' });
     }
   };
 
@@ -249,50 +251,96 @@ export default function AdminDashboardPage() {
 
   const handleSaveTeam = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!sessionId || !teamFormName.trim()) return;
+    if (!sessionId || !teamFormName.trim()) {
+      setStatusMsg({ text: 'Sesi belum aktif atau nama regu kosong', type: 'error' });
+      return;
+    }
 
     try {
       if (editingTeam) {
-        const { data: updated } = await supabase
+        // Try update with members columns, fallback if columns not added
+        const updatePayload: Record<string, unknown> = {
+          name: teamFormName.trim(),
+          color: teamFormColor,
+          score: Number(teamFormScore),
+        };
+        if (teamFormMemberCount !== undefined) updatePayload.member_count = Number(teamFormMemberCount);
+        if (teamFormMembers !== undefined) updatePayload.members = teamFormMembers.trim();
+
+        let { error: updateErr, data: updated } = await supabase
           .from('teams')
-          .update({
-            name: teamFormName.trim(),
-            color: teamFormColor,
-            score: Number(teamFormScore),
-            member_count: Number(teamFormMemberCount),
-            members: teamFormMembers.trim(),
-          })
+          .update(updatePayload)
           .eq('id', editingTeam.id)
           .select()
           .single();
 
+        if (updateErr) {
+          // If columns member_count/members don't exist yet in postgres, update basic columns
+          const { error: fallbackErr, data: fallbackUpdated } = await supabase
+            .from('teams')
+            .update({
+              name: teamFormName.trim(),
+              color: teamFormColor,
+              score: Number(teamFormScore),
+            })
+            .eq('id', editingTeam.id)
+            .select()
+            .single();
+
+          if (fallbackErr) throw fallbackErr;
+          updated = fallbackUpdated;
+        }
+
         if (updated) {
           setTeams(teams.map((t) => (t.id === editingTeam.id ? updated : t)));
-          setStatusMsg({ text: 'Data regu berhasil diperbarui', type: 'success' });
+          setStatusMsg({ text: 'Data regu berhasil diperbarui!', type: 'success' });
         }
       } else {
-        const { data: created } = await supabase
+        const insertPayload: Record<string, unknown> = {
+          session_id: sessionId,
+          name: teamFormName.trim(),
+          color: teamFormColor,
+          score: Number(teamFormScore),
+          rank: teams.length + 1,
+        };
+        if (teamFormMemberCount !== undefined) insertPayload.member_count = Number(teamFormMemberCount);
+        if (teamFormMembers !== undefined) insertPayload.members = teamFormMembers.trim();
+
+        let { error: insertErr, data: created } = await supabase
           .from('teams')
-          .insert({
-            session_id: sessionId,
-            name: teamFormName.trim(),
-            color: teamFormColor,
-            score: Number(teamFormScore),
-            rank: teams.length + 1,
-            member_count: Number(teamFormMemberCount),
-            members: teamFormMembers.trim(),
-          })
+          .insert(insertPayload)
           .select()
           .single();
 
+        if (insertErr) {
+          // Fallback insert without member columns if column doesn't exist
+          const { error: fallbackErr, data: fallbackCreated } = await supabase
+            .from('teams')
+            .insert({
+              session_id: sessionId,
+              name: teamFormName.trim(),
+              color: teamFormColor,
+              score: Number(teamFormScore),
+              rank: teams.length + 1,
+            })
+            .select()
+            .single();
+
+          if (fallbackErr) throw fallbackErr;
+          created = fallbackCreated;
+        }
+
         if (created) {
           setTeams([...teams, created]);
-          setStatusMsg({ text: 'Regu baru berhasil didaftarkan', type: 'success' });
+          setStatusMsg({ text: 'Regu baru berhasil didaftarkan!', type: 'success' });
         }
       }
       setIsTeamModalOpen(false);
-    } catch {
-      setStatusMsg({ text: 'Gagal menyimpan data regu', type: 'error' });
+      loadData();
+    } catch (err: unknown) {
+      console.error('Error save team:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menyimpan regu: ${msg}`, type: 'error' });
     }
   };
 

@@ -78,6 +78,31 @@ export default function PesertaPage() {
     }
   }, [roomCode, joined]);
 
+  // Realtime subscription for available teams in Join screen
+  useEffect(() => {
+    if (joined || !session?.id) return;
+
+    const channel = supabase
+      .channel(`available_teams_${session.id}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'teams', filter: `session_id=eq.${session.id}` },
+        async () => {
+          const { data: teamsData } = await supabase
+            .from('teams')
+            .select('*')
+            .eq('session_id', session.id)
+            .order('name');
+          if (teamsData) setAvailableTeams(teamsData);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [joined, session?.id]);
+
   const restoreTeam = async (room: string, teamId: string) => {
     try {
       const { data: sessionData } = await supabase
@@ -293,7 +318,7 @@ export default function PesertaPage() {
                   <option value="new">+ Daftarkan Regu Baru</option>
                   {availableTeams.map((t) => (
                     <option key={t.id} value={t.id}>
-                      {t.name} (Skor: {t.score})
+                      {t.name} {t.members ? `(${t.members})` : `(Skor: ${t.score})`}
                     </option>
                   ))}
                 </select>
@@ -358,9 +383,16 @@ export default function PesertaPage() {
             <h2 className="text-xl font-black tracking-wide text-white uppercase">
               {currentTeam?.name}
             </h2>
-            <span className="text-[10px] text-slate-400 font-mono tracking-wider">
-              ROOM: {roomCode}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-400 font-mono tracking-wider">
+                ROOM: {roomCode}
+              </span>
+              {currentTeam?.members && (
+                <span className="text-[10px] text-slate-400 font-medium truncate max-w-[150px]">
+                  &bull; {currentTeam.members}
+                </span>
+              )}
+            </div>
           </div>
         </div>
 
