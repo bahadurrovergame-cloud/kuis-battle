@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, Question, QuestionType } from '@/lib/supabase';
+import { supabase, Question, QuestionType, Team } from '@/lib/supabase';
 import {
   BookOpen,
   Plus,
@@ -16,7 +16,11 @@ import {
   MonitorPlay,
   LogOut,
   Save,
-  X
+  X,
+  Users,
+  UserPlus,
+  ShieldCheck,
+  Edit2
 } from 'lucide-react';
 
 interface Category {
@@ -24,16 +28,23 @@ interface Category {
   name: string;
 }
 
-export default function AdminSoalPage() {
+export default function AdminDashboardPage() {
   const router = useRouter();
 
+  // Active Tab: 'soal' | 'regu'
+  const [activeTab, setActiveTab] = useState<'soal' | 'regu'>('soal');
+
+  // Shared session
+  const [sessionId, setSessionId] = useState<string | null>(null);
+
+  // Soal States
   const [categories, setCategories] = useState<Category[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
-  // Form State
+  // Modal Soal State
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [formData, setFormData] = useState<{
@@ -61,6 +72,16 @@ export default function AdminSoalPage() {
     points: 100,
   });
 
+  // Regu / Peserta States
+  const [teams, setTeams] = useState<Team[]>([]);
+  const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
+  const [editingTeam, setEditingTeam] = useState<Team | null>(null);
+  const [teamFormName, setTeamFormName] = useState('');
+  const [teamFormColor, setTeamFormColor] = useState('#3b82f6');
+  const [teamFormScore, setTeamFormScore] = useState<number>(0);
+  const [teamFormMemberCount, setTeamFormMemberCount] = useState<number>(3);
+  const [teamFormMembers, setTeamFormMembers] = useState('');
+
   // Auth gate check
   useEffect(() => {
     const role = sessionStorage.getItem('auth_role');
@@ -69,10 +90,13 @@ export default function AdminSoalPage() {
     }
   }, [router]);
 
-  // Load Data
+  // Load Session and Questions
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
+      const { data: sData } = await supabase.from('game_sessions').select('*').limit(1).single();
+      if (sData) setSessionId(sData.id);
+
       const { data: cats } = await supabase.from('categories').select('*').order('name');
       if (cats) setCategories(cats);
 
@@ -83,8 +107,17 @@ export default function AdminSoalPage() {
 
       const { data: qs } = await query;
       if (qs) setQuestions(qs);
+
+      if (sData) {
+        const { data: tData } = await supabase
+          .from('teams')
+          .select('*')
+          .eq('session_id', sData.id)
+          .order('score', { ascending: false });
+        if (tData) setTeams(tData);
+      }
     } catch {
-      setStatusMsg({ text: 'Gagal memuat data bank soal', type: 'error' });
+      setStatusMsg({ text: 'Gagal memuat data', type: 'error' });
     } finally {
       setLoading(false);
     }
@@ -94,8 +127,8 @@ export default function AdminSoalPage() {
     loadData();
   }, [loadData]);
 
-  // Reset form
-  const resetForm = () => {
+  // Reset form soal
+  const resetFormSoal = () => {
     setEditingId(null);
     setFormData({
       category_id: categories[0]?.id || '',
@@ -114,12 +147,12 @@ export default function AdminSoalPage() {
     });
   };
 
-  const handleOpenAdd = () => {
-    resetForm();
+  const handleOpenAddSoal = () => {
+    resetFormSoal();
     setIsModalOpen(true);
   };
 
-  const handleOpenEdit = (q: Question) => {
+  const handleOpenEditSoal = (q: Question) => {
     setEditingId(q.id);
     setFormData({
       category_id: q.category_id || '',
@@ -141,7 +174,7 @@ export default function AdminSoalPage() {
     setIsModalOpen(true);
   };
 
-  const handleDelete = async (id: string) => {
+  const handleDeleteSoal = async (id: string) => {
     if (!window.confirm('Hapus soal ini dari database?')) return;
     try {
       await supabase.from('questions').delete().eq('id', id);
@@ -175,14 +208,95 @@ export default function AdminSoalPage() {
       }
 
       setIsModalOpen(false);
-      resetForm();
+      resetFormSoal();
       loadData();
     } catch {
       setStatusMsg({ text: 'Gagal menyimpan soal', type: 'error' });
     }
   };
 
-  // Quick JSON Import
+  // Team Handlers
+  const handleOpenAddTeam = () => {
+    setEditingTeam(null);
+    setTeamFormName('');
+    setTeamFormColor('#3b82f6');
+    setTeamFormScore(0);
+    setTeamFormMemberCount(3);
+    setTeamFormMembers('');
+    setIsTeamModalOpen(true);
+  };
+
+  const handleOpenEditTeam = (team: Team) => {
+    setEditingTeam(team);
+    setTeamFormName(team.name);
+    setTeamFormColor(team.color || '#3b82f6');
+    setTeamFormScore(team.score);
+    setTeamFormMemberCount(team.member_count || 3);
+    setTeamFormMembers(team.members || '');
+    setIsTeamModalOpen(true);
+  };
+
+  const handleDeleteTeam = async (teamId: string) => {
+    if (!window.confirm('Hapus regu ini dari daftar lomba?')) return;
+    try {
+      await supabase.from('teams').delete().eq('id', teamId);
+      setTeams(teams.filter((t) => t.id !== teamId));
+      setStatusMsg({ text: 'Regu berhasil dihapus', type: 'success' });
+    } catch {
+      setStatusMsg({ text: 'Gagal menghapus regu', type: 'error' });
+    }
+  };
+
+  const handleSaveTeam = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!sessionId || !teamFormName.trim()) return;
+
+    try {
+      if (editingTeam) {
+        const { data: updated } = await supabase
+          .from('teams')
+          .update({
+            name: teamFormName.trim(),
+            color: teamFormColor,
+            score: Number(teamFormScore),
+            member_count: Number(teamFormMemberCount),
+            members: teamFormMembers.trim(),
+          })
+          .eq('id', editingTeam.id)
+          .select()
+          .single();
+
+        if (updated) {
+          setTeams(teams.map((t) => (t.id === editingTeam.id ? updated : t)));
+          setStatusMsg({ text: 'Data regu berhasil diperbarui', type: 'success' });
+        }
+      } else {
+        const { data: created } = await supabase
+          .from('teams')
+          .insert({
+            session_id: sessionId,
+            name: teamFormName.trim(),
+            color: teamFormColor,
+            score: Number(teamFormScore),
+            rank: teams.length + 1,
+            member_count: Number(teamFormMemberCount),
+            members: teamFormMembers.trim(),
+          })
+          .select()
+          .single();
+
+        if (created) {
+          setTeams([...teams, created]);
+          setStatusMsg({ text: 'Regu baru berhasil didaftarkan', type: 'success' });
+        }
+      }
+      setIsTeamModalOpen(false);
+    } catch {
+      setStatusMsg({ text: 'Gagal menyimpan data regu', type: 'error' });
+    }
+  };
+
+  // Quick JSON Import & Export
   const handleImportJson = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -213,7 +327,6 @@ export default function AdminSoalPage() {
     reader.readAsText(file);
   };
 
-  // Quick JSON Export
   const handleExportJson = () => {
     const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(questions, null, 2));
     const downloadAnchor = document.createElement('a');
@@ -230,17 +343,24 @@ export default function AdminSoalPage() {
       <header className="flex flex-wrap items-center justify-between pb-4 border-b border-slate-800 gap-4">
         <div className="flex items-center gap-3">
           <div className="p-2.5 bg-purple-600/20 border border-purple-500/30 rounded-xl text-purple-400">
-            <BookOpen className="w-5 h-5" />
+            <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
             <h1 className="text-lg font-black tracking-wide text-white uppercase">
-              Bank Soal & Manajemen Konten
+              Admin Pusat Perlombaan
             </h1>
-            <p className="text-xs text-slate-400">Kelola soal untuk perlombaan cerdas cermat panggung</p>
+            <p className="text-xs text-slate-400">Kelola Bank Soal, Daftar Regu, dan Anggota Peserta</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
+          <a
+            href="/"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-slate-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
+          >
+            <span>Dashboard Hub</span>
+          </a>
+
           <a
             href="/control"
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-blue-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
@@ -291,127 +411,252 @@ export default function AdminSoalPage() {
         </div>
       )}
 
-      {/* ACTION & FILTER TOOLBAR */}
-      <div className="my-6 flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
-        {/* Filter Kategori */}
-        <div className="flex items-center gap-2">
-          <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-            Kategori:
-          </label>
-          <select
-            value={selectedCategory}
-            onChange={(e) => setSelectedCategory(e.target.value)}
-            className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
-          >
-            <option value="all">Semua Kategori</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* TAB SELECTOR: BANK SOAL vs MANAJEMEN REGU/PESERTA */}
+      <div className="my-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+        <button
+          onClick={() => setActiveTab('soal')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
+            activeTab === 'soal'
+              ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <BookOpen className="w-4 h-4" />
+          <span>Bank Soal ({questions.length})</span>
+        </button>
 
-        {/* Action Buttons: Add, Import, Export */}
-        <div className="flex items-center gap-2">
-          <label className="cursor-pointer flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all">
-            <Upload className="w-3.5 h-3.5 text-blue-400" />
-            <span>Import JSON</span>
-            <input type="file" accept=".json" onChange={handleImportJson} className="hidden" />
-          </label>
-
-          <button
-            onClick={handleExportJson}
-            className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all"
-          >
-            <Download className="w-3.5 h-3.5 text-emerald-400" />
-            <span>Export JSON</span>
-          </button>
-
-          <button
-            onClick={handleOpenAdd}
-            className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
-          >
-            <Plus className="w-4 h-4" />
-            <span>Tambah Soal</span>
-          </button>
-        </div>
+        <button
+          onClick={() => setActiveTab('regu')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
+            activeTab === 'regu'
+              ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <Users className="w-4 h-4" />
+          <span>Manajemen Regu & Peserta ({teams.length})</span>
+        </button>
       </div>
 
-      {/* QUESTIONS TABLE */}
-      <div className="flex-1 bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
-              <tr>
-                <th className="py-3 px-4">#</th>
-                <th className="py-3 px-4">Tipe</th>
-                <th className="py-3 px-4">Pertanyaan</th>
-                <th className="py-3 px-4">Kunci Jawaban</th>
-                <th className="py-3 px-4 text-center">Timer</th>
-                <th className="py-3 px-4 text-center">Poin</th>
-                <th className="py-3 px-4 text-right">Aksi</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60">
-              {loading ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-10 text-slate-500">
-                    Memuat data...
-                  </td>
-                </tr>
-              ) : questions.length === 0 ? (
-                <tr>
-                  <td colSpan={7} className="text-center py-10 text-slate-500">
-                    Belum ada soal pada kategori ini.
-                  </td>
-                </tr>
-              ) : (
-                questions.map((q, idx) => (
-                  <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
-                    <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
-                    <td className="py-3 px-4">
-                      <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                        {q.type.replace('_', ' ')}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-200 max-w-xs truncate">
-                      {q.question_text}
-                    </td>
-                    <td className="py-3 px-4 font-mono font-bold text-emerald-400 max-w-[150px] truncate">
-                      {q.correct_answer}
-                    </td>
-                    <td className="py-3 px-4 text-center font-mono text-slate-400">
-                      {q.timer_duration}s
-                    </td>
-                    <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
-                      +{q.points}
-                    </td>
-                    <td className="py-3 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        <button
-                          onClick={() => handleOpenEdit(q)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
-                          title="Edit Soal"
-                        >
-                          <Edit className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(q.id)}
-                          className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
-                          title="Hapus Soal"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
+      {/* KONTEN TAB 1: BANK SOAL */}
+      {activeTab === 'soal' && (
+        <div className="space-y-4 flex-1 flex flex-col">
+          {/* TOOLBAR SOAL */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+            <div className="flex items-center gap-2">
+              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Kategori:
+              </label>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+              >
+                <option value="all">Semua Kategori</option>
+                {categories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <label className="cursor-pointer flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all">
+                <Upload className="w-3.5 h-3.5 text-blue-400" />
+                <span>Import JSON</span>
+                <input type="file" accept=".json" onChange={handleImportJson} className="hidden" />
+              </label>
+
+              <button
+                onClick={handleExportJson}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Export JSON</span>
+              </button>
+
+              <button
+                onClick={handleOpenAddSoal}
+                className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Tambah Soal</span>
+              </button>
+            </div>
+          </div>
+
+          {/* TABEL SOAL */}
+          <div className="flex-1 bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">#</th>
+                    <th className="py-3 px-4">Tipe</th>
+                    <th className="py-3 px-4">Pertanyaan</th>
+                    <th className="py-3 px-4">Kunci Jawaban</th>
+                    <th className="py-3 px-4 text-center">Timer</th>
+                    <th className="py-3 px-4 text-center">Poin</th>
+                    <th className="py-3 px-4 text-right">Aksi</th>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {loading ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">
+                        Memuat data...
+                      </td>
+                    </tr>
+                  ) : questions.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">
+                        Belum ada soal pada kategori ini.
+                      </td>
+                    </tr>
+                  ) : (
+                    questions.map((q, idx) => (
+                      <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
+                        <td className="py-3 px-4">
+                          <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                            {q.type.replace('_', ' ')}
+                          </span>
+                        </td>
+                        <td className="py-3 px-4 font-semibold text-slate-200 max-w-xs truncate">
+                          {q.question_text}
+                        </td>
+                        <td className="py-3 px-4 font-mono font-bold text-emerald-400 max-w-[150px] truncate">
+                          {q.correct_answer}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono text-slate-400">
+                          {q.timer_duration}s
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
+                          +{q.points}
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleOpenEditSoal(q)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                              title="Edit Soal"
+                            >
+                              <Edit className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteSoal(q.id)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
+                              title="Hapus Soal"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* KONTEN TAB 2: MANAJEMEN REGU & PESERTA */}
+      {activeTab === 'regu' && (
+        <div className="space-y-4 flex-1 flex flex-col">
+          {/* TOOLBAR REGU */}
+          <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+            <div>
+              <h3 className="text-sm font-bold text-white">Daftar Regu Terdaftar</h3>
+              <p className="text-xs text-slate-400">Atur nama regu, warna meja, dan susunan nama anggota tim</p>
+            </div>
+            <button
+              onClick={handleOpenAddTeam}
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-blue-600/30"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>Tambah Regu Baru</span>
+            </button>
+          </div>
+
+          {/* TABEL REGU */}
+          <div className="flex-1 bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">#</th>
+                    <th className="py-3 px-4">Regu</th>
+                    <th className="py-3 px-4">Warna Meja</th>
+                    <th className="py-3 px-4 text-center">Jumlah Anggota</th>
+                    <th className="py-3 px-4">Nama Peserta / Anggota</th>
+                    <th className="py-3 px-4 text-center">Skor Saat Ini</th>
+                    <th className="py-3 px-4 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {teams.length === 0 ? (
+                    <tr>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">
+                        Belum ada regu yang terdaftar di panggung.
+                      </td>
+                    </tr>
+                  ) : (
+                    teams.map((t, idx) => (
+                      <tr key={t.id} className="hover:bg-slate-800/40 transition-colors">
+                        <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
+                        <td className="py-3 px-4 font-extrabold text-white text-sm">
+                          {t.name}
+                        </td>
+                        <td className="py-3 px-4">
+                          <div className="flex items-center gap-2">
+                            <span
+                              className="w-4 h-4 rounded-full shadow"
+                              style={{ backgroundColor: t.color }}
+                            />
+                            <span className="font-mono text-slate-400 text-[11px] uppercase">
+                              {t.color}
+                            </span>
+                          </div>
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-bold text-slate-300">
+                          {t.member_count || 3} Orang
+                        </td>
+                        <td className="py-3 px-4 text-slate-300 italic max-w-xs truncate">
+                          {t.members || '(Nama anggota belum diinput)'}
+                        </td>
+                        <td className="py-3 px-4 text-center font-mono font-black text-emerald-400 text-sm">
+                          {t.score} PTS
+                        </td>
+                        <td className="py-3 px-4 text-right">
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleOpenEditTeam(t)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                              title="Edit Data Regu"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteTeam(t.id)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
+                              title="Hapus Regu"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL TAMBAH / EDIT SOAL */}
       {isModalOpen && (
@@ -430,7 +675,6 @@ export default function AdminSoalPage() {
             </div>
 
             <form onSubmit={handleSaveQuestion} className="space-y-4">
-              {/* Kategori & Tipe */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -468,7 +712,6 @@ export default function AdminSoalPage() {
                 </div>
               </div>
 
-              {/* Teks Pertanyaan */}
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
                   Teks Pertanyaan
@@ -483,8 +726,6 @@ export default function AdminSoalPage() {
                 />
               </div>
 
-              {/* Input Spesifik Tipe Soal */}
-              {/* 1. OPSI PILIHAN GANDA */}
               {formData.type === 'pilihan_ganda' && (
                 <div className="space-y-2 p-3 bg-slate-950/70 border border-slate-800 rounded-2xl">
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
@@ -519,7 +760,6 @@ export default function AdminSoalPage() {
                 </div>
               )}
 
-              {/* 2. BENAR / SALAH */}
               {formData.type === 'benar_salah' && (
                 <div className="p-3 bg-slate-950/70 border border-slate-800 rounded-2xl">
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
@@ -552,7 +792,6 @@ export default function AdminSoalPage() {
                 </div>
               )}
 
-              {/* 3. ESSAY */}
               {formData.type === 'essay' && (
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -569,7 +808,6 @@ export default function AdminSoalPage() {
                 </div>
               )}
 
-              {/* Penjelasan / Pembahasan */}
               <div>
                 <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
                   Penjelasan Tambahan (Opsional)
@@ -583,7 +821,6 @@ export default function AdminSoalPage() {
                 />
               </div>
 
-              {/* Timer Duration & Points */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -618,7 +855,6 @@ export default function AdminSoalPage() {
                 </div>
               </div>
 
-              {/* Submit Buttons */}
               <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
                 <button
                   type="button"
@@ -633,6 +869,119 @@ export default function AdminSoalPage() {
                 >
                   <Save className="w-4 h-4" />
                   <span>Simpan Soal</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL TAMBAH / EDIT REGU & PESERTA */}
+      {isTeamModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
+              <h3 className="text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <Users className="w-5 h-5 text-blue-400" />
+                {editingTeam ? 'Edit Data Regu & Peserta' : 'Tambah Regu Baru'}
+              </h3>
+              <button
+                onClick={() => setIsTeamModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveTeam} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Nama Regu / Group
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={teamFormName}
+                  onChange={(e) => setTeamFormName(e.target.value)}
+                  placeholder="Contoh: Regu Harimau"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Warna Identitas Meja
+                </label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="color"
+                    value={teamFormColor}
+                    onChange={(e) => setTeamFormColor(e.target.value)}
+                    className="w-12 h-10 bg-transparent rounded-lg cursor-pointer border border-slate-700 p-0.5"
+                  />
+                  <input
+                    type="text"
+                    value={teamFormColor}
+                    onChange={(e) => setTeamFormColor(e.target.value)}
+                    className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Jumlah Anggota
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={20}
+                    value={teamFormMemberCount}
+                    onChange={(e) => setTeamFormMemberCount(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                    Skor Saat Ini
+                  </label>
+                  <input
+                    type="number"
+                    value={teamFormScore}
+                    onChange={(e) => setTeamFormScore(Number(e.target.value))}
+                    className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Nama-Nama Anggota Peserta
+                </label>
+                <textarea
+                  rows={2}
+                  value={teamFormMembers}
+                  onChange={(e) => setTeamFormMembers(e.target.value)}
+                  placeholder="Contoh: Budi (Ketua), Siti, Ahmad"
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsTeamModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30"
+                >
+                  {editingTeam ? 'Simpan Perubahan' : 'Tambahkan Regu'}
                 </button>
               </div>
             </form>

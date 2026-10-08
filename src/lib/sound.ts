@@ -18,24 +18,24 @@ class SoundManager {
   }
 
   // Ticking sound for countdown timer
-  playTick() {
+  playTick(isUrgent: boolean = false) {
     try {
       this.initCtx();
       if (!this.audioCtx) return;
       const osc = this.audioCtx.createOscillator();
       const gain = this.audioCtx.createGain();
 
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, this.audioCtx.currentTime);
+      osc.type = isUrgent ? 'square' : 'triangle';
+      osc.frequency.setValueAtTime(isUrgent ? 950 : 600, this.audioCtx.currentTime);
 
-      gain.gain.setValueAtTime(0.08, this.audioCtx.currentTime);
-      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.05);
+      gain.gain.setValueAtTime(0.25, this.audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, this.audioCtx.currentTime + 0.08);
 
       osc.connect(gain);
       gain.connect(this.audioCtx.destination);
 
       osc.start();
-      osc.stop(this.audioCtx.currentTime + 0.05);
+      osc.stop(this.audioCtx.currentTime + 0.08);
     } catch {
       // Audio context restricted or not supported
     }

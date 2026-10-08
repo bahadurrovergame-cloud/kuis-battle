@@ -196,7 +196,10 @@ export default function PesertaPage() {
           table: 'teams',
           filter: `session_id=eq.${session.id}`,
         },
-        async () => {
+        async (payload) => {
+          // Check if payload updated our team or another team
+          const updatedRow = payload.new as Team;
+
           // Re-fetch all teams to recalculate relative rank & my score
           const { data: allTeams } = await supabase
             .from('teams')
@@ -209,8 +212,13 @@ export default function PesertaPage() {
             const myUpdated = allTeams.find((t) => t.id === currentTeam.id);
 
             if (myUpdated) {
-              // Trigger score flash animation
-              if (prevScoreRef.current !== null && myUpdated.score !== prevScoreRef.current) {
+              // Only trigger score flash if OUR team score actually changed
+              if (
+                updatedRow &&
+                updatedRow.id === currentTeam.id &&
+                prevScoreRef.current !== null &&
+                myUpdated.score !== prevScoreRef.current
+              ) {
                 if (myUpdated.score > prevScoreRef.current) {
                   setScoreFlash('increase');
                 } else {

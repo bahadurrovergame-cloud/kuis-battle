@@ -155,11 +155,15 @@ export default function OperatorControlPage() {
   const toggleTimer = async () => {
     if (!session) return;
     const nextState = !session.is_timer_running;
-    setSession({ ...session, is_timer_running: nextState });
+    setSession({ ...session, is_timer_running: nextState, timer_remaining: remainingTime });
 
     await supabase
       .from('game_sessions')
-      .update({ is_timer_running: nextState, status: nextState ? 'active' : 'paused' })
+      .update({
+        is_timer_running: nextState,
+        timer_remaining: remainingTime,
+        status: nextState ? 'active' : 'paused',
+      })
       .eq('id', session.id);
   };
 

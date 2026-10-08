@@ -142,8 +142,8 @@ export default function OperatorProjectorPage() {
     const interval = setInterval(() => {
       setRemainingTime((prev) => {
         const next = Math.max(0, prev - 1);
-        if (next > 0 && next <= 5) {
-          sounds.playTick();
+        if (next > 0) {
+          sounds.playTick(next <= 5);
         } else if (next === 0 && prevRemainingRef.current > 0) {
           sounds.playTimeUp();
         }

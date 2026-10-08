@@ -46,6 +46,8 @@ export interface Team {
   score: number;
   rank: number;
   is_active: boolean;
+  member_count?: number;
+  members?: string; // string nama-nama peserta (contoh: "Ahmad, Budi, Siti")
   created_at?: string;
   updated_at?: string;
 }
