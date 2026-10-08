@@ -209,23 +209,34 @@ export default function PesertaPage() {
   useEffect(() => {
     if (!joined || !currentTeam || !session) return;
 
-    setIsConnected(true);
-
+    const channelName = `team_live_${currentTeam.id}_${Date.now()}`;
     const channel = supabase
-      .channel(`team_live_${currentTeam.id}`)
+      .channel(channelName)
       .on(
         'postgres_changes',
         {
           event: '*',
           schema: 'public',
           table: 'teams',
-          filter: `session_id=eq.${session.id}`,
         },
         async (payload) => {
-          // Check if payload updated our team or another team
           const updatedRow = payload.new as Team;
 
-          // Re-fetch all teams to recalculate relative rank & my score
+          // If the update is specifically for our team, immediately update score & trigger flash
+          if (updatedRow && updatedRow.id === currentTeam.id) {
+            if (prevScoreRef.current !== null && updatedRow.score !== prevScoreRef.current) {
+              if (updatedRow.score > prevScoreRef.current) {
+                setScoreFlash('increase');
+              } else {
+                setScoreFlash('decrease');
+              }
+              setTimeout(() => setScoreFlash(null), 1200);
+            }
+            prevScoreRef.current = updatedRow.score;
+            setCurrentTeam((prev) => (prev ? { ...prev, ...updatedRow } : updatedRow));
+          }
+
+          // Recalculate rank across all teams in this session
           const { data: allTeams } = await supabase
             .from('teams')
             .select('*')
@@ -234,29 +245,8 @@ export default function PesertaPage() {
 
           if (allTeams) {
             const myIndex = allTeams.findIndex((t) => t.id === currentTeam.id);
-            const myUpdated = allTeams.find((t) => t.id === currentTeam.id);
-
-            if (myUpdated) {
-              // Only trigger score flash if OUR team score actually changed
-              if (
-                updatedRow &&
-                updatedRow.id === currentTeam.id &&
-                prevScoreRef.current !== null &&
-                myUpdated.score !== prevScoreRef.current
-              ) {
-                if (myUpdated.score > prevScoreRef.current) {
-                  setScoreFlash('increase');
-                } else {
-                  setScoreFlash('decrease');
-                }
-                setTimeout(() => setScoreFlash(null), 1200);
-              }
-
-              prevScoreRef.current = myUpdated.score;
-              setCurrentTeam({
-                ...myUpdated,
-                rank: myIndex !== -1 ? myIndex + 1 : myUpdated.rank,
-              });
+            if (myIndex !== -1) {
+              setCurrentTeam((prev) => (prev ? { ...prev, rank: myIndex + 1 } : null));
             }
           }
         }
