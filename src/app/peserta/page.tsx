@@ -13,7 +13,9 @@ import {
   Sparkles, 
   ArrowRight,
   TrendingUp,
-  RefreshCw
+  RefreshCw,
+  Maximize,
+  Minimize
 } from 'lucide-react';
 
 export default function PesertaPage() {
@@ -33,7 +35,28 @@ export default function PesertaPage() {
   const [currentTeam, setCurrentTeam] = useState<Team | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [scoreFlash, setScoreFlash] = useState<'increase' | 'decrease' | null>(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const prevScoreRef = useRef<number | null>(null);
+
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().then(() => {
+        setIsFullscreen(true);
+      }).catch(() => {});
+    } else {
+      document.exitFullscreen().then(() => {
+        setIsFullscreen(false);
+      }).catch(() => {});
+    }
+  };
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      setIsFullscreen(!!document.fullscreenElement);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => document.removeEventListener('fullscreenchange', handleFsChange);
+  }, []);
 
   // Auto-restore session from localStorage on mount
   useEffect(() => {
@@ -400,6 +423,16 @@ export default function PesertaPage() {
             <Sun className="w-3.5 h-3.5" />
             <span>{isLocked ? 'Layar Terjaga' : 'Ketuk Jaga Layar'}</span>
           </div>
+
+          {/* Fullscreen Button */}
+          <button
+            onClick={toggleFullscreen}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 transition-all"
+            title={isFullscreen ? 'Keluar Layar Penuh' : 'Layar Penuh'}
+          >
+            {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">{isFullscreen ? 'Keluar Full' : 'Layar Penuh'}</span>
+          </button>
 
           {/* Connection Dot */}
           <div
