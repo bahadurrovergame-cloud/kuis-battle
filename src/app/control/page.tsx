@@ -22,8 +22,10 @@ import {
   UserPlus,
   Edit2,
   Trash2,
-  X
+  X,
+  Check
 } from 'lucide-react';
+import { sounds } from '@/lib/sound';
 
 export default function OperatorControlPage() {
   const router = useRouter();
@@ -38,6 +40,7 @@ export default function OperatorControlPage() {
 
   // Custom score input per regu: { [teamId]: number }
   const [customScores, setCustomScores] = useState<Record<string, string>>({});
+  const [appliedTeamId, setAppliedTeamId] = useState<string | null>(null);
 
   // Team management modal states
   const [isTeamModalOpen, setIsTeamModalOpen] = useState(false);
@@ -235,6 +238,13 @@ export default function OperatorControlPage() {
     const team = teams.find((t) => t.id === teamId);
     if (!team) return;
 
+    // Mainkan reaksi suara audio yang semarak
+    if (delta > 0) {
+      sounds.playScoreUp();
+    } else {
+      sounds.playScoreDown();
+    }
+
     const newScore = team.score + delta;
     setTeams(teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t)));
 
@@ -246,10 +256,23 @@ export default function OperatorControlPage() {
 
   // Custom Score Add
   const handleCustomScore = async (teamId: string) => {
-    const val = parseInt(customScores[teamId] || '0', 10);
+    const rawVal = customScores[teamId];
+    if (!rawVal) return;
+
+    const val = parseInt(rawVal, 10);
     if (isNaN(val) || val === 0) return;
 
-    handleAdjustScore(teamId, val);
+    // Reaksi audio & visual tombol terapkan
+    if (val > 0) {
+      sounds.playScoreUp();
+    } else {
+      sounds.playScoreDown();
+    }
+
+    setAppliedTeamId(teamId);
+    setTimeout(() => setAppliedTeamId(null), 1200);
+
+    await handleAdjustScore(teamId, val);
     setCustomScores((prev) => ({ ...prev, [teamId]: '' }));
   };
 
@@ -682,9 +705,20 @@ export default function OperatorControlPage() {
                       />
                       <button
                         onClick={() => handleCustomScore(t.id)}
-                        className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-xs font-bold transition-all"
+                        className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1 ${
+                          appliedTeamId === t.id
+                            ? 'bg-emerald-600 text-white scale-105'
+                            : 'bg-blue-600 hover:bg-blue-500 text-white active:scale-95'
+                        }`}
                       >
-                        Terapkan
+                        {appliedTeamId === t.id ? (
+                          <>
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Tersimpan!</span>
+                          </>
+                        ) : (
+                          'Terapkan'
+                        )}
                       </button>
                     </div>
                   </div>

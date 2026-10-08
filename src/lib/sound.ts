@@ -66,6 +66,62 @@ class SoundManager {
     }
   }
 
+  // Audio efek skor bertambah (Semarak & Merdu - Arpeggio Nada C-E-G)
+  playScoreUp() {
+    try {
+      this.initCtx();
+      if (!this.audioCtx) return;
+      const now = this.audioCtx.currentTime;
+
+      [523.25, 659.25, 783.99].forEach((freq, idx) => {
+        if (!this.audioCtx) return;
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(freq, now + idx * 0.07);
+
+        gain.gain.setValueAtTime(0.25, now + idx * 0.07);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.07 + 0.2);
+
+        osc.connect(gain);
+        gain.connect(this.audioCtx.destination);
+
+        osc.start(now + idx * 0.07);
+        osc.stop(now + idx * 0.07 + 0.2);
+      });
+    } catch {
+      // Quiet fail
+    }
+  }
+
+  // Audio efek skor berkurang (Nada turun dramatis)
+  playScoreDown() {
+    try {
+      this.initCtx();
+      if (!this.audioCtx) return;
+      const now = this.audioCtx.currentTime;
+
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(330, now);
+      osc.frequency.exponentialRampToValueAtTime(165, now + 0.25);
+
+      gain.gain.setValueAtTime(0.22, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+
+      osc.connect(gain);
+      gain.connect(this.audioCtx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.25);
+    } catch {
+      // Quiet fail
+    }
+  }
+
   // Correct answer / Reveal chime
   playCorrect() {
     try {
