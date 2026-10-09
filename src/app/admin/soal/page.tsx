@@ -98,10 +98,14 @@ export default function AdminDashboardPage() {
   const [teamFormMembers, setTeamFormMembers] = useState('');
 
   // Auth gate check
+  const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
+
   useEffect(() => {
     const role = sessionStorage.getItem('auth_role');
     if (!role) {
       router.push('/login');
+    } else {
+      setIsAuthorized(true);
     }
   }, [router]);
 
@@ -540,6 +544,14 @@ export default function AdminDashboardPage() {
     downloadAnchor.click();
     downloadAnchor.remove();
   };
+
+  if (!isAuthorized) {
+    return (
+      <main className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="w-6 h-6 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col p-4 sm:p-6">
