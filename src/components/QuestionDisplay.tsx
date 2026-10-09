@@ -2,14 +2,15 @@
 
 import React from 'react';
 import { Question } from '@/lib/supabase';
-import { CheckCircle2, XCircle, HelpCircle, Lightbulb } from 'lucide-react';
+import { CheckCircle2, XCircle, HelpCircle, Lightbulb, Tag } from 'lucide-react';
 
 interface QuestionDisplayProps {
   question: Question | null;
   isAnswerRevealed: boolean;
+  categoryName?: string | null;
 }
 
-export default function QuestionDisplay({ question, isAnswerRevealed }: QuestionDisplayProps) {
+export default function QuestionDisplay({ question, isAnswerRevealed, categoryName }: QuestionDisplayProps) {
   if (!question) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center p-12 text-center bg-slate-900/60 rounded-3xl border border-slate-800">
@@ -24,7 +25,13 @@ export default function QuestionDisplay({ question, isAnswerRevealed }: Question
     <div className="flex-1 flex flex-col justify-between space-y-6">
       {/* Pertanyaan Utama */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-8 lg:p-10 shadow-2xl relative overflow-hidden backdrop-blur-md">
-        <div className="flex items-center gap-3 mb-4">
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          {categoryName && (
+            <span className="px-3.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5 shadow-sm">
+              <Tag className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Kategori: {categoryName}</span>
+            </span>
+          )}
           <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
             {question.type.replace('_', ' ')}
           </span>

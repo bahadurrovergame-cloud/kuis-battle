@@ -34,7 +34,8 @@ import {
   Check,
   LayoutGrid,
   HelpCircle,
-  Layers
+  Layers,
+  Tag
 } from 'lucide-react';
 import { sounds } from '@/lib/sound';
 
@@ -46,6 +47,8 @@ export default function OperatorControlPage() {
   const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [questionsList, setQuestionsList] = useState<Question[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [isConnected, setIsConnected] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
 
@@ -137,6 +140,13 @@ export default function OperatorControlPage() {
           .eq('session_id', sessionData.id)
           .order('score', { ascending: false });
         if (teamsData) setTeams(teamsData);
+
+        // Categories
+        const { data: catData } = await supabase
+          .from('categories')
+          .select('*')
+          .order('name', { ascending: true });
+        if (catData) setCategories(catData);
       }
     } catch {
       // Quiet fail
@@ -204,6 +214,17 @@ export default function OperatorControlPage() {
             .select('*')
             .order('created_at', { ascending: true });
           if (qList) setQuestionsList(qList.map(parseQuestionMeta));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'categories' },
+        async () => {
+          const { data: catData } = await supabase
+            .from('categories')
+            .select('*')
+            .order('name', { ascending: true });
+          if (catData) setCategories(catData);
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
@@ -524,8 +545,12 @@ export default function OperatorControlPage() {
     }
   };
 
-  // Filter pertanyaan sesuai jenis permainan yang dipilih
-  const filteredQuestions = questionsList.filter((q) => q.type === selectedGameType);
+  // Filter pertanyaan sesuai jenis permainan dan kategori yang dipilih
+  const filteredQuestions = questionsList.filter((q) => {
+    const matchType = q.type === selectedGameType;
+    const matchCat = selectedCategoryFilter === 'all' || q.category_id === selectedCategoryFilter;
+    return matchType && matchCat;
+  });
 
   const handleNextQuestion = async () => {
     if (!filteredQuestions.length || !currentQuestion) return;
@@ -975,9 +1000,21 @@ export default function OperatorControlPage() {
           {session?.current_question_id && (
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
               <div className="flex items-center justify-between mb-3">
-                <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                  {currentQuestion?.type.replace('_', ' ') || 'Belum ada soal'}
-                </span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    {currentQuestion?.type.replace('_', ' ') || 'Belum ada soal'}
+                  </span>
+                  {(() => {
+                    const activeCat = categories.find((c) => c.id === currentQuestion?.category_id);
+                    if (!activeCat) return null;
+                    return (
+                      <span className="px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1 bg-pink-500/20 text-pink-300 border border-pink-500/30">
+                        <Tag className="w-3 h-3 text-pink-400" />
+                        Kategori: {activeCat.name}
+                      </span>
+                    );
+                  })()}
+                </div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-slate-400 font-semibold">
                     Bobot: +{currentQuestion?.points || 100} Poin
@@ -1211,6 +1248,45 @@ export default function OperatorControlPage() {
               })}
             </div>
 
+            {/* FILTER KATEGORI */}
+            {categories.length > 0 && (
+              <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1 scrollbar-thin">
+                <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1 mr-1 shrink-0">
+                  <Tag className="w-3 h-3 text-pink-400" />
+                  Kategori:
+                </span>
+                <button
+                  onClick={() => setSelectedCategoryFilter('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all ${
+                    selectedCategoryFilter === 'all'
+                      ? 'bg-pink-600 text-white shadow-sm shadow-pink-600/30'
+                      : 'bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-900 border border-slate-800'
+                  }`}
+                >
+                  Semua ({questionsList.filter((q) => q.type === selectedGameType).length})
+                </button>
+                {categories.map((cat) => {
+                  const count = questionsList.filter(
+                    (q) => q.type === selectedGameType && q.category_id === cat.id
+                  ).length;
+                  const isSel = selectedCategoryFilter === cat.id;
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => setSelectedCategoryFilter(cat.id)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold shrink-0 transition-all ${
+                        isSel
+                          ? 'bg-pink-600 text-white shadow-sm shadow-pink-600/30'
+                          : 'bg-slate-950 text-slate-400 hover:text-white hover:bg-slate-900 border border-slate-800'
+                      }`}
+                    >
+                      {cat.name} ({count})
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+
             <div
               className={`grid gap-2.5 ${
                 boxCount <= 4
@@ -1230,6 +1306,7 @@ export default function OperatorControlPage() {
                   filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];
                 const isActive = currentQuestion?.id === matchedQ?.id && session?.current_question_id === matchedQ?.id;
                 const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
+                const qCat = matchedQ ? categories.find((c) => c.id === matchedQ.category_id) : null;
 
                 return (
                   <button
@@ -1252,6 +1329,11 @@ export default function OperatorControlPage() {
                       </span>
                     )}
                     <span className="text-base font-mono font-black">#{boxNum}</span>
+                    {qCat && (
+                      <span className="text-[8px] font-bold text-pink-300 bg-pink-500/20 px-1 py-0.5 rounded border border-pink-500/30 truncate max-w-[85px] leading-tight my-0.5">
+                        🏷️ {qCat.name}
+                      </span>
+                    )}
                     <span className="text-[9px] uppercase tracking-wider truncate max-w-[80px]">
                       {matchedQ ? matchedQ.question_text.slice(0, 10) + '...' : 'Kosong'}
                     </span>
@@ -1272,6 +1354,7 @@ export default function OperatorControlPage() {
             <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
               {filteredQuestions.map((q, idx) => {
                 const isActive = currentQuestion?.id === q.id && session?.current_question_id === q.id;
+                const cat = categories.find((c) => c.id === q.category_id);
                 return (
                   <button
                     key={q.id}
@@ -1282,9 +1365,16 @@ export default function OperatorControlPage() {
                         : 'bg-slate-950/60 border-slate-800 text-slate-300 hover:border-slate-700'
                     }`}
                   >
-                    <span className="truncate pr-2">
-                      #{idx + 1}. {q.question_text}
-                    </span>
+                    <div className="flex items-center gap-2 truncate pr-2 min-w-0">
+                      <span className="truncate">
+                        #{idx + 1}. {q.question_text}
+                      </span>
+                      {cat && (
+                        <span className="shrink-0 text-[9px] font-semibold text-pink-300 bg-pink-500/20 px-1.5 py-0.5 rounded border border-pink-500/30">
+                          {cat.name}
+                        </span>
+                      )}
+                    </div>
                     <span className="shrink-0 uppercase text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400">
                       +{q.points || 100} pts
                     </span>

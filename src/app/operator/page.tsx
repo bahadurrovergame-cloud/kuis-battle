@@ -22,12 +22,14 @@ import {
   LayoutGrid,
   BookOpen,
   HelpCircle,
-  Layers
+  Layers,
+  Tag
 } from 'lucide-react';
 
 export default function OperatorProjectorPage() {
   const [session, setSession] = useState<GameSession | null>(null);
   const [questionsList, setQuestionsList] = useState<Question[]>([]);
+  const [categories, setCategories] = useState<{ id: string; name: string }[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [joinUrl, setJoinUrl] = useState('');
@@ -108,6 +110,10 @@ export default function OperatorProjectorPage() {
         .select('*')
         .order('created_at', { ascending: true });
       if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
+
+      // 4. Fetch Categories
+      const { data: catList } = await supabase.from('categories').select('*').order('name');
+      if (catList) setCategories(catList);
     } catch {
       // Quiet fail
     }
@@ -187,6 +193,14 @@ export default function OperatorProjectorPage() {
             .select('*')
             .order('created_at', { ascending: true });
           if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'categories' },
+        async () => {
+          const { data: catList } = await supabase.from('categories').select('*').order('name');
+          if (catList) setCategories(catList);
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
@@ -587,6 +601,7 @@ export default function OperatorProjectorPage() {
                 const boxNum = idx + 1;
                 const matchedQ = filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];
                 const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
+                const boxCatName = categories.find((c) => c.id === matchedQ?.category_id)?.name;
 
                 return (
                   <div
@@ -608,6 +623,14 @@ export default function OperatorProjectorPage() {
                     <span className="text-4xl sm:text-5xl font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300">
                       #{boxNum}
                     </span>
+
+                    {/* Category badge */}
+                    {boxCatName && (
+                      <span className="text-[10px] text-emerald-300 font-bold uppercase tracking-wider truncate max-w-[130px] px-2 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-700/50 flex items-center gap-1 shadow-sm">
+                        <Tag className="w-2.5 h-2.5 text-emerald-400 shrink-0" />
+                        <span className="truncate">{boxCatName}</span>
+                      </span>
+                    )}
 
                     {/* Status Badge */}
                     <span
@@ -657,10 +680,21 @@ export default function OperatorProjectorPage() {
             {/* Header Soal & Countdown */}
             <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-3xl p-6 backdrop-blur-md">
               <div>
-                <span className="text-xs uppercase font-extrabold tracking-widest text-slate-400">
-                  Panggung Perlombaan
-                </span>
-                <h2 className="text-2xl font-black text-white mt-1">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-xs uppercase font-extrabold tracking-widest text-slate-400">
+                    Panggung Perlombaan
+                  </span>
+                  {(() => {
+                    const currentCategoryName = categories.find((c) => c.id === currentQuestion?.category_id)?.name;
+                    return currentCategoryName ? (
+                      <span className="inline-flex items-center gap-1 text-[11px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                        <Tag className="w-3 h-3 text-emerald-400" />
+                        Kategori: {currentCategoryName}
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+                <h2 className="text-2xl font-black text-white">
                   {currentQuestion ? 'Pertanyaan Aktif' : 'Memuat Pertanyaan...'}
                 </h2>
               </div>
@@ -677,6 +711,7 @@ export default function OperatorProjectorPage() {
             <QuestionDisplay
               question={currentQuestion}
               isAnswerRevealed={session?.is_answer_revealed ?? false}
+              categoryName={categories.find((c) => c.id === currentQuestion?.category_id)?.name}
             />
           </div>
         )}
