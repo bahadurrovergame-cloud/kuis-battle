@@ -93,8 +93,6 @@ export default function OperatorProjectorPage() {
 
       if (sessionData) {
         setSession(sessionData);
-        setRemainingTime(sessionData.timer_remaining);
-        prevRemainingRef.current = sessionData.timer_remaining;
 
         // Fetch question jika sudah ada yang aktif
         if (sessionData.current_question_id) {
@@ -137,6 +135,14 @@ export default function OperatorProjectorPage() {
 
   useEffect(() => {
     fetchData();
+
+    // AUTO-POLLING SETIAP 1 DETIK:
+    // Menjamin layar proyektor SELALU AUTO-REFRESH & sinkron tanpa perlu refresh manual browser!
+    const pollInterval = setInterval(() => {
+      fetchData();
+    }, 1000);
+
+    return () => clearInterval(pollInterval);
   }, []);
 
   // Realtime Supabase Subscription

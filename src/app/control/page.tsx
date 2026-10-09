@@ -108,6 +108,13 @@ export default function OperatorControlPage() {
 
   useEffect(() => {
     loadData();
+
+    // Auto-polling 1 detik agar data operator selalu segar
+    const interval = setInterval(() => {
+      loadData();
+    }, 1000);
+
+    return () => clearInterval(interval);
   }, [loadData]);
 
   // Realtime subscription
