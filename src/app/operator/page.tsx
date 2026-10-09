@@ -311,38 +311,6 @@ export default function OperatorProjectorPage() {
             </button>
           )}
 
-          {/* Navigasi Cepat Tahapan Panggung */}
-          <div className="hidden md:flex items-center bg-slate-900 border border-slate-800 rounded-xl p-1 text-xs">
-            <button
-              onClick={() => setStageView('welcome')}
-              className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                stageView === 'welcome' ? 'bg-purple-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Beranda
-            </button>
-            <button
-              onClick={() => setStageView('type_select')}
-              className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                stageView === 'type_select' || stageView === 'cat_select' || stageView === 'box_select'
-                  ? 'bg-blue-600 text-white'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Pilih Kotak
-            </button>
-            {currentQuestion && (
-              <button
-                onClick={() => setStageView('question_active')}
-                className={`px-3 py-1 rounded-lg font-bold transition-all ${
-                  stageView === 'question_active' ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-                }`}
-              >
-                Soal Aktif
-              </button>
-            )}
-          </div>
-
           {/* QR Code toggle */}
           <button
             onClick={() => setShowQrModal(true)}
@@ -652,23 +620,13 @@ export default function OperatorProjectorPage() {
           <div className="w-full flex-1 flex flex-col justify-between space-y-6">
             {/* Header Soal & Countdown */}
             <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-3xl p-6 backdrop-blur-md">
-              <div className="flex items-center gap-4">
-                <button
-                  onClick={() => setStageView('box_select')}
-                  className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-xs font-bold text-slate-300 flex items-center gap-1.5 transition-all"
-                  title="Kembali ke Kotak Panggung"
-                >
-                  <RotateCcw className="w-4 h-4" />
-                  <span>Pilih Kotak Lain</span>
-                </button>
-                <div>
-                  <span className="text-xs uppercase font-extrabold tracking-widest text-slate-400">
-                    Panggung Perlombaan
-                  </span>
-                  <h2 className="text-2xl font-black text-white mt-1">
-                    {currentQuestion ? 'Pertanyaan Aktif' : 'Persiapan Babak'}
-                  </h2>
-                </div>
+              <div>
+                <span className="text-xs uppercase font-extrabold tracking-widest text-slate-400">
+                  Panggung Perlombaan
+                </span>
+                <h2 className="text-2xl font-black text-white mt-1">
+                  {currentQuestion ? 'Pertanyaan Aktif' : 'Persiapan Babak'}
+                </h2>
               </div>
 
               {/* Circular Timer Display */}

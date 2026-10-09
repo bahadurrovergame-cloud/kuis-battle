@@ -115,11 +115,29 @@ export default function OperatorControlPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${session.id}` },
-        (payload) => {
+        async (payload) => {
           const updated = payload.new as GameSession;
           if (updated) {
             setSession(updated);
             setRemainingTime(updated.timer_remaining);
+
+            // Selaraskan currentQuestion di panel control dengan database
+            if (updated.current_question_id) {
+              const matched = questionsList.find((q) => q.id === updated.current_question_id);
+              if (matched) {
+                setCurrentQuestion(matched);
+              } else {
+                // Fetch jika belum ada di state list
+                const { data: qData } = await supabase
+                  .from('questions')
+                  .select('*')
+                  .eq('id', updated.current_question_id)
+                  .single();
+                if (qData) setCurrentQuestion(qData);
+              }
+            } else {
+              setCurrentQuestion(null);
+            }
           }
         }
       )
@@ -142,7 +160,7 @@ export default function OperatorControlPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.id]);
+  }, [session?.id, questionsList]);
 
   // Realtime timer countdown effect in control dashboard
   useEffect(() => {
