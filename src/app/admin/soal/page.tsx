@@ -20,7 +20,11 @@ import {
   Users,
   UserPlus,
   ShieldCheck,
-  Edit2
+  Edit2,
+  Shuffle,
+  Copy,
+  Search,
+  LayoutGrid
 } from 'lucide-react';
 
 interface Category {
@@ -41,8 +45,15 @@ export default function AdminDashboardPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [packageFilter, setPackageFilter] = useState('all');
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Event Settings State (Judul Acara & Jumlah Kotak)
+  const [eventTitle, setEventTitle] = useState('Kuis Battle Panggung');
+  const [blinkBoxCount, setBlinkBoxCount] = useState<number>(6);
+  const [savingSettings, setSavingSettings] = useState(false);
 
   // Modal Soal State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -56,6 +67,8 @@ export default function AdminDashboardPage() {
     explanation: string;
     timer_duration: number;
     points: number;
+    package_name: string;
+    box_number: number | null;
   }>({
     category_id: '',
     type: 'pilihan_ganda',
@@ -70,6 +83,8 @@ export default function AdminDashboardPage() {
     explanation: '',
     timer_duration: 30,
     points: 100,
+    package_name: 'Umum / Bebas',
+    box_number: null,
   });
 
   // Regu / Peserta States
@@ -95,7 +110,11 @@ export default function AdminDashboardPage() {
     setLoading(true);
     try {
       const { data: sData } = await supabase.from('game_sessions').select('*').limit(1).single();
-      if (sData) setSessionId(sData.id);
+      if (sData) {
+        setSessionId(sData.id);
+        if (sData.title) setEventTitle(sData.title);
+        if (sData.blink_box_count) setBlinkBoxCount(sData.blink_box_count);
+      }
 
       const { data: cats } = await supabase.from('categories').select('*').order('name');
       if (cats) setCategories(cats);
@@ -127,6 +146,129 @@ export default function AdminDashboardPage() {
     loadData();
   }, [loadData]);
 
+  // Simpan Pengaturan Acara (Judul Acara & Jumlah Kotak Blink Box)
+  const handleSaveSettings = async () => {
+    if (!sessionId) return;
+    setSavingSettings(true);
+    try {
+      const { error } = await supabase
+        .from('game_sessions')
+        .update({
+          title: eventTitle,
+          blink_box_count: blinkBoxCount,
+        })
+        .eq('id', sessionId);
+      if (error) throw error;
+      setStatusMsg({ text: 'Pengaturan acara berhasil diperbarui & disinkronkan ke layar!', type: 'success' });
+    } catch {
+      setStatusMsg({ text: 'Gagal menyimpan pengaturan acara', type: 'error' });
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
+  // Smart Shuffle Opsi Pilihan Ganda untuk 1 Soal
+  const handleShuffleQuestion = async (q: Question) => {
+    if (q.type !== 'pilihan_ganda' || !q.options || q.options.length < 2) {
+      setStatusMsg({ text: 'Hanya soal Pilihan Ganda dengan opsi yang bisa diacak', type: 'error' });
+      return;
+    }
+
+    const correctText = q.options.find((opt) => opt.key === q.correct_answer)?.text || '';
+    const shuffledOptions = [...q.options].sort(() => Math.random() - 0.5);
+    const keys = ['A', 'B', 'C', 'D'];
+    const newOptions = shuffledOptions.map((opt, idx) => ({
+      key: keys[idx] || opt.key,
+      text: opt.text,
+    }));
+    const newCorrect = newOptions.find((opt) => opt.text === correctText)?.key || 'A';
+
+    try {
+      const { error } = await supabase
+        .from('questions')
+        .update({
+          options: newOptions,
+          correct_answer: newCorrect,
+        })
+        .eq('id', q.id);
+      if (error) throw error;
+
+      setQuestions((prev) =>
+        prev.map((item) => (item.id === q.id ? { ...item, options: newOptions, correct_answer: newCorrect } : item))
+      );
+      setStatusMsg({
+        text: `Kunci soal berhasil diacak: Opsi baru [${newCorrect}] (${correctText})`,
+        type: 'success',
+      });
+    } catch {
+      setStatusMsg({ text: 'Gagal mengacak opsi soal', type: 'error' });
+    }
+  };
+
+  // Acak Cepat Massal (Batch Shuffle) seluruh soal PG
+  const handleBatchShuffle = async () => {
+    const pgQuestions = questions.filter((q) => q.type === 'pilihan_ganda' && q.options && q.options.length >= 2);
+    if (pgQuestions.length === 0) {
+      setStatusMsg({ text: 'Tidak ada soal pilihan ganda untuk diacak', type: 'error' });
+      return;
+    }
+    if (!window.confirm(`Acak kunci jawaban untuk ${pgQuestions.length} soal Pilihan Ganda sekaligus?`)) return;
+
+    setLoading(true);
+    const keys = ['A', 'B', 'C', 'D'];
+    let count = 0;
+    try {
+      for (const q of pgQuestions) {
+        const correctText = q.options.find((opt) => opt.key === q.correct_answer)?.text || '';
+        const shuffled = [...q.options].sort(() => Math.random() - 0.5);
+        const newOpts = shuffled.map((opt, idx) => ({
+          key: keys[idx] || opt.key,
+          text: opt.text,
+        }));
+        const newAns = newOpts.find((opt) => opt.text === correctText)?.key || 'A';
+
+        await supabase
+          .from('questions')
+          .update({
+            options: newOpts,
+            correct_answer: newAns,
+          })
+          .eq('id', q.id);
+        count++;
+      }
+      setStatusMsg({ text: `Berhasil mengacak kunci jawaban untuk ${count} soal pilihan ganda!`, type: 'success' });
+      loadData();
+    } catch {
+      setStatusMsg({ text: 'Gagal mengacak sebagian soal', type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Duplikat Soal Cepat
+  const handleDuplicateQuestion = async (q: Question) => {
+    try {
+      const payload = {
+        category_id: q.category_id,
+        type: q.type,
+        question_text: `${q.question_text} (Salinan)`,
+        options: q.options || [],
+        correct_answer: q.correct_answer,
+        explanation: q.explanation,
+        timer_duration: q.timer_duration || 30,
+        points: q.points || 100,
+        package_name: q.package_name || 'Umum / Bebas',
+        box_number: null,
+      };
+      const { error } = await supabase.from('questions').insert(payload);
+      if (error) throw error;
+      setStatusMsg({ text: 'Soal berhasil diduplikat sebagai salinan!', type: 'success' });
+      loadData();
+    } catch {
+      setStatusMsg({ text: 'Gagal menduplikat soal', type: 'error' });
+    }
+  };
+
   // Reset form soal
   const resetFormSoal = () => {
     setEditingId(null);
@@ -144,6 +286,8 @@ export default function AdminDashboardPage() {
       explanation: '',
       timer_duration: 30,
       points: 100,
+      package_name: 'Umum / Bebas',
+      box_number: null,
     });
   };
 
@@ -170,6 +314,8 @@ export default function AdminDashboardPage() {
       explanation: q.explanation || '',
       timer_duration: q.timer_duration || 30,
       points: q.points || 100,
+      package_name: q.package_name || 'Umum / Bebas',
+      box_number: q.box_number ?? null,
     });
     setIsModalOpen(true);
   };
@@ -197,6 +343,8 @@ export default function AdminDashboardPage() {
         explanation: formData.explanation,
         timer_duration: Number(formData.timer_duration),
         points: Number(formData.points),
+        package_name: formData.package_name || 'Umum / Bebas',
+        box_number: formData.box_number ? Number(formData.box_number) : null,
       };
 
       if (editingId) {
@@ -489,27 +637,123 @@ export default function AdminDashboardPage() {
       {/* KONTEN TAB 1: BANK SOAL */}
       {activeTab === 'soal' && (
         <div className="space-y-4 flex-1 flex flex-col">
-          {/* TOOLBAR SOAL */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
-            <div className="flex items-center gap-2">
-              <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Kategori:
-              </label>
-              <select
-                value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
-                className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
-              >
-                <option value="all">Semua Kategori</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
+          {/* PENGATURAN ACARA & BLINK BOX SYNC */}
+          <div className="bg-gradient-to-r from-purple-950/40 via-slate-900/60 to-blue-950/40 border border-purple-800/40 p-4 rounded-2xl flex flex-wrap items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center gap-4 flex-1 min-w-[280px]">
+              <div className="flex-1 min-w-[200px]">
+                <label className="block text-[11px] font-bold text-purple-300 uppercase tracking-wider mb-1">
+                  Judul Acara (Tampil di Layar Proyektor)
+                </label>
+                <input
+                  type="text"
+                  value={eventTitle}
+                  onChange={(e) => setEventTitle(e.target.value)}
+                  placeholder="Contoh: Kuis Battle Panggung 2026"
+                  className="w-full bg-slate-950 border border-purple-500/40 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-400 font-semibold"
+                />
+              </div>
+
+              <div className="w-44">
+                <label className="block text-[11px] font-bold text-blue-300 uppercase tracking-wider mb-1">
+                  Format Blink Box
+                </label>
+                <div className="flex items-center gap-1.5 bg-slate-950 border border-blue-500/40 rounded-xl p-1">
+                  <button
+                    type="button"
+                    onClick={() => setBlinkBoxCount(6)}
+                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
+                      blinkBoxCount === 6 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    6 Kotak
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setBlinkBoxCount(9)}
+                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
+                      blinkBoxCount === 9 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    9 Kotak
+                  </button>
+                </div>
+              </div>
             </div>
 
-            <div className="flex items-center gap-2">
+            <button
+              onClick={handleSaveSettings}
+              disabled={savingSettings}
+              className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-purple-600/30 flex items-center gap-1.5 disabled:opacity-50"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{savingSettings ? 'Menyimpan...' : 'Sinkronkan ke Layar'}</span>
+            </button>
+          </div>
+
+          {/* TOOLBAR FILTER & AKSI SOAL */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+            <div className="flex flex-wrap items-center gap-3 flex-1">
+              {/* Search input */}
+              <div className="relative min-w-[200px] flex-1 max-w-xs">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Cari pertanyaan / kunci..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                />
+              </div>
+
+              {/* Kategori filter */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Kategori:
+                </label>
+                <select
+                  value={selectedCategory}
+                  onChange={(e) => setSelectedCategory(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  <option value="all">Semua Kategori</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Paket Soal filter (Opsional) */}
+              <div className="flex items-center gap-1.5">
+                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                  Paket:
+                </label>
+                <select
+                  value={packageFilter}
+                  onChange={(e) => setPackageFilter(e.target.value)}
+                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                >
+                  <option value="all">Semua Paket</option>
+                  <option value="Umum / Bebas">Umum / Bebas</option>
+                  <option value="Babak 1">Babak 1</option>
+                  <option value="Babak 2">Babak 2</option>
+                  <option value="Final">Final</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              {/* Batch Shuffle Button */}
+              <button
+                onClick={handleBatchShuffle}
+                className="flex items-center gap-1.5 px-3 py-2 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 rounded-xl text-xs font-bold transition-all"
+                title="Acak semua kunci jawaban Pilihan Ganda secara otomatis"
+              >
+                <Shuffle className="w-3.5 h-3.5 text-indigo-400" />
+                <span>Acak Semua Kunci PG</span>
+              </button>
+
               <label className="cursor-pointer flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all">
                 <Upload className="w-3.5 h-3.5 text-blue-400" />
                 <span>Import JSON</span>
@@ -541,6 +785,7 @@ export default function AdminDashboardPage() {
                 <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                   <tr>
                     <th className="py-3 px-4">#</th>
+                    <th className="py-3 px-4">Slot Kotak</th>
                     <th className="py-3 px-4">Tipe</th>
                     <th className="py-3 px-4">Pertanyaan</th>
                     <th className="py-3 px-4">Kunci Jawaban</th>
@@ -552,20 +797,44 @@ export default function AdminDashboardPage() {
                 <tbody className="divide-y divide-slate-800/60">
                   {loading ? (
                     <tr>
-                      <td colSpan={7} className="text-center py-10 text-slate-500">
+                      <td colSpan={8} className="text-center py-10 text-slate-500">
                         Memuat data...
                       </td>
                     </tr>
-                  ) : questions.length === 0 ? (
-                    <tr>
-                      <td colSpan={7} className="text-center py-10 text-slate-500">
-                        Belum ada soal pada kategori ini.
-                      </td>
-                    </tr>
-                  ) : (
-                    questions.map((q, idx) => (
+                  ) : (() => {
+                    const filtered = questions.filter((q) => {
+                      const matchesSearch =
+                        !searchQuery ||
+                        q.question_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        q.correct_answer.toLowerCase().includes(searchQuery.toLowerCase());
+                      const matchesPackage =
+                        packageFilter === 'all' || (q.package_name || 'Umum / Bebas') === packageFilter;
+                      return matchesSearch && matchesPackage;
+                    });
+
+                    if (filtered.length === 0) {
+                      return (
+                        <tr>
+                          <td colSpan={8} className="text-center py-10 text-slate-500">
+                            Tidak ada soal yang sesuai pencarian atau filter.
+                          </td>
+                        </tr>
+                      );
+                    }
+
+                    return filtered.map((q, idx) => (
                       <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
+                        <td className="py-3 px-4">
+                          {q.box_number ? (
+                            <span className="inline-flex items-center gap-1 font-mono text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
+                              <LayoutGrid className="w-3 h-3" />
+                              Kotak #{q.box_number}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-500 italic">Otomatis</span>
+                          )}
+                        </td>
                         <td className="py-3 px-4">
                           <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
                             {q.type.replace('_', ' ')}
@@ -585,6 +854,22 @@ export default function AdminDashboardPage() {
                         </td>
                         <td className="py-3 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {q.type === 'pilihan_ganda' && (
+                              <button
+                                onClick={() => handleShuffleQuestion(q)}
+                                className="p-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/50"
+                                title="Smart Shuffle: Acak posisi opsi & pindahkan kunci jawaban otomatis"
+                              >
+                                <Shuffle className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDuplicateQuestion(q)}
+                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                              title="Duplikat Soal"
+                            >
+                              <Copy className="w-3.5 h-3.5" />
+                            </button>
                             <button
                               onClick={() => handleOpenEditSoal(q)}
                               className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
@@ -602,8 +887,8 @@ export default function AdminDashboardPage() {
                           </div>
                         </td>
                       </tr>
-                    ))
-                  )}
+                    ));
+                  })()}
                 </tbody>
               </table>
             </div>
@@ -900,6 +1185,47 @@ export default function AdminDashboardPage() {
                     }
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
+                </div>
+              </div>
+
+              {/* Slot Kotak & Paket Soal (Opsional) */}
+              <div className="grid grid-cols-2 gap-4 p-3 bg-slate-950/70 border border-slate-800 rounded-2xl">
+                <div>
+                  <label className="block text-[11px] font-bold text-blue-300 uppercase tracking-wider mb-1.5">
+                    Slot Kotak Blink Box (1 - 9)
+                  </label>
+                  <select
+                    value={formData.box_number ?? ''}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        box_number: e.target.value ? Number(e.target.value) : null,
+                      })
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                  >
+                    <option value="">Otomatis (Sesuai Urutan)</option>
+                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                      <option key={num} value={num}>
+                        Kotak Nomor #{num}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[11px] font-bold text-purple-300 uppercase tracking-wider mb-1.5">
+                    Paket / Babak (Opsional)
+                  </label>
+                  <select
+                    value={formData.package_name}
+                    onChange={(e) => setFormData({ ...formData, package_name: e.target.value })}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="Umum / Bebas">Umum / Bebas</option>
+                    <option value="Babak 1">Babak 1</option>
+                    <option value="Babak 2">Babak 2</option>
+                    <option value="Final">Final</option>
+                  </select>
                 </div>
               </div>
 

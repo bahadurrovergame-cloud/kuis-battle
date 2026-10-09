@@ -22,6 +22,10 @@ export interface Question {
   explanation: string | null;
   timer_duration: number;
   points: number;
+  package_name?: string; // default "Umum / Bebas"
+  box_number?: number | null; // 1 s/d 9
+  is_active_box?: boolean;
+  is_opened?: boolean;
   created_at?: string;
 }
 
@@ -34,6 +38,8 @@ export interface GameSession {
   is_answer_revealed: boolean;
   timer_remaining: number;
   is_timer_running: boolean;
+  blink_box_count?: number; // 6 atau 9
+  active_view?: 'welcome' | 'category_select' | 'question_active';
   created_at?: string;
   updated_at?: string;
 }

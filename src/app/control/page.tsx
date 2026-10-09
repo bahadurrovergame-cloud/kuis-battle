@@ -23,7 +23,8 @@ import {
   Edit2,
   Trash2,
   X,
-  Check
+  Check,
+  LayoutGrid
 } from 'lucide-react';
 import { sounds } from '@/lib/sound';
 
@@ -182,6 +183,17 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
+  // Quick preset duration: [15s], [20s], [30s], [45s], [60s]
+  const handleSetDuration = async (seconds: number) => {
+    if (!session) return;
+    setRemainingTime(seconds);
+    setSession({ ...session, timer_remaining: seconds });
+    await supabase
+      .from('game_sessions')
+      .update({ timer_remaining: seconds })
+      .eq('id', session.id);
+  };
+
   // Toggle reveal answer
   const toggleRevealAnswer = async () => {
     if (!session) return;
@@ -194,19 +206,21 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Next Question
-  const handleSelectQuestion = async (q: Question) => {
+  // Select Question & Auto-Start Timer
+  const handleSelectQuestion = async (q: Question, autoStartTimer = false) => {
     if (!session) return;
     setLoadingAction(true);
     setCurrentQuestion(q);
+    const dur = q.timer_duration || 30;
+    setRemainingTime(dur);
 
     await supabase
       .from('game_sessions')
       .update({
         current_question_id: q.id,
         is_answer_revealed: false,
-        timer_remaining: q.timer_duration || 30,
-        is_timer_running: false,
+        timer_remaining: dur,
+        is_timer_running: autoStartTimer,
         status: 'active',
       })
       .eq('id', session.id);
@@ -500,6 +514,28 @@ export default function OperatorControlPage() {
             </div>
           </div>
 
+          {/* PRESET DURASI CEPAT TIMER */}
+          <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 p-2.5 rounded-xl">
+            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
+              Preset Timer:
+            </span>
+            <div className="flex flex-wrap gap-1.5 flex-1">
+              {[15, 20, 30, 45, 60].map((sec) => (
+                <button
+                  key={sec}
+                  onClick={() => handleSetDuration(sec)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                    remainingTime === sec
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                  }`}
+                >
+                  {sec}s
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* ACTION BUTTONS: TIMER, BUKA KUNCI, SOAL BERIKUTNYA */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {/* Play / Pause Timer */}
@@ -552,18 +588,64 @@ export default function OperatorControlPage() {
             </button>
           </div>
 
+          {/* BLINK BOX GRID SELECTOR DI OPERATOR (AUTO-START TIMER ON CLICK) */}
+          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-1.5">
+                <LayoutGrid className="w-4 h-4 text-blue-400" />
+                <span>Pilih Kotak Blink Box (Otomatis Mulai Timer)</span>
+              </span>
+              <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 font-mono">
+                {session?.blink_box_count === 9 ? '9 Kotak' : '6 Kotak'}
+              </span>
+            </div>
+
+            <div
+              className={`grid gap-2 ${
+                session?.blink_box_count === 9 ? 'grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'
+              }`}
+            >
+              {Array.from({ length: session?.blink_box_count === 9 ? 9 : 6 }).map((_, idx) => {
+                const boxNum = idx + 1;
+                const matchedQ =
+                  questionsList.find((q) => q.box_number === boxNum) || questionsList[idx];
+                const isActive = currentQuestion?.id === matchedQ?.id;
+
+                return (
+                  <button
+                    key={boxNum}
+                    disabled={!matchedQ}
+                    onClick={() => matchedQ && handleSelectQuestion(matchedQ, true)}
+                    className={`p-3 rounded-xl font-bold flex flex-col items-center justify-center transition-all ${
+                      isActive
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 border border-blue-400'
+                        : matchedQ
+                        ? 'bg-slate-950 border border-slate-800 hover:border-blue-500 text-slate-200 hover:text-white'
+                        : 'bg-slate-950/40 border border-slate-800 text-slate-600 cursor-not-allowed'
+                    }`}
+                  >
+                    <span className="text-base font-mono font-black">#{boxNum}</span>
+                    <span className="text-[9px] uppercase tracking-wider truncate max-w-[80px]">
+                      {matchedQ ? matchedQ.question_text.slice(0, 10) + '...' : 'Kosong'}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* LIST PEMILIHAN SOAL CEPAT */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex-1">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">
-              Daftar Bank Soal ({questionsList.length} Soal)
+              Daftar Bank Soal Lengkap ({questionsList.length} Soal)
             </span>
-            <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+            <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
               {questionsList.map((q, idx) => {
                 const isActive = currentQuestion?.id === q.id;
                 return (
                   <button
                     key={q.id}
-                    onClick={() => handleSelectQuestion(q)}
+                    onClick={() => handleSelectQuestion(q, false)}
                     className={`w-full text-left p-2.5 rounded-xl text-xs font-medium flex items-center justify-between border transition-all ${
                       isActive
                         ? 'bg-blue-600/20 border-blue-500 text-white font-bold'
