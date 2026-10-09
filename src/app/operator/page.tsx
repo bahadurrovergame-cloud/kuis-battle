@@ -18,46 +18,29 @@ import {
   Volume2,
   Sparkles,
   Trophy,
-  LayoutGrid,
-  ChevronRight,
-  RotateCcw,
-  BookOpen,
-  HelpCircle,
-  Layers,
-  ChevronLeft
+  Users
 } from 'lucide-react';
-
-interface Category {
-  id: string;
-  name: string;
-}
 
 export default function OperatorProjectorPage() {
   const [session, setSession] = useState<GameSession | null>(null);
-  const [currentQuestion, setCurrentQuestion] = useState<Question | null>(null);
   const [questionsList, setQuestionsList] = useState<Question[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [joinUrl, setJoinUrl] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
 
-  // Flow State di Panggung: 'welcome' | 'type_select' | 'cat_select' | 'box_select' | 'question_active'
-  const [stageView, setStageView] = useState<'welcome' | 'type_select' | 'cat_select' | 'box_select' | 'question_active'>('welcome');
-  const [selectedType, setSelectedType] = useState<string>('pilihan_ganda');
-  const [selectedCatId, setSelectedCatId] = useState<string>('');
-
   // Floating Leaderboard Auto-Fade state
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [isIdle, setIsIdle] = useState(false);
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Local mirror of the timer to provide smooth counting
-  const [remainingTime, setRemainingTime] = useState(30);
+  // Local synced countdown timer
+  const [remainingTime, setRemainingTime] = useState<number>(30);
   const prevRemainingRef = useRef<number>(30);
+  const prevRevealedRef = useRef<boolean>(false);
 
-  // Deteksi Gerakan Mouse untuk Auto-Fade Floating Button (pudar setelah 3 detik diam)
+  // Auto-Fade floating controls saat mouse diam 3 detik
   useEffect(() => {
     const handleMouseMove = () => {
       setIsIdle(false);
@@ -74,7 +57,7 @@ export default function OperatorProjectorPage() {
     };
   }, []);
 
-  // Set Join URL from browser origin (LAN IP laptop)
+  // Set Join URL from browser origin
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const url = `${window.location.origin}/peserta`;
@@ -82,51 +65,35 @@ export default function OperatorProjectorPage() {
     }
   }, []);
 
-  // Fetch initial session & teams & questions data
-  const fetchData = async () => {
+  // Fetch initial data (session, questions, teams)
+  const fetchInitialData = async () => {
     try {
+      // 1. Fetch Game Session
       const { data: sessionData } = await supabase
         .from('game_sessions')
         .select('*')
+        .order('created_at', { ascending: true })
         .limit(1)
         .single();
 
       if (sessionData) {
         setSession(sessionData);
+        setRemainingTime(sessionData.timer_remaining);
 
-        // Fetch question jika sudah ada yang aktif
-        if (sessionData.current_question_id) {
-          const { data: qData } = await supabase
-            .from('questions')
-            .select('*')
-            .eq('id', sessionData.current_question_id)
-            .single();
-          if (qData) {
-            setCurrentQuestion(qData);
-            setStageView('question_active');
-          } else {
-            setStageView('welcome');
-          }
-        } else {
-          // Tetap di Welcome Screen jika belum ada soal yang dipilih oleh operator
-          setCurrentQuestion(null);
-          setStageView('welcome');
-        }
-
-        // Fetch teams
+        // 2. Fetch Teams
         const { data: teamsData } = await supabase
           .from('teams')
           .select('*')
-          .eq('session_id', sessionData.id);
+          .eq('session_id', sessionData.id)
+          .order('score', { ascending: false });
         if (teamsData) setTeams(teamsData);
       }
 
-      // Fetch Categories
-      const { data: catData } = await supabase.from('categories').select('*').order('name');
-      if (catData) setCategories(catData);
-
-      // Fetch Questions
-      const { data: qDataList } = await supabase.from('questions').select('*');
+      // 3. Fetch Questions
+      const { data: qDataList } = await supabase
+        .from('questions')
+        .select('*')
+        .order('created_at', { ascending: true });
       if (qDataList) setQuestionsList(qDataList);
     } catch {
       // Quiet fail
@@ -134,54 +101,29 @@ export default function OperatorProjectorPage() {
   };
 
   useEffect(() => {
-    fetchData();
-
-    // AUTO-POLLING SETIAP 1 DETIK:
-    // Menjamin layar proyektor SELALU AUTO-REFRESH & sinkron tanpa perlu refresh manual browser!
-    const pollInterval = setInterval(() => {
-      fetchData();
-    }, 1000);
-
-    return () => clearInterval(pollInterval);
+    fetchInitialData();
   }, []);
 
   // Realtime Supabase Subscription
   useEffect(() => {
     if (!session?.id) return;
 
-    const channelName = `projector_live_${session.id}_${Date.now()}`;
+    const channelName = `room_sync_${session.id}`;
     const channel = supabase
       .channel(channelName)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${session.id}` },
-        async (payload) => {
+        (payload) => {
           const newSession = payload.new as GameSession;
           if (newSession) {
-            // Trigger sound when answer revealed
-            if (newSession.is_answer_revealed) {
+            // Sound effect ketika kunci jawaban dibuka
+            if (newSession.is_answer_revealed && !prevRevealedRef.current) {
               sounds.playCorrect();
             }
-
-            // Sync current question secara langsung
-            if (newSession.current_question_id) {
-              const { data: qData } = await supabase
-                .from('questions')
-                .select('*')
-                .eq('id', newSession.current_question_id)
-                .single();
-              if (qData) {
-                setCurrentQuestion(qData);
-                setStageView('question_active');
-              }
-            } else {
-              // Jika current_question_id null, tampilkan Welcome Screen
-              setCurrentQuestion(null);
-              setStageView('welcome');
-            }
+            prevRevealedRef.current = newSession.is_answer_revealed;
 
             setSession(newSession);
-            setRemainingTime(newSession.timer_remaining);
           }
         }
       )
@@ -192,7 +134,8 @@ export default function OperatorProjectorPage() {
           const { data: teamsData } = await supabase
             .from('teams')
             .select('*')
-            .eq('session_id', session.id);
+            .eq('session_id', session.id)
+            .order('score', { ascending: false });
           if (teamsData) setTeams(teamsData);
         }
       )
@@ -200,7 +143,10 @@ export default function OperatorProjectorPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'questions' },
         async () => {
-          const { data: qDataList } = await supabase.from('questions').select('*');
+          const { data: qDataList } = await supabase
+            .from('questions')
+            .select('*')
+            .order('created_at', { ascending: true });
           if (qDataList) setQuestionsList(qDataList);
         }
       )
@@ -213,25 +159,79 @@ export default function OperatorProjectorPage() {
     };
   }, [session?.id]);
 
-  // Audio & Timer tick effect
+  // Safety Auto-Sync Polling setiap 2.5 detik (menjamin layar selalu ter-update secara otomatis)
   useEffect(() => {
-    if (!session?.is_timer_running || remainingTime <= 0) return;
+    if (!session?.id) return;
 
-    const interval = setInterval(() => {
-      setRemainingTime((prev) => {
-        const next = Math.max(0, prev - 1);
-        if (next > 0) {
-          sounds.playTick(next <= 5);
-        } else if (next === 0 && prevRemainingRef.current > 0) {
-          sounds.playTimeUp();
+    const interval = setInterval(async () => {
+      try {
+        const { data: latestSession } = await supabase
+          .from('game_sessions')
+          .select('*')
+          .eq('id', session.id)
+          .single();
+
+        if (latestSession) {
+          // Update session jika ada perubahan nilai kunci
+          if (
+            latestSession.current_question_id !== session.current_question_id ||
+            latestSession.is_answer_revealed !== session.is_answer_revealed ||
+            latestSession.is_timer_running !== session.is_timer_running ||
+            latestSession.status !== session.status ||
+            latestSession.title !== session.title
+          ) {
+            if (latestSession.is_answer_revealed && !session.is_answer_revealed) {
+              sounds.playCorrect();
+            }
+            setSession(latestSession);
+          }
         }
-        prevRemainingRef.current = next;
-        return next;
-      });
-    }, 1000);
+      } catch {
+        // Quiet fail
+      }
+    }, 2500);
 
     return () => clearInterval(interval);
-  }, [session?.is_timer_running, remainingTime]);
+  }, [session?.id, session?.current_question_id, session?.is_answer_revealed, session?.is_timer_running, session?.status, session?.title]);
+
+  // SYNCHRONIZED COUNTDOWN TIMER (Presisi tinggi berbasis Server Timestamp)
+  useEffect(() => {
+    if (!session?.is_timer_running || !session?.updated_at) {
+      if (session) {
+        setRemainingTime(session.timer_remaining);
+        prevRemainingRef.current = session.timer_remaining;
+      }
+      return;
+    }
+
+    const calcTime = () => {
+      const elapsed = (Date.now() - new Date(session.updated_at!).getTime()) / 1000;
+      const left = Math.max(0, Math.ceil(session.timer_remaining - elapsed));
+      setRemainingTime((prev) => {
+        if (left !== prev) {
+          if (left <= 5 && left > 0) {
+            sounds.playTick(true);
+          } else if (left > 5) {
+            sounds.playTick(false);
+          } else if (left === 0 && prevRemainingRef.current > 0) {
+            sounds.playTimeUp();
+          }
+          prevRemainingRef.current = left;
+        }
+        return left;
+      });
+    };
+
+    calcTime();
+    const timerInterval = setInterval(calcTime, 250);
+
+    return () => clearInterval(timerInterval);
+  }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
+
+  // Cari Soal Aktif dari daftar pertanyaan
+  const currentQuestion = session?.current_question_id
+    ? questionsList.find((q) => q.id === session.current_question_id) || null
+    : null;
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -245,36 +245,6 @@ export default function OperatorProjectorPage() {
     sounds.playTick();
     setAudioUnlocked(true);
   };
-
-  // Handler memilih kotak Blink Box langsung dari layar proyektor / operator
-  const handleSelectBox = async (boxIndex: number, question: Question | undefined) => {
-    if (!question || !session) return;
-    sounds.playScoreUp(); // Bunyi klik animasi kuis
-    setCurrentQuestion(question);
-    setStageView('question_active');
-
-    // Sync ke database & langsung jalankan timer
-    const dur = question.timer_duration || 30;
-    setRemainingTime(dur);
-    await supabase
-      .from('game_sessions')
-      .update({
-        current_question_id: question.id,
-        is_answer_revealed: false,
-        timer_remaining: dur,
-        is_timer_running: true,
-        status: 'active',
-      })
-      .eq('id', session.id);
-  };
-
-  // Hitung jumlah kotak berdasarkan setting sesi (6 atau 9)
-  const totalBoxes = session?.blink_box_count === 9 ? 9 : 6;
-
-  // Filter daftar soal sesuai tipe & kategori yang dipilih
-  const currentCategoryQuestions = questionsList.filter(
-    (q) => q.type === selectedType && (selectedCatId ? q.category_id === selectedCatId : true)
-  );
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col p-6 select-none overflow-hidden relative">
@@ -386,16 +356,16 @@ export default function OperatorProjectorPage() {
         </div>
       )}
 
-      {/* MAIN CONTENT AREA */}
-      <div className="flex-1 flex flex-col justify-center items-center pt-6 z-10 min-h-0 relative">
-        {/* VIEW 1: WELCOME SCREEN (SAY HELLO TO AUDIENCE) */}
-        {stageView === 'welcome' && (
-          <div className="max-w-4xl w-full text-center py-12 px-6 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
-            <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-white mb-6 shadow-xl shadow-purple-600/30">
+      {/* MAIN STAGE CONTENT AREA */}
+      <div className="flex-1 flex flex-col justify-center items-center pt-6 z-10 min-h-0 relative w-full">
+        {/* TAMPILAN 1: DASHBOARD SAMBUTAN / ARENA UTAMA (Ketika belum ada soal yang dipilih) */}
+        {!session?.current_question_id && (
+          <div className="max-w-5xl w-full text-center py-10 px-8 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
+            <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-white mb-5 shadow-xl shadow-purple-600/30">
               <Sparkles className="w-10 h-10 animate-bounce" />
             </div>
 
-            <span className="text-xs uppercase font-extrabold tracking-widest text-purple-400 bg-purple-500/10 px-4 py-1 rounded-full border border-purple-500/20 mb-3">
+            <span className="text-xs uppercase font-extrabold tracking-widest text-purple-400 bg-purple-500/10 px-4 py-1.5 rounded-full border border-purple-500/20 mb-3">
               Selamat Datang di Arena
             </span>
 
@@ -403,225 +373,54 @@ export default function OperatorProjectorPage() {
               {session?.title || 'Kuis Battle Panggung'}
             </h2>
 
-            <p className="text-sm md:text-base text-slate-400 max-w-xl mx-auto mb-8 font-medium">
-              Siapkan strategi regu Anda! Pilih kotak misteri, jawab pertanyaan dengan cepat, dan kumpulkan skor tertinggi untuk menjadi juara!
+            <p className="text-sm md:text-base text-slate-400 max-w-xl mx-auto mb-6 font-medium">
+              Siapkan strategi regu Anda! Jawab pertanyaan dengan cepat, kumpulkan poin maksimal, dan rebut gelar juara panggung!
             </p>
 
-            <div className="flex flex-wrap items-center justify-center gap-4">
-              <button
-                onClick={() => setStageView('type_select')}
-                className="flex items-center gap-2 px-8 py-4 rounded-2xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-black text-sm uppercase tracking-wider shadow-xl shadow-blue-600/30 transition-all transform hover:scale-105 active:scale-95"
-              >
-                <LayoutGrid className="w-5 h-5" />
-                <span>Mulai Pilih Soal Panggung</span>
-                <ChevronRight className="w-5 h-5" />
-              </button>
-
-              <button
-                onClick={() => setShowQrModal(true)}
-                className="flex items-center gap-2 px-6 py-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm uppercase tracking-wider border border-slate-700 transition-all"
-              >
-                <QrCode className="w-5 h-5 text-emerald-400" />
-                <span>Pindai QR Peserta</span>
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* VIEW 2: STEP 1 - PILIH TIPE SOAL */}
-        {stageView === 'type_select' && (
-          <div className="max-w-4xl w-full text-center space-y-6">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setStageView('welcome')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold text-slate-400 hover:text-white"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Kembali</span>
-              </button>
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                Langkah 1 dari 3: Pilih Tipe Soal
-              </span>
-              <div className="w-20" />
+            {/* Status Panggung */}
+            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-bold uppercase tracking-wider mb-8 animate-pulse">
+              <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+              <span>Menunggu Operator Membuka Soal...</span>
             </div>
 
-            <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wide">
-              Pilih Format Tantangan
-            </h2>
+            {/* PREVIEW KLASEMEN REGUS DI PANGGUNG SAMBUTAN */}
+            {teams.length > 0 && (
+              <div className="w-full max-w-3xl border-t border-slate-800/80 pt-6 mt-2">
+                <div className="flex items-center justify-center gap-2 mb-4">
+                  <Users className="w-4 h-4 text-amber-400" />
+                  <span className="text-xs font-extrabold uppercase tracking-widest text-slate-400">
+                    Regu Peserta yang Bertanding ({teams.length} Regu)
+                  </span>
+                </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
-              {[
-                {
-                  type: 'pilihan_ganda',
-                  title: 'Pilihan Ganda',
-                  desc: '4 Opsi Jawaban (A, B, C, D) dengan Smart Shuffle',
-                  icon: BookOpen,
-                  color: 'from-blue-600 to-cyan-600',
-                  border: 'border-blue-500/40',
-                },
-                {
-                  type: 'benar_salah',
-                  title: 'Benar / Salah',
-                  desc: 'Tantangan kilat menguji ketangkasan & logika',
-                  icon: HelpCircle,
-                  color: 'from-amber-600 to-orange-600',
-                  border: 'border-amber-500/40',
-                },
-                {
-                  type: 'essay',
-                  title: 'Rebutan / Lisan',
-                  desc: 'Pertanyaan eksploratif dinilai langsung oleh dewan juri',
-                  icon: Layers,
-                  color: 'from-purple-600 to-pink-600',
-                  border: 'border-purple-500/40',
-                },
-              ].map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.type}
-                    onClick={() => {
-                      setSelectedType(item.type);
-                      setStageView('cat_select');
-                    }}
-                    className={`p-8 rounded-3xl bg-slate-900/80 border ${item.border} hover:scale-105 active:scale-95 transition-all text-left flex flex-col justify-between shadow-xl group`}
-                  >
-                    <div className={`w-14 h-14 rounded-2xl bg-gradient-to-tr ${item.color} flex items-center justify-center text-white mb-6 shadow-lg group-hover:scale-110 transition-transform`}>
-                      <Icon className="w-7 h-7" />
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                  {teams.map((t, idx) => (
+                    <div
+                      key={t.id}
+                      className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col items-center justify-center gap-1 shadow"
+                    >
+                      <div className="flex items-center gap-1.5">
+                        <span
+                          className="w-2.5 h-2.5 rounded-full"
+                          style={{ backgroundColor: t.color }}
+                        />
+                        <span className="text-xs font-black text-white truncate max-w-[100px]">
+                          {t.name}
+                        </span>
+                      </div>
+                      <span className="text-base font-black font-mono text-amber-400">
+                        {t.score} <span className="text-[10px] text-slate-500 font-normal">PTS</span>
+                      </span>
                     </div>
-                    <div>
-                      <h3 className="text-xl font-black text-white uppercase mb-2">
-                        {item.title}
-                      </h3>
-                      <p className="text-xs text-slate-400 font-medium">{item.desc}</p>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {/* VIEW 3: STEP 2 - PILIH KATEGORI */}
-        {stageView === 'cat_select' && (
-          <div className="max-w-4xl w-full text-center space-y-6">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setStageView('type_select')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold text-slate-400 hover:text-white"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Kembali</span>
-              </button>
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                Langkah 2 dari 3: Pilih Tema Kategori
-              </span>
-              <div className="w-20" />
-            </div>
-
-            <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wide">
-              Pilih Kategori Bidang
-            </h2>
-
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4">
-              <button
-                onClick={() => {
-                  setSelectedCatId('');
-                  setStageView('box_select');
-                }}
-                className="p-6 rounded-2xl bg-slate-900/80 border border-slate-700 hover:border-blue-500 hover:scale-105 transition-all text-center font-bold text-sm text-slate-200"
-              >
-                🌐 Semua Kategori (Campuran)
-              </button>
-              {categories.map((c) => (
-                <button
-                  key={c.id}
-                  onClick={() => {
-                    setSelectedCatId(c.id);
-                    setStageView('box_select');
-                  }}
-                  className="p-6 rounded-2xl bg-slate-900/80 border border-slate-800 hover:border-purple-500 hover:scale-105 transition-all text-center font-bold text-sm text-white"
-                >
-                  📚 {c.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* VIEW 4: STEP 3 - BLINK BOX GRID DENGAN NEON GLOW (6 ATAU 9 KOTAK) */}
-        {stageView === 'box_select' && (
-          <div className="max-w-4xl w-full text-center space-y-6">
-            <div className="flex items-center justify-between">
-              <button
-                onClick={() => setStageView('cat_select')}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-xs font-bold text-slate-400 hover:text-white"
-              >
-                <ChevronLeft className="w-4 h-4" />
-                <span>Kembali</span>
-              </button>
-              <span className="text-xs font-bold uppercase tracking-widest text-slate-400">
-                Langkah 3 dari 3: Pilih Kotak Tantangan ({totalBoxes} Kotak)
-              </span>
-              <div className="w-20" />
-            </div>
-
-            <h2 className="text-2xl md:text-3xl font-black text-white uppercase tracking-wide flex items-center justify-center gap-2">
-              <Sparkles className="w-6 h-6 text-amber-400 animate-pulse" />
-              <span>Blink Box Arena</span>
-            </h2>
-
-            <div
-              className={`grid gap-4 pt-4 ${
-                totalBoxes === 9
-                  ? 'grid-cols-3 max-w-2xl mx-auto'
-                  : 'grid-cols-2 md:grid-cols-3 max-w-2xl mx-auto'
-              }`}
-            >
-              {Array.from({ length: totalBoxes }).map((_, idx) => {
-                const boxNum = idx + 1;
-                // Cocokkan soal: utamakan yang memiliki slot box_number sesuai, atau fallback ke urutan array
-                const matchedQ =
-                  currentCategoryQuestions.find((q) => q.box_number === boxNum) ||
-                  currentCategoryQuestions[idx];
-                const isOpened = matchedQ?.id === currentQuestion?.id && session?.current_question_id === matchedQ?.id;
-
-                return (
-                  <div
-                    key={boxNum}
-                    className={`h-32 sm:h-36 rounded-3xl font-black flex flex-col items-center justify-center gap-2 transition-all duration-300 relative overflow-hidden select-none ${
-                      isOpened
-                        ? 'bg-slate-900/40 border border-slate-800 text-slate-600 opacity-50'
-                        : matchedQ
-                        ? 'bg-gradient-to-br from-indigo-900/60 via-slate-900 to-purple-900/60 border-2 border-indigo-500/60 shadow-lg shadow-indigo-600/20 text-white animate-pulse'
-                        : 'bg-slate-950/40 border border-slate-800 text-slate-700'
-                    }`}
-                  >
-                    {/* Glowing pulse aura */}
-                    {!isOpened && matchedQ && (
-                      <span className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/20 rounded-full blur-xl" />
-                    )}
-
-                    <span className="text-3xl sm:text-4xl font-black font-mono tracking-wider drop-shadow-md">
-                      #{boxNum}
-                    </span>
-
-                    <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400">
-                      {isOpened
-                        ? 'Sudah Dibuka'
-                        : matchedQ
-                        ? 'Menunggu Operator'
-                        : 'Kosong'}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* VIEW 5: QUESTION ACTIVE ARENA */}
-        {stageView === 'question_active' && (
+        {/* TAMPILAN 2: SOAL AKTIF DI PANGGUNG */}
+        {session?.current_question_id && (
           <div className="w-full flex-1 flex flex-col justify-between space-y-6">
             {/* Header Soal & Countdown */}
             <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-3xl p-6 backdrop-blur-md">
@@ -630,7 +429,7 @@ export default function OperatorProjectorPage() {
                   Panggung Perlombaan
                 </span>
                 <h2 className="text-2xl font-black text-white mt-1">
-                  {currentQuestion ? 'Pertanyaan Aktif' : 'Persiapan Babak'}
+                  {currentQuestion ? 'Pertanyaan Aktif' : 'Memuat Pertanyaan...'}
                 </h2>
               </div>
 
@@ -692,4 +491,3 @@ export default function OperatorProjectorPage() {
     </main>
   );
 }
-

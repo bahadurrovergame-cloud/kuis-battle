@@ -52,6 +52,7 @@ export default function OperatorControlPage() {
 
   // Live timer countdown state
   const [remainingTime, setRemainingTime] = useState<number>(30);
+  const prevRemainingRef = useRef<number>(30);
 
   // Auth gate check
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
@@ -71,12 +72,12 @@ export default function OperatorControlPage() {
       const { data: sessionData } = await supabase
         .from('game_sessions')
         .select('*')
+        .order('created_at', { ascending: true })
         .limit(1)
         .single();
 
       if (sessionData) {
         setSession(sessionData);
-        setRemainingTime(sessionData.timer_remaining);
 
         // Fetch questions
         const { data: qList } = await supabase
@@ -89,8 +90,8 @@ export default function OperatorControlPage() {
         if (sessionData.current_question_id) {
           const foundQ = qList?.find((q) => q.id === sessionData.current_question_id);
           if (foundQ) setCurrentQuestion(foundQ);
-        } else if (qList && qList.length > 0) {
-          setCurrentQuestion(qList[0]);
+        } else {
+          setCurrentQuestion(null);
         }
 
         // Teams
@@ -109,10 +110,10 @@ export default function OperatorControlPage() {
   useEffect(() => {
     loadData();
 
-    // Auto-polling 1 detik agar data operator selalu segar
+    // Auto-polling 2.5 detik sebagai jaring pengaman sinkronisasi
     const interval = setInterval(() => {
       loadData();
-    }, 1000);
+    }, 2500);
 
     return () => clearInterval(interval);
   }, [loadData]);
@@ -121,7 +122,7 @@ export default function OperatorControlPage() {
   useEffect(() => {
     if (!session?.id) return;
 
-    const channelName = `operator_control_${session.id}_${Date.now()}`;
+    const channelName = `room_sync_${session.id}`;
     const channel = supabase
       .channel(channelName)
       .on(
@@ -131,7 +132,6 @@ export default function OperatorControlPage() {
           const updated = payload.new as GameSession;
           if (updated) {
             setSession(updated);
-            setRemainingTime(updated.timer_remaining);
 
             // Selaraskan currentQuestion di panel control dengan database
             if (updated.current_question_id) {
@@ -159,6 +159,17 @@ export default function OperatorControlPage() {
           if (updatedTeams) setTeams(updatedTeams);
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'questions' },
+        async () => {
+          const { data: qList } = await supabase
+            .from('questions')
+            .select('*')
+            .order('created_at', { ascending: true });
+          if (qList) setQuestionsList(qList);
+        }
+      )
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
       });
@@ -168,28 +179,59 @@ export default function OperatorControlPage() {
     };
   }, [session?.id]);
 
-  // Realtime timer countdown effect in control dashboard
+  // SYNCHRONIZED COUNTDOWN TIMER (Presisi tinggi berbasis Server Timestamp)
   useEffect(() => {
-    if (!session?.is_timer_running || remainingTime <= 0) return;
+    if (!session?.is_timer_running || !session?.updated_at) {
+      if (session) {
+        setRemainingTime(session.timer_remaining);
+        prevRemainingRef.current = session.timer_remaining;
+      }
+      return;
+    }
 
-    const interval = setInterval(() => {
-      setRemainingTime((prev) => Math.max(0, prev - 1));
-    }, 1000);
+    const calcTime = () => {
+      const elapsed = (Date.now() - new Date(session.updated_at!).getTime()) / 1000;
+      const left = Math.max(0, Math.ceil(session.timer_remaining - elapsed));
+      setRemainingTime((prev) => {
+        if (left !== prev) {
+          if (left <= 5 && left > 0) {
+            sounds.playTick(true);
+          } else if (left > 5) {
+            sounds.playTick(false);
+          } else if (left === 0 && prevRemainingRef.current > 0) {
+            sounds.playTimeUp();
+          }
+          prevRemainingRef.current = left;
+        }
+        return left;
+      });
+    };
 
-    return () => clearInterval(interval);
-  }, [session?.is_timer_running, remainingTime]);
+    calcTime();
+    const timerInterval = setInterval(calcTime, 250);
+
+    return () => clearInterval(timerInterval);
+  }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
 
   // Handle timer toggle (Play/Pause)
   const toggleTimer = async () => {
     if (!session) return;
     const nextState = !session.is_timer_running;
-    setSession({ ...session, is_timer_running: nextState, timer_remaining: remainingTime });
+    const nowIso = new Date().toISOString();
+
+    setSession({
+      ...session,
+      is_timer_running: nextState,
+      timer_remaining: remainingTime,
+      updated_at: nowIso,
+    });
 
     await supabase
       .from('game_sessions')
       .update({
         is_timer_running: nextState,
         timer_remaining: remainingTime,
+        updated_at: nowIso,
         status: nextState ? 'active' : 'paused',
       })
       .eq('id', session.id);
@@ -199,43 +241,86 @@ export default function OperatorControlPage() {
   const resetTimer = async () => {
     if (!session || !currentQuestion) return;
     const dur = currentQuestion.timer_duration || 30;
-    setSession({ ...session, timer_remaining: dur, is_timer_running: false });
+    const nowIso = new Date().toISOString();
+
+    setRemainingTime(dur);
+    setSession({
+      ...session,
+      timer_remaining: dur,
+      is_timer_running: false,
+      updated_at: nowIso,
+    });
 
     await supabase
       .from('game_sessions')
-      .update({ timer_remaining: dur, is_timer_running: false })
+      .update({
+        timer_remaining: dur,
+        is_timer_running: false,
+        updated_at: nowIso,
+      })
       .eq('id', session.id);
   };
 
   // Quick preset duration: [15s], [20s], [30s], [45s], [60s]
   const handleSetDuration = async (seconds: number) => {
     if (!session) return;
+    const nowIso = new Date().toISOString();
+
     setRemainingTime(seconds);
-    setSession({ ...session, timer_remaining: seconds });
+    setSession({
+      ...session,
+      timer_remaining: seconds,
+      is_timer_running: false,
+      updated_at: nowIso,
+    });
+
     await supabase
       .from('game_sessions')
-      .update({ timer_remaining: seconds })
+      .update({
+        timer_remaining: seconds,
+        is_timer_running: false,
+        updated_at: nowIso,
+      })
       .eq('id', session.id);
   };
 
-  // Ubah Tampilan Layar Proyektor dari Panel Control Operator ('welcome' | 'box_select' | 'question')
-  const handleSetProjectorView = async (view: 'welcome' | 'box_select' | 'question_active') => {
+  // Ubah Tampilan Layar Proyektor dari Panel Control Operator ('welcome' | 'question_active')
+  const handleSetProjectorView = async (view: 'welcome' | 'question_active') => {
     if (!session) return;
+    const nowIso = new Date().toISOString();
+
     if (view === 'welcome') {
-      // Set current_question_id ke null agar proyektor menampilkan Dashboard Say Hello
+      setCurrentQuestion(null);
+      setSession({
+        ...session,
+        current_question_id: null,
+        is_timer_running: false,
+        is_answer_revealed: false,
+        updated_at: nowIso,
+      });
+
       await supabase
         .from('game_sessions')
         .update({
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
+          updated_at: nowIso,
         })
         .eq('id', session.id);
     } else if (view === 'question_active' && currentQuestion) {
+      setSession({
+        ...session,
+        current_question_id: currentQuestion.id,
+        updated_at: nowIso,
+        status: 'active',
+      });
+
       await supabase
         .from('game_sessions')
         .update({
           current_question_id: currentQuestion.id,
+          updated_at: nowIso,
           status: 'active',
         })
         .eq('id', session.id);
@@ -260,7 +345,18 @@ export default function OperatorControlPage() {
     setLoadingAction(true);
     setCurrentQuestion(q);
     const dur = q.timer_duration || 30;
+    const nowIso = new Date().toISOString();
+
     setRemainingTime(dur);
+    setSession({
+      ...session,
+      current_question_id: q.id,
+      is_answer_revealed: false,
+      timer_remaining: dur,
+      is_timer_running: autoStartTimer,
+      updated_at: nowIso,
+      status: 'active',
+    });
 
     await supabase
       .from('game_sessions')
@@ -269,6 +365,7 @@ export default function OperatorControlPage() {
         is_answer_revealed: false,
         timer_remaining: dur,
         is_timer_running: autoStartTimer,
+        updated_at: nowIso,
         status: 'active',
       })
       .eq('id', session.id);
@@ -280,18 +377,21 @@ export default function OperatorControlPage() {
     if (!questionsList.length || !currentQuestion) return;
     const currentIndex = questionsList.findIndex((q) => q.id === currentQuestion.id);
     const nextIndex = (currentIndex + 1) % questionsList.length;
-    handleSelectQuestion(questionsList[nextIndex]);
+    handleSelectQuestion(questionsList[nextIndex], false);
   };
 
   // Finish Match (Trigger victory podium)
   const handleFinishMatch = async () => {
     if (!session) return;
-    const confirmed = window.confirm('Apakah Anda yakin ingin menyelesaikan pertandingan & menampilkan Podium Juara?');
+    const confirmed = window.confirm('Apakah Anda yakin ingin menyelesaikan pertandingan & menampilkan Podium Juara di Proyektor?');
     if (!confirmed) return;
+
+    const nowIso = new Date().toISOString();
+    setSession({ ...session, status: 'finished', is_timer_running: false, updated_at: nowIso });
 
     await supabase
       .from('game_sessions')
-      .update({ status: 'finished', is_timer_running: false })
+      .update({ status: 'finished', is_timer_running: false, updated_at: nowIso })
       .eq('id', session.id);
   };
 
@@ -300,7 +400,6 @@ export default function OperatorControlPage() {
     const team = teams.find((t) => t.id === teamId);
     if (!team) return;
 
-    // Mainkan reaksi suara audio yang semarak
     if (delta > 0) {
       sounds.playScoreUp();
     } else {
@@ -324,21 +423,32 @@ export default function OperatorControlPage() {
     const val = parseInt(rawVal, 10);
     if (isNaN(val) || val === 0) return;
 
-    // Reaksi audio & visual tombol terapkan
     if (val > 0) {
       sounds.playScoreUp();
     } else {
       sounds.playScoreDown();
     }
 
+    const team = teams.find((t) => t.id === teamId);
+    if (!team) return;
+
+    const newScore = team.score + val;
+    setTeams(teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t)));
+
+    // Feedback visual berhasil diterapkan
     setAppliedTeamId(teamId);
     setTimeout(() => setAppliedTeamId(null), 1200);
 
-    await handleAdjustScore(teamId, val);
+    // Reset input custom score
     setCustomScores((prev) => ({ ...prev, [teamId]: '' }));
+
+    await supabase
+      .from('teams')
+      .update({ score: newScore })
+      .eq('id', teamId);
   };
 
-  // Team Management Handlers
+  // Handle Team Modals (Add / Edit / Delete)
   const handleOpenAddTeam = () => {
     setEditingTeam(null);
     setTeamFormName('');
@@ -347,16 +457,18 @@ export default function OperatorControlPage() {
     setIsTeamModalOpen(true);
   };
 
-  const handleOpenEditTeam = (team: Team) => {
-    setEditingTeam(team);
-    setTeamFormName(team.name);
-    setTeamFormColor(team.color || '#3b82f6');
-    setTeamFormScore(team.score);
+  const handleOpenEditTeam = (t: Team) => {
+    setEditingTeam(t);
+    setTeamFormName(t.name);
+    setTeamFormColor(t.color);
+    setTeamFormScore(t.score);
     setIsTeamModalOpen(true);
   };
 
   const handleDeleteTeam = async (teamId: string) => {
-    if (!window.confirm('Hapus regu ini dari pertandingan?')) return;
+    const confirmDelete = window.confirm('Hapus regu ini dari pertandingan?');
+    if (!confirmDelete) return;
+
     setTeams(teams.filter((t) => t.id !== teamId));
     await supabase.from('teams').delete().eq('id', teamId);
   };
@@ -405,7 +517,6 @@ export default function OperatorControlPage() {
   // SHORTCUT KEYBOARD: SPACEBAR untuk Pause / Resume Timer seketika
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger if user is currently typing in an input
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
         return;
@@ -419,7 +530,7 @@ export default function OperatorControlPage() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [session?.is_timer_running, session?.id]);
+  }, [session?.is_timer_running, session?.id, remainingTime]);
 
   const handleLogout = () => {
     sessionStorage.clear();
@@ -502,7 +613,16 @@ export default function OperatorControlPage() {
         <div className="flex items-center gap-2">
           <Tv className="w-4 h-4 text-purple-400" />
           <span className="text-xs font-bold text-white uppercase tracking-wider">
-            Kontrol Tampilan Layar Proyektor:
+            Tampilan Layar Proyektor Saat Ini:
+          </span>
+          <span
+            className={`text-xs font-black uppercase px-2.5 py-0.5 rounded-full ${
+              !session?.current_question_id
+                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+            }`}
+          >
+            {!session?.current_question_id ? 'Dashboard Sambutan (Arena)' : 'Soal Aktif'}
           </span>
         </div>
 
@@ -515,6 +635,7 @@ export default function OperatorControlPage() {
                 : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
             }`}
           >
+            <Sparkles className="w-3.5 h-3.5" />
             <span>Tampilkan Dashboard Sambutan</span>
           </button>
 
@@ -527,6 +648,7 @@ export default function OperatorControlPage() {
                   : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
               }`}
             >
+              <Check className="w-3.5 h-3.5" />
               <span>Tampilkan Soal Aktif di Proyektor</span>
             </button>
           )}
@@ -538,7 +660,7 @@ export default function OperatorControlPage() {
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-blue-400 shrink-0" />
           <span>
-            Shortcut Cepat: Tekan tombol <strong>[SPACEBAR / SPASI]</strong> pada keyboard untuk Pause / Resume timer saat peserta berbicara!
+            Shortcut Cepat: Tekan tombol <strong>[SPACEBAR / SPASI]</strong> pada keyboard untuk Pause / Resume timer seketika!
           </span>
         </div>
         <span className="hidden md:inline font-mono bg-blue-900/60 px-2 py-0.5 rounded text-[11px] font-bold">
@@ -550,150 +672,174 @@ export default function OperatorControlPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
         {/* KOLOM KIRI (7/12): SOAL AKTIF & KONTROL TIMER & NAVIGASI */}
         <section className="lg:col-span-7 space-y-6 flex flex-col justify-between">
-          {/* KOTAK SOAL AKTIF & KUNCI CONTEKAN */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
-            <div className="flex items-center justify-between mb-3">
-              <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30">
-                {currentQuestion?.type.replace('_', ' ') || 'Belum ada soal'}
+          {/* TAMPILAN JIKA PROYEKTOR SEDANG MENAMPILKAN DASHBOARD SAMBUTAN */}
+          {!session?.current_question_id ? (
+            <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center flex flex-col items-center justify-center space-y-3">
+              <div className="w-14 h-14 rounded-2xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 mb-1">
+                <Sparkles className="w-7 h-7 animate-bounce" />
+              </div>
+              <span className="text-[11px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">
+                Panggung Sambutan Aktif
               </span>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-slate-400 font-semibold">
-                  Bobot: +{currentQuestion?.points || 100} Poin
-                </span>
-                {/* Live Realtime Timer Badge */}
-                <span
-                  className={`px-3 py-1 rounded-full text-xs font-black font-mono tracking-wider flex items-center gap-1 border ${
-                    remainingTime <= 5 && session?.is_timer_running
-                      ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
-                      : remainingTime <= 10
-                      ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
-                      : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
-                  }`}
-                >
-                  ⏱ {remainingTime}s
-                </span>
-              </div>
-            </div>
-
-            <h2 className="text-lg sm:text-xl font-bold text-white mb-4">
-              {currentQuestion?.question_text || 'Pilih soal dari daftar di bawah'}
-            </h2>
-
-            {/* Kotak Contekan Kunci Jawaban Operator */}
-            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
-                  Kunci Jawaban (Contekan Operator):
-                </span>
-                <span
-                  className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                    session?.is_answer_revealed
-                      ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
-                      : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  {session?.is_answer_revealed ? 'Terbuka di Proyektor' : 'Tertutup'}
-                </span>
-              </div>
-              <p className="text-base font-extrabold text-emerald-400 font-mono">
-                {currentQuestion?.correct_answer || '-'}
+              <h2 className="text-lg sm:text-xl font-black text-white uppercase">
+                Layar Proyektor Menampilkan Sambutan Panggung
+              </h2>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Layar proyektor saat ini bersih menyambut hadirin. Pilih salah satu kotak Blink Box atau daftar soal di bawah untuk langsung menampilkannya di proyektor panggung!
               </p>
-              {currentQuestion?.explanation && (
-                <p className="text-xs text-slate-400 mt-1 italic">
-                  Penjelasan: {currentQuestion.explanation}
-                </p>
-              )}
             </div>
-          </div>
+          ) : (
+            /* KOTAK SOAL AKTIF & KUNCI CONTEKAN OPERATOR */
+            <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
+              <div className="flex items-center justify-between mb-3">
+                <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                  {currentQuestion?.type.replace('_', ' ') || 'Belum ada soal'}
+                </span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-slate-400 font-semibold">
+                    Bobot: +{currentQuestion?.points || 100} Poin
+                  </span>
+                  {/* Live Realtime Timer Badge */}
+                  <span
+                    className={`px-3 py-1 rounded-full text-xs font-black font-mono tracking-wider flex items-center gap-1 border ${
+                      remainingTime <= 5 && session?.is_timer_running
+                        ? 'bg-rose-500/20 text-rose-400 border-rose-500/40 animate-pulse'
+                        : remainingTime <= 10
+                        ? 'bg-amber-500/20 text-amber-400 border-amber-500/40'
+                        : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/40'
+                    }`}
+                  >
+                    ⏱ {remainingTime}s
+                  </span>
+                </div>
+              </div>
 
-          {/* PRESET DURASI CEPAT TIMER */}
-          <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 p-2.5 rounded-xl">
-            <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
-              Preset Timer:
-            </span>
-            <div className="flex flex-wrap gap-1.5 flex-1">
-              {[15, 20, 30, 45, 60].map((sec) => (
+              <h2 className="text-lg sm:text-xl font-bold text-white mb-4">
+                {currentQuestion?.question_text || 'Pilih soal dari daftar di bawah'}
+              </h2>
+
+              {/* Kotak Contekan Kunci Jawaban Operator */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
+                    Kunci Jawaban (Contekan Operator):
+                  </span>
+                  <span
+                    className={`text-[10px] font-bold px-2 py-0.5 rounded ${
+                      session?.is_answer_revealed
+                        ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                        : 'bg-slate-800 text-slate-400'
+                    }`}
+                  >
+                    {session?.is_answer_revealed ? 'Terbuka di Proyektor' : 'Tertutup'}
+                  </span>
+                </div>
+                <p className="text-base font-extrabold text-emerald-400 font-mono">
+                  {currentQuestion?.correct_answer || '-'}
+                </p>
+                {currentQuestion?.explanation && (
+                  <p className="text-xs text-slate-400 mt-1 italic">
+                    Penjelasan: {currentQuestion.explanation}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* PRESET DURASI CEPAT TIMER (Hanya jika ada soal aktif) */}
+          {session?.current_question_id && (
+            <>
+              <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 p-2.5 rounded-xl">
+                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider shrink-0">
+                  Preset Timer:
+                </span>
+                <div className="flex flex-wrap gap-1.5 flex-1">
+                  {[15, 20, 30, 45, 60].map((sec) => (
+                    <button
+                      key={sec}
+                      onClick={() => handleSetDuration(sec)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
+                        remainingTime === sec
+                          ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                          : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                      }`}
+                    >
+                      {sec}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* ACTION BUTTONS: TIMER, BUKA KUNCI, SOAL BERIKUTNYA */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {/* Play / Pause Timer */}
                 <button
-                  key={sec}
-                  onClick={() => handleSetDuration(sec)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-mono font-bold transition-all ${
-                    remainingTime === sec
-                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                      : 'bg-slate-800 hover:bg-slate-700 text-slate-300'
+                  onClick={toggleTimer}
+                  className={`p-4 rounded-2xl font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg ${
+                    session?.is_timer_running
+                      ? 'bg-amber-600 hover:bg-amber-500 text-slate-950 shadow-amber-600/20'
+                      : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
                   }`}
                 >
-                  {sec}s
+                  {session?.is_timer_running ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                  <span className="text-xs uppercase tracking-wider font-bold">
+                    {session?.is_timer_running ? `Jeda (${remainingTime}s)` : `Jalankan (${remainingTime}s)`}
+                  </span>
                 </button>
-              ))}
-            </div>
-          </div>
 
-          {/* ACTION BUTTONS: TIMER, BUKA KUNCI, SOAL BERIKUTNYA */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            {/* Play / Pause Timer */}
-            <button
-              onClick={toggleTimer}
-              className={`p-4 rounded-2xl font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg ${
-                session?.is_timer_running
-                  ? 'bg-amber-600 hover:bg-amber-500 text-slate-950 shadow-amber-600/20'
-                  : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
-              }`}
-            >
-              {session?.is_timer_running ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-              <span className="text-xs uppercase tracking-wider font-bold">
-                {session?.is_timer_running ? `Jeda (${remainingTime}s)` : `Jalankan (${remainingTime}s)`}
-              </span>
-            </button>
+                {/* Reset Timer */}
+                <button
+                  onClick={resetTimer}
+                  className="p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex flex-col items-center justify-center gap-1.5 transition-all"
+                >
+                  <RotateCcw className="w-6 h-6 text-slate-400" />
+                  <span className="text-xs uppercase tracking-wider">Reset Timer</span>
+                </button>
 
-            {/* Reset Timer */}
-            <button
-              onClick={resetTimer}
-              className="p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex flex-col items-center justify-center gap-1.5 transition-all"
-            >
-              <RotateCcw className="w-6 h-6 text-slate-400" />
-              <span className="text-xs uppercase tracking-wider">Reset Timer</span>
-            </button>
+                {/* Buka / Tutup Kunci Jawaban */}
+                <button
+                  onClick={toggleRevealAnswer}
+                  className={`p-4 rounded-2xl font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg ${
+                    session?.is_answer_revealed
+                      ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20'
+                      : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
+                  }`}
+                >
+                  <Eye className="w-6 h-6 text-amber-400" />
+                  <span className="text-xs uppercase tracking-wider">
+                    {session?.is_answer_revealed ? 'Tutup Kunci' : 'Buka Kunci'}
+                  </span>
+                </button>
 
-            {/* Buka / Tutup Kunci Jawaban */}
-            <button
-              onClick={toggleRevealAnswer}
-              className={`p-4 rounded-2xl font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg ${
-                session?.is_answer_revealed
-                  ? 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-indigo-600/20'
-                  : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-              }`}
-            >
-              <Eye className="w-6 h-6" />
-              <span className="text-xs uppercase tracking-wider">
-                {session?.is_answer_revealed ? 'Sembunyikan Kunci' : 'Buka Kunci'}
-              </span>
-            </button>
+                {/* Soal Berikutnya */}
+                <button
+                  onClick={handleNextQuestion}
+                  disabled={loadingAction}
+                  className="p-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
+                >
+                  <SkipForward className="w-6 h-6" />
+                  <span className="text-xs uppercase tracking-wider">Soal Selanjutnya</span>
+                </button>
+              </div>
+            </>
+          )}
 
-            {/* Soal Selanjutnya */}
-            <button
-              onClick={handleNextQuestion}
-              disabled={loadingAction}
-              className="p-4 rounded-2xl bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
-            >
-              <SkipForward className="w-6 h-6" />
-              <span className="text-xs uppercase tracking-wider">Soal Selanjutnya</span>
-            </button>
-          </div>
-
-          {/* BLINK BOX GRID SELECTOR DI OPERATOR (AUTO-START TIMER ON CLICK) */}
-          <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4">
-            <div className="flex items-center justify-between mb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-white flex items-center gap-1.5">
+          {/* SELEKTOR KOTAK BLINK BOX INTERAKTIF OPERATOR */}
+          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-md">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
                 <LayoutGrid className="w-4 h-4 text-blue-400" />
-                <span>Pilih Kotak Blink Box (Otomatis Mulai Timer)</span>
-              </span>
-              <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 font-mono">
-                {session?.blink_box_count === 9 ? '9 Kotak' : '6 Kotak'}
+                <span className="text-xs font-black uppercase tracking-wider text-white">
+                  Pilih Kotak Blink Box ({session?.blink_box_count === 9 ? '9 Kotak' : '6 Kotak'}):
+                </span>
+              </div>
+              <span className="text-[11px] text-slate-400">
+                Klik kotak untuk langsung membuka soal di proyektor
               </span>
             </div>
 
             <div
-              className={`grid gap-2 ${
+              className={`grid gap-2.5 ${
                 session?.blink_box_count === 9 ? 'grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'
               }`}
             >
@@ -701,7 +847,7 @@ export default function OperatorControlPage() {
                 const boxNum = idx + 1;
                 const matchedQ =
                   questionsList.find((q) => q.box_number === boxNum) || questionsList[idx];
-                const isActive = currentQuestion?.id === matchedQ?.id;
+                const isActive = currentQuestion?.id === matchedQ?.id && session?.current_question_id === matchedQ?.id;
 
                 return (
                   <button
@@ -733,7 +879,7 @@ export default function OperatorControlPage() {
             </span>
             <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
               {questionsList.map((q, idx) => {
-                const isActive = currentQuestion?.id === q.id;
+                const isActive = currentQuestion?.id === q.id && session?.current_question_id === q.id;
                 return (
                   <button
                     key={q.id}
@@ -865,32 +1011,40 @@ export default function OperatorControlPage() {
                     </button>
                   </div>
 
-                  {/* Input Custom Nilai */}
-                  <div className="flex items-center gap-2 pt-1">
+                  {/* Input Custom Nilai Tambah / Kurang Skor */}
+                  <div className="flex items-center gap-1.5 pt-1 border-t border-slate-900">
+                    <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider shrink-0">
+                      Nilai Kustom:
+                    </span>
                     <input
                       type="number"
-                      placeholder="Nilai custom (+/-)"
-                      value={customScores[t.id] || ''}
+                      placeholder="Contoh: 15 / -20"
+                      value={customScores[t.id] ?? ''}
                       onChange={(e) =>
                         setCustomScores({ ...customScores, [t.id]: e.target.value })
                       }
-                      className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-2.5 py-1 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleCustomScore(t.id);
+                        }
+                      }}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:border-blue-500"
                     />
                     <button
                       onClick={() => handleCustomScore(t.id)}
-                      className={`px-3 py-1 text-xs font-bold rounded-lg transition-all flex items-center gap-1 ${
+                      className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1 ${
                         appliedTeamId === t.id
-                          ? 'bg-emerald-600 text-white scale-105'
-                          : 'bg-blue-600 hover:bg-blue-500 text-white active:scale-95'
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/40 scale-105'
+                          : 'bg-blue-600 hover:bg-blue-500 text-white'
                       }`}
                     >
                       {appliedTeamId === t.id ? (
                         <>
                           <Check className="w-3.5 h-3.5" />
-                          <span>Tersimpan!</span>
+                          <span>Berhasil!</span>
                         </>
                       ) : (
-                        'Terapkan'
+                        <span>Terapkan</span>
                       )}
                     </button>
                   </div>
@@ -899,14 +1053,14 @@ export default function OperatorControlPage() {
             )}
           </div>
 
-          {/* TOMBOL SELESAIKAN PERTANDINGAN */}
-          <div className="pt-3 border-t border-slate-800 mt-3">
+          {/* FINISH MATCH TRIGGER PODIUM */}
+          <div className="pt-4 mt-auto border-t border-slate-800">
             <button
               onClick={handleFinishMatch}
-              className="w-full py-3 bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-slate-950 font-black rounded-xl text-xs uppercase tracking-widest transition-all shadow-lg shadow-amber-600/20 flex items-center justify-center gap-2"
+              className="w-full py-3 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-amber-500/20 transition-all flex items-center justify-center gap-2"
             >
               <Trophy className="w-4 h-4 text-slate-950" />
-              Selesaikan Pertandingan & Tampilkan Juara
+              <span>Selesaikan Pertandingan & Buka Podium Juara</span>
             </button>
           </div>
         </section>
@@ -914,82 +1068,79 @@ export default function OperatorControlPage() {
 
       {/* MODAL TAMBAH / EDIT REGU */}
       {isTeamModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative">
-            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
-              <h3 className="text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-blue-400" />
-                {editingTeam ? 'Edit Data Regu' : 'Tambah Regu Baru'}
-              </h3>
-              <button
-                onClick={() => setIsTeamModalOpen(false)}
-                className="text-slate-400 hover:text-white p-1 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full relative shadow-2xl">
+            <button
+              onClick={() => setIsTeamModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <h3 className="text-base font-black text-white uppercase mb-1">
+              {editingTeam ? 'Edit Data Regu' : 'Daftarkan Regu Baru'}
+            </h3>
+            <p className="text-xs text-slate-400 mb-4">
+              Konfigurasi nama, warna identitas, dan skor awal regu
+            </p>
 
             <form onSubmit={handleSaveTeam} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                  Nama Regu
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  Nama Regu:
                 </label>
                 <input
                   type="text"
                   required
+                  placeholder="Contoh: Regu A / Garuda"
                   value={teamFormName}
                   onChange={(e) => setTeamFormName(e.target.value)}
-                  placeholder="Contoh: Regu Cendrawasih"
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  autoFocus
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                  Warna Identitas Regu
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  Warna Identitas:
                 </label>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <input
                     type="color"
                     value={teamFormColor}
                     onChange={(e) => setTeamFormColor(e.target.value)}
-                    className="w-12 h-10 bg-transparent rounded-lg cursor-pointer border border-slate-700 p-0.5"
+                    className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border-0"
                   />
-                  <input
-                    type="text"
-                    value={teamFormColor}
-                    onChange={(e) => setTeamFormColor(e.target.value)}
-                    className="flex-1 bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs font-mono text-white uppercase"
-                  />
+                  <span className="text-xs font-mono text-slate-400 uppercase">
+                    {teamFormColor}
+                  </span>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                  Skor Awal / Saat Ini (Bisa Negatif)
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  Skor Awal (Poin):
                 </label>
                 <input
                   type="number"
                   value={teamFormScore}
                   onChange={(e) => setTeamFormScore(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white font-mono focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
                 />
               </div>
 
-              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setIsTeamModalOpen(false)}
-                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/30"
                 >
-                  {editingTeam ? 'Simpan Perubahan' : 'Tambahkan Regu'}
+                  Simpan Regu
                 </button>
               </div>
             </form>
