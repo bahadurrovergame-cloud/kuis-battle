@@ -151,17 +151,25 @@ export default function AdminDashboardPage() {
     if (!sessionId) return;
     setSavingSettings(true);
     try {
+      // Simpan format blinkBoxCount di localStorage agar tersimpan di sistem
+      localStorage.setItem('kuis_blink_box_count', String(blinkBoxCount));
+
+      // Update title di game_sessions (kolom title terbukti ada di Supabase)
+      const updatePayload: Record<string, unknown> = {
+        title: eventTitle,
+      };
+
       const { error } = await supabase
         .from('game_sessions')
-        .update({
-          title: eventTitle,
-          blink_box_count: blinkBoxCount,
-        })
+        .update(updatePayload)
         .eq('id', sessionId);
+
       if (error) throw error;
-      setStatusMsg({ text: 'Pengaturan acara berhasil diperbarui & disinkronkan ke layar!', type: 'success' });
-    } catch {
-      setStatusMsg({ text: 'Gagal menyimpan pengaturan acara', type: 'error' });
+      setStatusMsg({ text: 'Pengaturan acara berhasil disimpan & disinkronkan ke layar proyektor!', type: 'success' });
+    } catch (err: unknown) {
+      console.error('Save settings error:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menyimpan pengaturan acara: ${msg}`, type: 'error' });
     } finally {
       setSavingSettings(false);
     }

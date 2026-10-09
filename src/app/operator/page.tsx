@@ -106,7 +106,13 @@ export default function OperatorProjectorPage() {
           if (qData) {
             setCurrentQuestion(qData);
             setStageView('question_active');
+          } else {
+            setStageView('welcome');
           }
+        } else {
+          // Tetap di Welcome Screen jika belum ada soal yang dipilih oleh operator
+          setCurrentQuestion(null);
+          setStageView('welcome');
         }
 
         // Fetch teams
@@ -163,7 +169,9 @@ export default function OperatorProjectorPage() {
                   setStageView('question_active');
                 }
               } else {
+                // Operator mengembalikan proyektor ke Welcome Screen
                 setCurrentQuestion(null);
+                setStageView('welcome');
               }
             }
 
@@ -606,35 +614,33 @@ export default function OperatorProjectorPage() {
                 const isOpened = matchedQ?.id === currentQuestion?.id && session?.current_question_id === matchedQ?.id;
 
                 return (
-                  <button
+                  <div
                     key={boxNum}
-                    disabled={!matchedQ || isOpened}
-                    onClick={() => handleSelectBox(boxNum, matchedQ)}
-                    className={`h-32 sm:h-36 rounded-3xl font-black flex flex-col items-center justify-center gap-2 transition-all transform duration-300 relative overflow-hidden group ${
+                    className={`h-32 sm:h-36 rounded-3xl font-black flex flex-col items-center justify-center gap-2 transition-all duration-300 relative overflow-hidden select-none ${
                       isOpened
-                        ? 'bg-slate-900/40 border border-slate-800 text-slate-600 cursor-not-allowed opacity-50'
+                        ? 'bg-slate-900/40 border border-slate-800 text-slate-600 opacity-50'
                         : matchedQ
-                        ? 'bg-gradient-to-br from-indigo-900/60 via-slate-900 to-purple-900/60 border-2 border-indigo-500/60 hover:border-amber-400 hover:scale-105 active:scale-95 shadow-lg shadow-indigo-600/20 text-white cursor-pointer'
-                        : 'bg-slate-950/40 border border-slate-800 text-slate-700 cursor-not-allowed'
+                        ? 'bg-gradient-to-br from-indigo-900/60 via-slate-900 to-purple-900/60 border-2 border-indigo-500/60 shadow-lg shadow-indigo-600/20 text-white animate-pulse'
+                        : 'bg-slate-950/40 border border-slate-800 text-slate-700'
                     }`}
                   >
                     {/* Glowing pulse aura */}
                     {!isOpened && matchedQ && (
-                      <span className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/20 rounded-full blur-xl group-hover:bg-amber-400/30 transition-all" />
+                      <span className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/20 rounded-full blur-xl" />
                     )}
 
                     <span className="text-3xl sm:text-4xl font-black font-mono tracking-wider drop-shadow-md">
                       #{boxNum}
                     </span>
 
-                    <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400 group-hover:text-amber-300 transition-colors">
+                    <span className="text-[11px] uppercase tracking-wider font-bold text-slate-400">
                       {isOpened
                         ? 'Sudah Dibuka'
                         : matchedQ
-                        ? 'Buka Kotak'
+                        ? 'Menunggu Operator'
                         : 'Kosong'}
                     </span>
-                  </button>
+                  </div>
                 );
               })}
             </div>

@@ -194,6 +194,30 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
+  // Ubah Tampilan Layar Proyektor dari Panel Control Operator ('welcome' | 'box_select' | 'question')
+  const handleSetProjectorView = async (view: 'welcome' | 'box_select' | 'question_active') => {
+    if (!session) return;
+    if (view === 'welcome') {
+      // Set current_question_id ke null agar proyektor menampilkan Dashboard Say Hello
+      await supabase
+        .from('game_sessions')
+        .update({
+          current_question_id: null,
+          is_timer_running: false,
+          is_answer_revealed: false,
+        })
+        .eq('id', session.id);
+    } else if (view === 'question_active' && currentQuestion) {
+      await supabase
+        .from('game_sessions')
+        .update({
+          current_question_id: currentQuestion.id,
+          status: 'active',
+        })
+        .eq('id', session.id);
+    }
+  };
+
   // Toggle reveal answer
   const toggleRevealAnswer = async () => {
     if (!session) return;
@@ -441,8 +465,44 @@ export default function OperatorControlPage() {
         </div>
       </header>
 
+      {/* KONTROL STATUS TAMPILAN PROYEKTOR OLEH OPERATOR */}
+      <div className="my-3 bg-slate-900/90 border border-purple-500/30 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-2">
+          <Tv className="w-4 h-4 text-purple-400" />
+          <span className="text-xs font-bold text-white uppercase tracking-wider">
+            Kontrol Tampilan Layar Proyektor:
+          </span>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => handleSetProjectorView('welcome')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              !session?.current_question_id
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400'
+                : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+            }`}
+          >
+            <span>Tampilkan Dashboard Sambutan</span>
+          </button>
+
+          {currentQuestion && (
+            <button
+              onClick={() => handleSetProjectorView('question_active')}
+              className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+                session?.current_question_id
+                  ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30 border border-emerald-400'
+                  : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+              }`}
+            >
+              <span>Tampilkan Soal Aktif di Proyektor</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* SHORTCUT SPACEBAR BANNER */}
-      <div className="my-4 bg-blue-950/40 border border-blue-800/60 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs text-blue-300">
+      <div className="mb-4 bg-blue-950/40 border border-blue-800/60 rounded-xl px-4 py-2.5 flex items-center justify-between text-xs text-blue-300">
         <div className="flex items-center gap-2">
           <Sparkles className="w-4 h-4 text-blue-400 shrink-0" />
           <span>
