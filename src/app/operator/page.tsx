@@ -143,8 +143,9 @@ export default function OperatorProjectorPage() {
   useEffect(() => {
     if (!session?.id) return;
 
+    const channelName = `projector_live_${session.id}_${Date.now()}`;
     const channel = supabase
-      .channel('projector_live_channel')
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${session.id}` },
@@ -152,27 +153,25 @@ export default function OperatorProjectorPage() {
           const newSession = payload.new as GameSession;
           if (newSession) {
             // Trigger sound when answer revealed
-            if (newSession.is_answer_revealed && !session.is_answer_revealed) {
+            if (newSession.is_answer_revealed) {
               sounds.playCorrect();
             }
 
-            // Sync current question if changed
-            if (newSession.current_question_id !== session.current_question_id) {
-              if (newSession.current_question_id) {
-                const { data: qData } = await supabase
-                  .from('questions')
-                  .select('*')
-                  .eq('id', newSession.current_question_id)
-                  .single();
-                if (qData) {
-                  setCurrentQuestion(qData);
-                  setStageView('question_active');
-                }
-              } else {
-                // Operator mengembalikan proyektor ke Welcome Screen
-                setCurrentQuestion(null);
-                setStageView('welcome');
+            // Sync current question secara langsung
+            if (newSession.current_question_id) {
+              const { data: qData } = await supabase
+                .from('questions')
+                .select('*')
+                .eq('id', newSession.current_question_id)
+                .single();
+              if (qData) {
+                setCurrentQuestion(qData);
+                setStageView('question_active');
               }
+            } else {
+              // Jika current_question_id null, tampilkan Welcome Screen
+              setCurrentQuestion(null);
+              setStageView('welcome');
             }
 
             setSession(newSession);
@@ -206,7 +205,7 @@ export default function OperatorProjectorPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.id, session?.is_answer_revealed, session?.current_question_id]);
+  }, [session?.id]);
 
   // Audio & Timer tick effect
   useEffect(() => {

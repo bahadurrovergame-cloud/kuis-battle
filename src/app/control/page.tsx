@@ -110,8 +110,9 @@ export default function OperatorControlPage() {
   useEffect(() => {
     if (!session?.id) return;
 
+    const channelName = `operator_control_${session.id}_${Date.now()}`;
     const channel = supabase
-      .channel('operator_control_channel')
+      .channel(channelName)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${session.id}` },
@@ -123,18 +124,12 @@ export default function OperatorControlPage() {
 
             // Selaraskan currentQuestion di panel control dengan database
             if (updated.current_question_id) {
-              const matched = questionsList.find((q) => q.id === updated.current_question_id);
-              if (matched) {
-                setCurrentQuestion(matched);
-              } else {
-                // Fetch jika belum ada di state list
-                const { data: qData } = await supabase
-                  .from('questions')
-                  .select('*')
-                  .eq('id', updated.current_question_id)
-                  .single();
-                if (qData) setCurrentQuestion(qData);
-              }
+              const { data: qData } = await supabase
+                .from('questions')
+                .select('*')
+                .eq('id', updated.current_question_id)
+                .single();
+              if (qData) setCurrentQuestion(qData);
             } else {
               setCurrentQuestion(null);
             }
@@ -160,7 +155,7 @@ export default function OperatorControlPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.id, questionsList]);
+  }, [session?.id]);
 
   // Realtime timer countdown effect in control dashboard
   useEffect(() => {
