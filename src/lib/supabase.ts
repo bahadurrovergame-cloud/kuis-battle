@@ -33,7 +33,7 @@ export interface GameSession {
   id: string;
   room_code: string;
   title: string;
-  status: 'waiting' | 'active' | 'paused' | 'finished';
+  status: 'waiting' | 'active' | 'paused' | 'finished' | 'type_select' | 'box_pilihan_ganda' | 'box_benar_salah' | 'box_essay' | string;
   current_question_id: string | null;
   is_answer_revealed: boolean;
   timer_remaining: number;

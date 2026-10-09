@@ -25,7 +25,8 @@ import {
   X,
   Check,
   LayoutGrid,
-  CheckCircle2
+  HelpCircle,
+  Layers
 } from 'lucide-react';
 import { sounds } from '@/lib/sound';
 
@@ -39,6 +40,9 @@ export default function OperatorControlPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
+
+  // Active game type (pilihan_ganda | benar_salah | essay)
+  const [selectedGameType, setSelectedGameType] = useState<'pilihan_ganda' | 'benar_salah' | 'essay'>('pilihan_ganda');
 
   // Opened Box tracking
   const [openedBoxIds, setOpenedBoxIds] = useState<string[]>([]);
@@ -69,6 +73,17 @@ export default function OperatorControlPage() {
       setIsAuthorized(true);
     }
   }, [router]);
+
+  // Sync selectedGameType from database status
+  useEffect(() => {
+    if (session?.status === 'box_benar_salah') {
+      setSelectedGameType('benar_salah');
+    } else if (session?.status === 'box_essay') {
+      setSelectedGameType('essay');
+    } else if (session?.status === 'box_pilihan_ganda') {
+      setSelectedGameType('pilihan_ganda');
+    }
+  }, [session?.status]);
 
   // Load initial data
   const loadData = useCallback(async () => {
@@ -297,10 +312,14 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Ubah Tampilan Layar Proyektor ('welcome' | 'box_select' | 'question_active')
-  const handleSetProjectorView = async (view: 'welcome' | 'box_select' | 'question_active') => {
+  // Ubah Tampilan Layar Proyektor ('welcome' | 'type_select' | 'box_select' | 'question_active')
+  const handleSetProjectorView = async (
+    view: 'welcome' | 'type_select' | 'box_select' | 'question_active',
+    specificType?: 'pilihan_ganda' | 'benar_salah' | 'essay'
+  ) => {
     if (!session) return;
     const nowIso = new Date().toISOString();
+    const typeToUse = specificType || selectedGameType;
 
     if (view === 'welcome') {
       setCurrentQuestion(null);
@@ -323,11 +342,11 @@ export default function OperatorControlPage() {
           updated_at: nowIso,
         })
         .eq('id', session.id);
-    } else if (view === 'box_select') {
+    } else if (view === 'type_select') {
       setCurrentQuestion(null);
       setSession({
         ...session,
-        status: 'active',
+        status: 'type_select',
         current_question_id: null,
         is_timer_running: false,
         is_answer_revealed: false,
@@ -337,7 +356,31 @@ export default function OperatorControlPage() {
       await supabase
         .from('game_sessions')
         .update({
-          status: 'active',
+          status: 'type_select',
+          current_question_id: null,
+          is_timer_running: false,
+          is_answer_revealed: false,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id);
+    } else if (view === 'box_select') {
+      setCurrentQuestion(null);
+      if (specificType) setSelectedGameType(specificType);
+      const newStatus = `box_${typeToUse}`;
+
+      setSession({
+        ...session,
+        status: newStatus as any,
+        current_question_id: null,
+        is_timer_running: false,
+        is_answer_revealed: false,
+        updated_at: nowIso,
+      });
+
+      await supabase
+        .from('game_sessions')
+        .update({
+          status: newStatus,
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
@@ -439,11 +482,14 @@ export default function OperatorControlPage() {
     });
   };
 
+  // Filter pertanyaan sesuai jenis permainan yang dipilih
+  const filteredQuestions = questionsList.filter((q) => q.type === selectedGameType);
+
   const handleNextQuestion = async () => {
-    if (!questionsList.length || !currentQuestion) return;
-    const currentIndex = questionsList.findIndex((q) => q.id === currentQuestion.id);
-    const nextIndex = (currentIndex + 1) % questionsList.length;
-    handleSelectQuestion(questionsList[nextIndex], false);
+    if (!filteredQuestions.length || !currentQuestion) return;
+    const currentIndex = filteredQuestions.findIndex((q) => q.id === currentQuestion.id);
+    const nextIndex = (currentIndex + 1) % filteredQuestions.length;
+    handleSelectQuestion(filteredQuestions[nextIndex], false);
   };
 
   // Finish Match (Trigger victory podium)
@@ -501,11 +547,9 @@ export default function OperatorControlPage() {
     const newScore = team.score + val;
     setTeams(teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t)));
 
-    // Feedback visual berhasil diterapkan
     setAppliedTeamId(teamId);
     setTimeout(() => setAppliedTeamId(null), 1200);
 
-    // Reset input custom score
     setCustomScores((prev) => ({ ...prev, [teamId]: '' }));
 
     await supabase
@@ -544,7 +588,6 @@ export default function OperatorControlPage() {
     if (!session || !teamFormName.trim()) return;
 
     if (editingTeam) {
-      // Update
       const { data: updated } = await supabase
         .from('teams')
         .update({
@@ -560,7 +603,6 @@ export default function OperatorControlPage() {
         setTeams(teams.map((t) => (t.id === editingTeam.id ? updated : t)));
       }
     } else {
-      // Insert
       const { data: created } = await supabase
         .from('teams')
         .insert({
@@ -609,6 +651,22 @@ export default function OperatorControlPage() {
         <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
       </main>
     );
+  }
+
+  // Teks label status layar proyektor
+  let projectorStatusLabel = 'Papan Kotak Blink Box';
+  if (session?.status === 'waiting') {
+    projectorStatusLabel = 'Sambutan Arena (Opening)';
+  } else if (session?.status === 'type_select') {
+    projectorStatusLabel = 'Pilih Jenis Permainan';
+  } else if (session?.current_question_id) {
+    projectorStatusLabel = 'Soal Aktif';
+  } else if (session?.status === 'box_benar_salah') {
+    projectorStatusLabel = 'Papan Kotak (Benar / Salah)';
+  } else if (session?.status === 'box_essay') {
+    projectorStatusLabel = 'Papan Kotak (Rebutan / Lisan)';
+  } else if (session?.status === 'box_pilihan_ganda') {
+    projectorStatusLabel = 'Papan Kotak (Pilihan Ganda)';
   }
 
   return (
@@ -681,24 +739,13 @@ export default function OperatorControlPage() {
           <span className="text-xs font-bold text-white uppercase tracking-wider">
             Layar Proyektor Sedang Menampilkan:
           </span>
-          <span
-            className={`text-xs font-black uppercase px-2.5 py-0.5 rounded-full ${
-              session?.status === 'waiting'
-                ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                : !session?.current_question_id
-                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
-                : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-            }`}
-          >
-            {session?.status === 'waiting'
-              ? 'Sambutan Arena (Opening)'
-              : !session?.current_question_id
-              ? 'Papan Kotak Blink Box'
-              : 'Soal Aktif'}
+          <span className="text-xs font-black uppercase px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
+            {projectorStatusLabel}
           </span>
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Tombol 1: Sambutan Arena */}
           <button
             onClick={() => handleSetProjectorView('welcome')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
@@ -711,18 +758,33 @@ export default function OperatorControlPage() {
             <span>Sambutan Arena</span>
           </button>
 
+          {/* Tombol 2: Pilih Jenis Permainan (Panggung) */}
+          <button
+            onClick={() => handleSetProjectorView('type_select')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              session?.status === 'type_select'
+                ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400'
+                : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+            }`}
+          >
+            <Layers className="w-3.5 h-3.5" />
+            <span>Jenis Permainan (Panggung)</span>
+          </button>
+
+          {/* Tombol 3: Papan Kotak (Proyektor) */}
           <button
             onClick={() => handleSetProjectorView('box_select')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-              session?.status !== 'waiting' && !session?.current_question_id
+              session?.status !== 'waiting' && session?.status !== 'type_select' && !session?.current_question_id
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
                 : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
             }`}
           >
             <LayoutGrid className="w-3.5 h-3.5" />
-            <span>Papan Kotak (Proyektor)</span>
+            <span>Papan Kotak</span>
           </button>
 
+          {/* Tombol 4: Soal Aktif */}
           {currentQuestion && (
             <button
               onClick={() => handleSetProjectorView('question_active')}
@@ -733,7 +795,7 @@ export default function OperatorControlPage() {
               }`}
             >
               <Check className="w-3.5 h-3.5" />
-              <span>Soal Aktif di Proyektor</span>
+              <span>Soal Aktif</span>
             </button>
           )}
         </div>
@@ -769,37 +831,105 @@ export default function OperatorControlPage() {
                 Layar Proyektor Menampilkan Sambutan Panggung
               </h2>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Layar proyektor saat ini menyambut hadirin. Klik tombol di bawah untuk membuka Papan Kotak Blink Box di layar panggung!
+                Layar proyektor saat ini menyambut hadirin. Klik tombol di bawah untuk membuka pilihan Jenis Permainan atau langsung ke Papan Kotak!
               </p>
-              <button
-                onClick={() => handleSetProjectorView('box_select')}
-                className="mt-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-indigo-600/30 flex items-center gap-2"
-              >
-                <LayoutGrid className="w-4 h-4" />
-                <span>Buka Papan Kotak di Proyektor</span>
-              </button>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  onClick={() => handleSetProjectorView('type_select')}
+                  className="px-4 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-purple-600/30 flex items-center gap-1.5"
+                >
+                  <Layers className="w-4 h-4" />
+                  <span>Buka Pilihan Jenis Permainan</span>
+                </button>
+                <button
+                  onClick={() => handleSetProjectorView('box_select')}
+                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-indigo-600/30 flex items-center gap-1.5"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                  <span>Buka Papan Kotak Langsung</span>
+                </button>
+              </div>
             </div>
           )}
 
-          {/* TAMPILAN 2: JIKA PROYEKTOR SEDANG MENAMPILKAN PAPAN KOTAK */}
-          {session?.status !== 'waiting' && !session?.current_question_id && (
+          {/* TAMPILAN 2: JIKA PROYEKTOR SEDANG MENAMPILKAN PILIHAN FORMAT / JENIS PERMAINAN */}
+          {session?.status === 'type_select' && !session?.current_question_id && (
+            <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 mx-auto">
+                <Layers className="w-7 h-7" />
+              </div>
+              <div>
+                <span className="text-[11px] font-black uppercase tracking-widest text-purple-400 bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">
+                  Layar Proyektor: Pilih Jenis Permainan
+                </span>
+                <h2 className="text-lg sm:text-xl font-black text-white uppercase mt-2">
+                  Pilih Format Tantangan untuk Panggung
+                </h2>
+                <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
+                  Proyektor saat ini menampilkan 3 format tantangan kuis. Klik salah satu jenis permainan di bawah untuk langsung membuka kotak soal babak tersebut ke proyektor!
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2">
+                <button
+                  onClick={() => handleSetProjectorView('box_select', 'pilihan_ganda')}
+                  className="p-4 rounded-2xl bg-blue-600/20 hover:bg-blue-600/40 border border-blue-500/40 text-left transition-all group"
+                >
+                  <BookOpen className="w-6 h-6 text-blue-400 mb-2 group-hover:scale-110 transition-transform" />
+                  <h4 className="text-sm font-black text-white uppercase">Pilihan Ganda</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">4 Opsi Jawaban (A/B/C/D)</p>
+                  <span className="block mt-2 text-[10px] text-blue-300 font-bold">➔ Buka Kotak Pilihan Ganda</span>
+                </button>
+
+                <button
+                  onClick={() => handleSetProjectorView('box_select', 'benar_salah')}
+                  className="p-4 rounded-2xl bg-amber-600/20 hover:bg-amber-600/40 border border-amber-500/40 text-left transition-all group"
+                >
+                  <HelpCircle className="w-6 h-6 text-amber-400 mb-2 group-hover:scale-110 transition-transform" />
+                  <h4 className="text-sm font-black text-white uppercase">Benar / Salah</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Ketangkasan Kilat</p>
+                  <span className="block mt-2 text-[10px] text-amber-300 font-bold">➔ Buka Kotak Benar / Salah</span>
+                </button>
+
+                <button
+                  onClick={() => handleSetProjectorView('box_select', 'essay')}
+                  className="p-4 rounded-2xl bg-purple-600/20 hover:bg-purple-600/40 border border-purple-500/40 text-left transition-all group"
+                >
+                  <Layers className="w-6 h-6 text-purple-400 mb-2 group-hover:scale-110 transition-transform" />
+                  <h4 className="text-sm font-black text-white uppercase">Rebutan / Lisan</h4>
+                  <p className="text-[11px] text-slate-400 mt-0.5">Penilaian Juri</p>
+                  <span className="block mt-2 text-[10px] text-purple-300 font-bold">➔ Buka Kotak Rebutan</span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAMPILAN 3: JIKA PROYEKTOR SEDANG MENAMPILKAN PAPAN KOTAK */}
+          {session?.status !== 'waiting' && session?.status !== 'type_select' && !session?.current_question_id && (
             <div className="bg-slate-900/90 border border-indigo-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center flex flex-col items-center justify-center space-y-3">
               <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-1">
                 <LayoutGrid className="w-7 h-7" />
               </div>
               <span className="text-[11px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
-                Papan Kotak Proyektor Aktif
+                Papan Kotak: {selectedGameType.replace('_', ' ').toUpperCase()}
               </span>
               <h2 className="text-lg sm:text-xl font-black text-white uppercase">
-                Layar Proyektor Menampilkan Papan Kotak Blink Box
+                Layar Proyektor Menampilkan Papan Kotak
               </h2>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
                 Peserta di panggung sedang melihat kotak di proyektor. Klik salah satu nomor kotak di bawah untuk langsung membuka soalnya di proyektor!
               </p>
+              <button
+                onClick={() => handleSetProjectorView('type_select')}
+                className="mt-1 px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold flex items-center gap-1.5 border border-slate-700"
+              >
+                <Layers className="w-3.5 h-3.5 text-purple-400" />
+                <span>Ganti Jenis Permainan di Proyektor</span>
+              </button>
             </div>
           )}
 
-          {/* TAMPILAN 3: KOTAK SOAL AKTIF & KUNCI CONTEKAN OPERATOR */}
+          {/* TAMPILAN 4: KOTAK SOAL AKTIF & KUNCI CONTEKAN OPERATOR */}
           {session?.current_question_id && (
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
               <div className="flex items-center justify-between mb-3">
@@ -947,7 +1077,7 @@ export default function OperatorControlPage() {
 
           {/* SELEKTOR KOTAK BLINK BOX INTERAKTIF OPERATOR */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-md">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex flex-wrap items-center justify-between mb-3 gap-2">
               <div className="flex items-center gap-2">
                 <LayoutGrid className="w-4 h-4 text-blue-400" />
                 <span className="text-xs font-black uppercase tracking-wider text-white">
@@ -962,10 +1092,42 @@ export default function OperatorControlPage() {
                 >
                   ↺ Reset Kotak
                 </button>
-                <span className="text-[11px] text-slate-400 hidden sm:inline">
-                  Klik kotak untuk langsung membuka soal di proyektor
-                </span>
+                <button
+                  onClick={() => handleSetProjectorView('type_select')}
+                  className="text-[10px] text-indigo-400 hover:text-white px-2 py-0.5 rounded bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-700/60 transition-all"
+                  title="Tampilkan 3 jenis permainan di proyektor"
+                >
+                  🎮 Pilih Jenis di Proyektor
+                </button>
               </div>
+            </div>
+
+            {/* TAB FILTER JENIS PERMAINAN / BABAK */}
+            <div className="flex items-center gap-1.5 mb-3 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
+              {[
+                { type: 'pilihan_ganda', label: 'Pilihan Ganda', icon: BookOpen },
+                { type: 'benar_salah', label: 'Benar / Salah', icon: HelpCircle },
+                { type: 'essay', label: 'Rebutan / Lisan', icon: Layers },
+              ].map((item) => {
+                const Icon = item.icon;
+                const isCurrent = selectedGameType === item.type;
+                const count = questionsList.filter((q) => q.type === item.type).length;
+                return (
+                  <button
+                    key={item.type}
+                    onClick={() => handleSetProjectorView('box_select', item.type as any)}
+                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
+                      isCurrent
+                        ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                        : 'text-slate-400 hover:text-white hover:bg-slate-900'
+                    }`}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    <span>{item.label}</span>
+                    <span className="text-[10px] opacity-70">({count})</span>
+                  </button>
+                );
+              })}
             </div>
 
             <div
@@ -976,7 +1138,7 @@ export default function OperatorControlPage() {
               {Array.from({ length: session?.blink_box_count === 9 ? 9 : 6 }).map((_, idx) => {
                 const boxNum = idx + 1;
                 const matchedQ =
-                  questionsList.find((q) => q.box_number === boxNum) || questionsList[idx];
+                  filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];
                 const isActive = currentQuestion?.id === matchedQ?.id && session?.current_question_id === matchedQ?.id;
                 const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
 
@@ -1016,10 +1178,10 @@ export default function OperatorControlPage() {
           {/* LIST PEMILIHAN SOAL CEPAT */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex-1">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">
-              Daftar Bank Soal Lengkap ({questionsList.length} Soal)
+              Daftar Bank Soal ({selectedGameType.replace('_', ' ').toUpperCase()}) - {filteredQuestions.length} Soal
             </span>
             <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-              {questionsList.map((q, idx) => {
+              {filteredQuestions.map((q, idx) => {
                 const isActive = currentQuestion?.id === q.id && session?.current_question_id === q.id;
                 return (
                   <button
@@ -1035,7 +1197,7 @@ export default function OperatorControlPage() {
                       #{idx + 1}. {q.question_text}
                     </span>
                     <span className="shrink-0 uppercase text-[10px] bg-slate-800 px-2 py-0.5 rounded text-slate-400">
-                      {q.type.replace('_', ' ')}
+                      +{q.points || 100} pts
                     </span>
                   </button>
                 );

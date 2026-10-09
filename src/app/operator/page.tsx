@@ -19,7 +19,10 @@ import {
   Sparkles,
   Trophy,
   Users,
-  LayoutGrid
+  LayoutGrid,
+  BookOpen,
+  HelpCircle,
+  Layers
 } from 'lucide-react';
 
 export default function OperatorProjectorPage() {
@@ -276,6 +279,19 @@ export default function OperatorProjectorPage() {
     ? questionsList.find((q) => q.id === session.current_question_id) || null
     : null;
 
+  // Tentukan jenis permainan / tipe soal yang aktif (default pilihan_ganda)
+  let activeGameType: 'pilihan_ganda' | 'benar_salah' | 'essay' = 'pilihan_ganda';
+  if (session?.status === 'box_benar_salah') {
+    activeGameType = 'benar_salah';
+  } else if (session?.status === 'box_essay') {
+    activeGameType = 'essay';
+  } else if (session?.status === 'box_pilihan_ganda') {
+    activeGameType = 'pilihan_ganda';
+  }
+
+  // Filter daftar soal sesuai jenis permainan yang aktif
+  const filteredQuestions = questionsList.filter((q) => q.type === activeGameType);
+
   // Hitung jumlah kotak (default 6 atau 9)
   const totalBoxes = session?.blink_box_count === 9 ? 9 : 6;
 
@@ -404,7 +420,7 @@ export default function OperatorProjectorPage() {
 
       {/* MAIN STAGE CONTENT AREA */}
       <div className="flex-1 flex flex-col justify-center items-center pt-4 z-10 min-h-0 relative w-full">
-        {/* TAMPILAN 1: DASHBOARD SAMBUTAN ARENA (Jika Operator memilih mode Pembukaan Acara / Waiting) */}
+        {/* TAMPILAN 1: DASHBOARD SAMBUTAN ARENA (Ketika status === 'waiting') */}
         {session?.status === 'waiting' && !session?.current_question_id && (
           <div className="max-w-5xl w-full text-center py-10 px-8 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-white mb-5 shadow-xl shadow-purple-600/30">
@@ -465,13 +481,80 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 2: PAPAN KOTAK BLINK BOX (Tampil di Proyektor saat belum ada soal aktif) */}
-        {session?.status !== 'waiting' && !session?.current_question_id && (
-          <div className="max-w-5xl w-full flex flex-col items-center justify-between space-y-6">
+        {/* TAMPILAN 2: PILIH JENIS PERMAINAN / FORMAT TANTANGAN (Ketika status === 'type_select') */}
+        {session?.status === 'type_select' && !session?.current_question_id && (
+          <div className="max-w-5xl w-full flex flex-col items-center justify-center text-center space-y-8 animate-in fade-in duration-500">
+            <div className="space-y-2">
+              <span className="text-xs uppercase font-extrabold tracking-widest text-purple-400 bg-purple-500/10 px-4 py-1.5 rounded-full border border-purple-500/20 inline-block shadow-sm">
+                TAHAPAN PERTANDINGAN
+              </span>
+              <h2 className="text-3xl sm:text-5xl font-black text-white uppercase tracking-tight drop-shadow-md">
+                Format Tantangan Kuis
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-xl mx-auto">
+                Operator panggung sedang memilih jenis babak perlombaan yang akan dimainkan
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 w-full pt-2">
+              {/* Card 1: Pilihan Ganda */}
+              <div className="p-8 rounded-3xl bg-slate-900/80 border-2 border-blue-500/40 shadow-xl shadow-blue-500/10 flex flex-col items-center text-center relative overflow-hidden group">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-600 flex items-center justify-center text-white mb-6 shadow-lg shadow-blue-600/30">
+                  <BookOpen className="w-8 h-8" />
+                </div>
+                <h3 className="text-2xl font-black text-white uppercase mb-2">
+                  Pilihan Ganda
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mb-6">
+                  4 Opsi Jawaban (A, B, C, D) dengan Smart Shuffle & Countdown Cepat
+                </p>
+                <span className="mt-auto text-[11px] font-bold text-blue-400 bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+                  {questionsList.filter((q) => q.type === 'pilihan_ganda').length} Soal Tersedia
+                </span>
+              </div>
+
+              {/* Card 2: Benar / Salah */}
+              <div className="p-8 rounded-3xl bg-slate-900/80 border-2 border-amber-500/40 shadow-xl shadow-amber-500/10 flex flex-col items-center text-center relative overflow-hidden group">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-amber-600 to-orange-600 flex items-center justify-center text-white mb-6 shadow-lg shadow-amber-600/30">
+                  <HelpCircle className="w-8 h-8" />
+                </div>
+                <h3 className="text-2xl font-black text-white uppercase mb-2">
+                  Benar / Salah
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mb-6">
+                  Tantangan kilat menguji ketangkasan & logika peserta di panggung
+                </p>
+                <span className="mt-auto text-[11px] font-bold text-amber-400 bg-amber-500/10 px-3 py-1 rounded-full border border-amber-500/20">
+                  {questionsList.filter((q) => q.type === 'benar_salah').length} Soal Tersedia
+                </span>
+              </div>
+
+              {/* Card 3: Essay / Rebutan */}
+              <div className="p-8 rounded-3xl bg-slate-900/80 border-2 border-purple-500/40 shadow-xl shadow-purple-500/10 flex flex-col items-center text-center relative overflow-hidden group">
+                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-600 flex items-center justify-center text-white mb-6 shadow-lg shadow-purple-600/30">
+                  <Layers className="w-8 h-8" />
+                </div>
+                <h3 className="text-2xl font-black text-white uppercase mb-2">
+                  Rebutan / Lisan
+                </h3>
+                <p className="text-xs text-slate-400 font-medium mb-6">
+                  Pertanyaan eksploratif lisan dinilai langsung oleh dewan juri
+                </p>
+                <span className="mt-auto text-[11px] font-bold text-purple-400 bg-purple-500/10 px-3 py-1 rounded-full border border-purple-500/20">
+                  {questionsList.filter((q) => q.type === 'essay').length} Soal Tersedia
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* TAMPILAN 3: PAPAN KOTAK BLINK BOX (Sesuai Jenis Permainan yang Dipilih) */}
+        {session?.status !== 'waiting' && session?.status !== 'type_select' && !session?.current_question_id && (
+          <div className="max-w-5xl w-full flex flex-col items-center justify-between space-y-6 animate-in fade-in duration-500">
             {/* Header Papan Kotak */}
             <div className="text-center space-y-2">
               <span className="text-xs uppercase font-extrabold tracking-widest text-indigo-400 bg-indigo-500/10 px-4 py-1.5 rounded-full border border-indigo-500/20 inline-block shadow-sm">
-                KOTAK MISTERI PANGGUNG
+                BABAK: {activeGameType === 'pilihan_ganda' ? 'PILIHAN GANDA' : activeGameType === 'benar_salah' ? 'BENAR ATAU SALAH' : 'REBUTAN / ESSAY'}
               </span>
               <h2 className="text-3xl sm:text-5xl font-black text-white uppercase tracking-tight drop-shadow-md">
                 Pilih Kotak Tantangan
@@ -485,7 +568,7 @@ export default function OperatorProjectorPage() {
             <div className={`w-full grid gap-4 sm:gap-6 ${totalBoxes === 9 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-3'}`}>
               {Array.from({ length: totalBoxes }).map((_, idx) => {
                 const boxNum = idx + 1;
-                const matchedQ = questionsList.find((q) => q.box_number === boxNum) || questionsList[idx];
+                const matchedQ = filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];
                 const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
 
                 return (
@@ -551,9 +634,9 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 3: SOAL AKTIF DI PANGGUNG */}
+        {/* TAMPILAN 4: SOAL AKTIF DI PANGGUNG */}
         {session?.current_question_id && (
-          <div className="w-full flex-1 flex flex-col justify-between space-y-6">
+          <div className="w-full flex-1 flex flex-col justify-between space-y-6 animate-in fade-in duration-300">
             {/* Header Soal & Countdown */}
             <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-3xl p-6 backdrop-blur-md">
               <div>
