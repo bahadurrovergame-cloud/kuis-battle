@@ -91,3 +91,20 @@ export function buildExplanationWithMeta(
   return result.trim() || null;
 }
 
+export function parseSessionMeta(session: GameSession | null | undefined): {
+  cleanTitle: string;
+  boxCount: number;
+} {
+  if (!session) return { cleanTitle: 'Kuis Battle Panggung', boxCount: 6 };
+  const rawTitle = session.title || 'Kuis Battle Panggung';
+  const boxMatch = rawTitle.match(/\[BOXES:(\d+)\]/);
+  const cleanTitle = rawTitle.replace(/\[BOXES:\d+\]/g, '').trim() || 'Kuis Battle Panggung';
+  const boxCount = boxMatch ? parseInt(boxMatch[1], 10) : (session.blink_box_count || 6);
+  return { cleanTitle, boxCount: Math.max(1, boxCount) };
+}
+
+export function buildSessionTitleWithBoxes(cleanTitle: string, boxCount: number): string {
+  const clean = cleanTitle.replace(/\[BOXES:\d+\]/g, '').trim() || 'Kuis Battle Panggung';
+  return `${clean} [BOXES:${Math.max(1, boxCount)}]`;
+}
+

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { supabase, GameSession, Question, Team, parseQuestionMeta } from '@/lib/supabase';
+import { supabase, GameSession, Question, Team, parseQuestionMeta, parseSessionMeta } from '@/lib/supabase';
 import CircularTimer from '@/components/CircularTimer';
 import QuestionDisplay from '@/components/QuestionDisplay';
 import Leaderboard from '@/components/Leaderboard';
@@ -197,6 +197,9 @@ export default function OperatorProjectorPage() {
           } catch {}
         }
       })
+      .on('broadcast', { event: 'box_count_sync' }, () => {
+        fetchInitialData();
+      })
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
       });
@@ -292,8 +295,8 @@ export default function OperatorProjectorPage() {
   // Filter daftar soal sesuai jenis permainan yang aktif
   const filteredQuestions = questionsList.filter((q) => q.type === activeGameType);
 
-  // Hitung jumlah kotak (default 6 atau 9)
-  const totalBoxes = session?.blink_box_count === 9 ? 9 : 6;
+  // Hitung jumlah kotak dan judul panggung dari metadata sesi
+  const { cleanTitle, boxCount: totalBoxes } = parseSessionMeta(session);
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -322,7 +325,7 @@ export default function OperatorProjectorPage() {
           </div>
           <div>
             <h1 className="text-xl font-black tracking-wide text-white uppercase flex items-center gap-2">
-              <span>{session?.title || 'Kuis Battle Panggung'}</span>
+              <span>{cleanTitle}</span>
               <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-widest">
                 STAGE LIVE
               </span>
@@ -432,7 +435,7 @@ export default function OperatorProjectorPage() {
             </span>
 
             <h2 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase mb-4 drop-shadow-md">
-              {session?.title || 'Kuis Battle Panggung'}
+              {cleanTitle}
             </h2>
 
             <p className="text-sm md:text-base text-slate-400 max-w-xl mx-auto mb-6 font-medium">
@@ -564,8 +567,22 @@ export default function OperatorProjectorPage() {
               </p>
             </div>
 
-            {/* Grid Kotak Blink Box (6 atau 9 Kotak) */}
-            <div className={`w-full grid gap-4 sm:gap-6 ${totalBoxes === 9 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-3'}`}>
+            {/* Grid Kotak Blink Box (Bisa Custom Jumlah Kotak) */}
+            <div
+              className={`w-full grid gap-4 sm:gap-6 ${
+                totalBoxes <= 3
+                  ? 'grid-cols-3 max-w-3xl'
+                  : totalBoxes <= 4
+                  ? 'grid-cols-2 sm:grid-cols-4 max-w-4xl'
+                  : totalBoxes <= 6
+                  ? 'grid-cols-2 md:grid-cols-3 max-w-5xl'
+                  : totalBoxes <= 9
+                  ? 'grid-cols-3 max-w-5xl'
+                  : totalBoxes <= 12
+                  ? 'grid-cols-3 sm:grid-cols-4 max-w-6xl'
+                  : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 max-w-6xl'
+              }`}
+            >
               {Array.from({ length: totalBoxes }).map((_, idx) => {
                 const boxNum = idx + 1;
                 const matchedQ = filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];
@@ -574,7 +591,7 @@ export default function OperatorProjectorPage() {
                 return (
                   <div
                     key={boxNum}
-                    className={`h-36 sm:h-44 rounded-3xl font-black flex flex-col items-center justify-center gap-2 transition-all duration-500 relative overflow-hidden select-none border-2 shadow-2xl ${
+                    className={`${totalBoxes > 9 ? 'h-28 sm:h-36' : 'h-36 sm:h-44'} rounded-3xl font-black flex flex-col items-center justify-center gap-2 transition-all duration-500 relative overflow-hidden select-none border-2 shadow-2xl ${
                       isOpened
                         ? 'bg-slate-950/60 border-slate-800/80 text-slate-600 opacity-40 scale-95'
                         : matchedQ

@@ -2,7 +2,15 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, GameSession, Question, Team, parseQuestionMeta } from '@/lib/supabase';
+import {
+  supabase,
+  GameSession,
+  Question,
+  Team,
+  parseQuestionMeta,
+  parseSessionMeta,
+  buildSessionTitleWithBoxes
+} from '@/lib/supabase';
 import {
   Play,
   Pause,
@@ -200,6 +208,9 @@ export default function OperatorControlPage() {
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
         setOpenedBoxIds([]);
+      })
+      .on('broadcast', { event: 'box_count_sync' }, () => {
+        loadData();
       })
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
@@ -483,6 +494,34 @@ export default function OperatorControlPage() {
       event: 'reset_boxes',
       payload: {},
     });
+  };
+
+  // Hitung jumlah kotak dan judul bersih dari metadata sesi
+  const { cleanTitle, boxCount } = parseSessionMeta(session);
+
+  // Ubah jumlah kotak Blink Box (Custom) langsung dari kontrol operator
+  const handleUpdateBoxCount = async (newCount: number) => {
+    if (!session || newCount < 1) return;
+    try {
+      const updatedTitle = buildSessionTitleWithBoxes(cleanTitle, newCount);
+      const { error } = await supabase
+        .from('game_sessions')
+        .update({ title: updatedTitle })
+        .eq('id', session.id);
+
+      if (error) throw error;
+
+      setSession((prev) => (prev ? { ...prev, title: updatedTitle, blink_box_count: newCount } : prev));
+
+      // Broadcast sinkronisasi ke proyektor
+      supabase.channel(`room_sync_${session.id}`).send({
+        type: 'broadcast',
+        event: 'box_count_sync',
+        payload: { boxCount: newCount },
+      });
+    } catch (err) {
+      console.error('Update box count error:', err);
+    }
   };
 
   // Filter pertanyaan sesuai jenis permainan yang dipilih
@@ -1080,13 +1119,52 @@ export default function OperatorControlPage() {
 
           {/* SELEKTOR KOTAK BLINK BOX INTERAKTIF OPERATOR */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-md">
-            <div className="flex flex-wrap items-center justify-between mb-3 gap-2">
-              <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center justify-between mb-3 gap-3">
+              <div className="flex flex-wrap items-center gap-2">
                 <LayoutGrid className="w-4 h-4 text-blue-400" />
                 <span className="text-xs font-black uppercase tracking-wider text-white">
-                  Pilih Kotak Blink Box ({session?.blink_box_count === 9 ? '9 Kotak' : '6 Kotak'}):
+                  Pilih Kotak Blink Box ({boxCount} Kotak):
                 </span>
+
+                {/* Quick Presets & Custom Changer */}
+                <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-xl p-1">
+                  {[6, 9, 12].map((cnt) => (
+                    <button
+                      key={cnt}
+                      onClick={() => handleUpdateBoxCount(cnt)}
+                      className={`px-2 py-0.5 text-[10px] font-bold rounded-lg transition-all ${
+                        boxCount === cnt
+                          ? 'bg-blue-600 text-white shadow-sm'
+                          : 'text-slate-400 hover:text-white'
+                      }`}
+                    >
+                      {cnt}
+                    </button>
+                  ))}
+                  <div className="flex items-center gap-1 pl-1 border-l border-slate-800">
+                    <span className="text-[10px] text-slate-500 font-bold">Custom:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      defaultValue={boxCount}
+                      key={boxCount}
+                      onBlur={(e) => {
+                        const val = Number(e.target.value);
+                        if (val > 0 && val !== boxCount) handleUpdateBoxCount(val);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          const val = Number((e.target as HTMLInputElement).value);
+                          if (val > 0 && val !== boxCount) handleUpdateBoxCount(val);
+                        }
+                      }}
+                      className="w-10 bg-slate-900 border border-slate-700 rounded text-center text-[10px] font-mono font-bold text-white py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                  </div>
+                </div>
               </div>
+
               <div className="flex items-center gap-2">
                 <button
                   onClick={handleResetBoxes}
@@ -1135,10 +1213,18 @@ export default function OperatorControlPage() {
 
             <div
               className={`grid gap-2.5 ${
-                session?.blink_box_count === 9 ? 'grid-cols-3' : 'grid-cols-3 sm:grid-cols-6'
+                boxCount <= 4
+                  ? 'grid-cols-2 sm:grid-cols-4'
+                  : boxCount <= 6
+                  ? 'grid-cols-3 sm:grid-cols-6'
+                  : boxCount <= 9
+                  ? 'grid-cols-3 sm:grid-cols-3 md:grid-cols-5'
+                  : boxCount <= 12
+                  ? 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6'
+                  : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8'
               }`}
             >
-              {Array.from({ length: session?.blink_box_count === 9 ? 9 : 6 }).map((_, idx) => {
+              {Array.from({ length: boxCount }).map((_, idx) => {
                 const boxNum = idx + 1;
                 const matchedQ =
                   filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];

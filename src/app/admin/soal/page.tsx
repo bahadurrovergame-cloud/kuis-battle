@@ -2,7 +2,16 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, Question, QuestionType, Team, parseQuestionMeta, buildExplanationWithMeta } from '@/lib/supabase';
+import {
+  supabase,
+  Question,
+  QuestionType,
+  Team,
+  parseQuestionMeta,
+  buildExplanationWithMeta,
+  parseSessionMeta,
+  buildSessionTitleWithBoxes
+} from '@/lib/supabase';
 import {
   BookOpen,
   Plus,
@@ -127,8 +136,9 @@ export default function AdminDashboardPage() {
       const { data: sData } = await supabase.from('game_sessions').select('*').limit(1).single();
       if (sData) {
         setSessionId(sData.id);
-        if (sData.title) setEventTitle(sData.title);
-        if (sData.blink_box_count) setBlinkBoxCount(sData.blink_box_count);
+        const { cleanTitle, boxCount } = parseSessionMeta(sData);
+        setEventTitle(cleanTitle);
+        setBlinkBoxCount(boxCount);
       }
 
       const { data: cats } = await supabase.from('categories').select('*').order('name');
@@ -161,26 +171,34 @@ export default function AdminDashboardPage() {
     loadData();
   }, [loadData]);
 
-  // Simpan Pengaturan Acara (Judul Acara & Jumlah Kotak Blink Box)
+  // Simpan Pengaturan Acara (Judul Acara & Jumlah Kotak Blink Box Custom)
   const handleSaveSettings = async () => {
     if (!sessionId) return;
     setSavingSettings(true);
     try {
-      // Simpan format blinkBoxCount di localStorage agar tersimpan di sistem
       localStorage.setItem('kuis_blink_box_count', String(blinkBoxCount));
 
-      // Update title di game_sessions (kolom title terbukti ada di Supabase)
-      const updatePayload: Record<string, unknown> = {
-        title: eventTitle,
-      };
+      // Simpan judul dan jumlah kotak custom ke kolom title dengan format [BOXES:X]
+      const titlePayload = buildSessionTitleWithBoxes(eventTitle, blinkBoxCount);
 
       const { error } = await supabase
         .from('game_sessions')
-        .update(updatePayload)
+        .update({ title: titlePayload })
         .eq('id', sessionId);
 
       if (error) throw error;
-      setStatusMsg({ text: 'Pengaturan acara berhasil disimpan & disinkronkan ke layar proyektor!', type: 'success' });
+
+      // Broadcast sinkronisasi langsung ke proyektor dan kontrol operator
+      supabase.channel(`room_sync_${sessionId}`).send({
+        type: 'broadcast',
+        event: 'box_count_sync',
+        payload: { boxCount: blinkBoxCount },
+      });
+
+      setStatusMsg({
+        text: `Pengaturan acara & ${blinkBoxCount} Kotak berhasil disimpan dan disinkronkan ke layar proyektor!`,
+        type: 'success',
+      });
     } catch (err: unknown) {
       console.error('Save settings error:', err);
       const msg = err instanceof Error ? err.message : JSON.stringify(err);
@@ -851,29 +869,38 @@ export default function AdminDashboardPage() {
                 />
               </div>
 
-              <div className="w-44">
+              <div>
                 <label className="block text-[11px] font-bold text-blue-300 uppercase tracking-wider mb-1">
-                  Format Blink Box
+                  Jumlah Kotak Blink Box (Bisa Custom)
                 </label>
-                <div className="flex items-center gap-1.5 bg-slate-950 border border-blue-500/40 rounded-xl p-1">
-                  <button
-                    type="button"
-                    onClick={() => setBlinkBoxCount(6)}
-                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
-                      blinkBoxCount === 6 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    6 Kotak
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setBlinkBoxCount(9)}
-                    className={`flex-1 py-1 text-xs font-bold rounded-lg transition-all ${
-                      blinkBoxCount === 9 ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'
-                    }`}
-                  >
-                    9 Kotak
-                  </button>
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex items-center gap-1 bg-slate-950 border border-blue-500/40 rounded-xl p-1">
+                    {[6, 9, 12].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setBlinkBoxCount(preset)}
+                        className={`px-2.5 py-1 text-xs font-bold rounded-lg transition-all ${
+                          blinkBoxCount === preset ? 'bg-blue-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {preset} Kotak
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 bg-slate-950 border border-blue-500/40 rounded-xl px-2.5 py-1">
+                    <span className="text-[11px] font-bold text-slate-400">Custom:</span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={blinkBoxCount}
+                      onChange={(e) => setBlinkBoxCount(Math.max(1, Number(e.target.value)))}
+                      className="w-12 bg-slate-900 border border-blue-500/50 rounded-lg px-1 py-0.5 text-xs text-white font-mono font-black text-center focus:outline-none focus:ring-1 focus:ring-blue-400"
+                    />
+                    <span className="text-[11px] font-bold text-blue-300">Kotak</span>
+                  </div>
                 </div>
               </div>
             </div>
@@ -1062,9 +1089,9 @@ export default function AdminDashboardPage() {
                             title="Pilih nomor kotak panggung tempat soal ini muncul"
                           >
                             <option value="">Otomatis</option>
-                            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                              <option key={num} value={num}>
-                                Kotak #{num}
+                            {Array.from({ length: Math.max(12, blinkBoxCount) }).map((_, i) => (
+                              <option key={i + 1} value={i + 1}>
+                                Kotak #{i + 1}
                               </option>
                             ))}
                           </select>
@@ -1528,7 +1555,7 @@ export default function AdminDashboardPage() {
               <div className="grid grid-cols-2 gap-4 p-3 bg-slate-950/70 border border-slate-800 rounded-2xl">
                 <div>
                   <label className="block text-[11px] font-bold text-blue-300 uppercase tracking-wider mb-1.5">
-                    Slot Kotak Blink Box (1 - 9)
+                    Slot Kotak Blink Box (Panggung)
                   </label>
                   <select
                     value={formData.box_number ?? ''}
@@ -1541,9 +1568,9 @@ export default function AdminDashboardPage() {
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                   >
                     <option value="">Otomatis (Sesuai Urutan)</option>
-                    {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
-                      <option key={num} value={num}>
-                        Kotak Nomor #{num}
+                    {Array.from({ length: Math.max(12, blinkBoxCount) }).map((_, i) => (
+                      <option key={i + 1} value={i + 1}>
+                        Kotak Nomor #{i + 1}
                       </option>
                     ))}
                   </select>
