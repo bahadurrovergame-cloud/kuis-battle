@@ -18,7 +18,8 @@ import {
   Volume2,
   Sparkles,
   Trophy,
-  Users
+  Users,
+  LayoutGrid
 } from 'lucide-react';
 
 export default function OperatorProjectorPage() {
@@ -39,6 +40,9 @@ export default function OperatorProjectorPage() {
   const [remainingTime, setRemainingTime] = useState<number>(30);
   const prevRemainingRef = useRef<number>(30);
   const prevRevealedRef = useRef<boolean>(false);
+
+  // Opened Box tracking
+  const [openedBoxIds, setOpenedBoxIds] = useState<string[]>([]);
 
   // Auto-Fade floating controls saat mouse diam 3 detik
   useEffect(() => {
@@ -80,6 +84,12 @@ export default function OperatorProjectorPage() {
         setSession(sessionData);
         setRemainingTime(sessionData.timer_remaining);
 
+        // Load opened boxes
+        try {
+          const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
+          if (saved) setOpenedBoxIds(JSON.parse(saved));
+        } catch {}
+
         // 2. Fetch Teams
         const { data: teamsData } = await supabase
           .from('teams')
@@ -103,6 +113,32 @@ export default function OperatorProjectorPage() {
   useEffect(() => {
     fetchInitialData();
   }, []);
+
+  // Sync openedBoxIds from localStorage and whenever a question is activated
+  useEffect(() => {
+    if (!session?.id || !session?.current_question_id) return;
+    setOpenedBoxIds((prev) => {
+      if (prev.includes(session.current_question_id!)) return prev;
+      const next = [...prev, session.current_question_id!];
+      try {
+        localStorage.setItem(`opened_boxes_${session.id}`, JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }, [session?.id, session?.current_question_id]);
+
+  // Listen to storage event across tabs for opened boxes
+  useEffect(() => {
+    const handleStorage = (e: StorageEvent) => {
+      if (session?.id && e.key === `opened_boxes_${session.id}` && e.newValue) {
+        try {
+          setOpenedBoxIds(JSON.parse(e.newValue));
+        } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorage);
+    return () => window.removeEventListener('storage', handleStorage);
+  }, [session?.id]);
 
   // Realtime Supabase Subscription
   useEffect(() => {
@@ -150,6 +186,14 @@ export default function OperatorProjectorPage() {
           if (qDataList) setQuestionsList(qDataList);
         }
       )
+      .on('broadcast', { event: 'reset_boxes' }, () => {
+        setOpenedBoxIds([]);
+        if (session?.id) {
+          try {
+            localStorage.removeItem(`opened_boxes_${session.id}`);
+          } catch {}
+        }
+      })
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
       });
@@ -159,7 +203,7 @@ export default function OperatorProjectorPage() {
     };
   }, [session?.id]);
 
-  // Safety Auto-Sync Polling setiap 2.5 detik (menjamin layar selalu ter-update secara otomatis)
+  // Safety Auto-Sync Polling setiap 2.5 detik
   useEffect(() => {
     if (!session?.id) return;
 
@@ -172,7 +216,6 @@ export default function OperatorProjectorPage() {
           .single();
 
         if (latestSession) {
-          // Update session jika ada perubahan nilai kunci
           if (
             latestSession.current_question_id !== session.current_question_id ||
             latestSession.is_answer_revealed !== session.is_answer_revealed ||
@@ -232,6 +275,9 @@ export default function OperatorProjectorPage() {
   const currentQuestion = session?.current_question_id
     ? questionsList.find((q) => q.id === session.current_question_id) || null
     : null;
+
+  // Hitung jumlah kotak (default 6 atau 9)
+  const totalBoxes = session?.blink_box_count === 9 ? 9 : 6;
 
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -357,9 +403,9 @@ export default function OperatorProjectorPage() {
       )}
 
       {/* MAIN STAGE CONTENT AREA */}
-      <div className="flex-1 flex flex-col justify-center items-center pt-6 z-10 min-h-0 relative w-full">
-        {/* TAMPILAN 1: DASHBOARD SAMBUTAN / ARENA UTAMA (Ketika belum ada soal yang dipilih) */}
-        {!session?.current_question_id && (
+      <div className="flex-1 flex flex-col justify-center items-center pt-4 z-10 min-h-0 relative w-full">
+        {/* TAMPILAN 1: DASHBOARD SAMBUTAN ARENA (Jika Operator memilih mode Pembukaan Acara / Waiting) */}
+        {session?.status === 'waiting' && !session?.current_question_id && (
           <div className="max-w-5xl w-full text-center py-10 px-8 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-white mb-5 shadow-xl shadow-purple-600/30">
               <Sparkles className="w-10 h-10 animate-bounce" />
@@ -380,7 +426,7 @@ export default function OperatorProjectorPage() {
             {/* Status Panggung */}
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-bold uppercase tracking-wider mb-8 animate-pulse">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
-              <span>Menunggu Operator Membuka Soal...</span>
+              <span>Menunggu Operator Membuka Babak Kuis...</span>
             </div>
 
             {/* PREVIEW KLASEMEN REGUS DI PANGGUNG SAMBUTAN */}
@@ -394,7 +440,7 @@ export default function OperatorProjectorPage() {
                 </div>
 
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                  {teams.map((t, idx) => (
+                  {teams.map((t) => (
                     <div
                       key={t.id}
                       className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col items-center justify-center gap-1 shadow"
@@ -419,7 +465,93 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 2: SOAL AKTIF DI PANGGUNG */}
+        {/* TAMPILAN 2: PAPAN KOTAK BLINK BOX (Tampil di Proyektor saat belum ada soal aktif) */}
+        {session?.status !== 'waiting' && !session?.current_question_id && (
+          <div className="max-w-5xl w-full flex flex-col items-center justify-between space-y-6">
+            {/* Header Papan Kotak */}
+            <div className="text-center space-y-2">
+              <span className="text-xs uppercase font-extrabold tracking-widest text-indigo-400 bg-indigo-500/10 px-4 py-1.5 rounded-full border border-indigo-500/20 inline-block shadow-sm">
+                KOTAK MISTERI PANGGUNG
+              </span>
+              <h2 className="text-3xl sm:text-5xl font-black text-white uppercase tracking-tight drop-shadow-md">
+                Pilih Kotak Tantangan
+              </h2>
+              <p className="text-xs sm:text-sm text-slate-400 font-medium max-w-xl mx-auto">
+                Silakan regu yang bertanding memilih salah satu nomor kotak yang tersedia di layar!
+              </p>
+            </div>
+
+            {/* Grid Kotak Blink Box (6 atau 9 Kotak) */}
+            <div className={`w-full grid gap-4 sm:gap-6 ${totalBoxes === 9 ? 'grid-cols-3' : 'grid-cols-2 md:grid-cols-3'}`}>
+              {Array.from({ length: totalBoxes }).map((_, idx) => {
+                const boxNum = idx + 1;
+                const matchedQ = questionsList.find((q) => q.box_number === boxNum) || questionsList[idx];
+                const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
+
+                return (
+                  <div
+                    key={boxNum}
+                    className={`h-36 sm:h-44 rounded-3xl font-black flex flex-col items-center justify-center gap-2 transition-all duration-500 relative overflow-hidden select-none border-2 shadow-2xl ${
+                      isOpened
+                        ? 'bg-slate-950/60 border-slate-800/80 text-slate-600 opacity-40 scale-95'
+                        : matchedQ
+                        ? 'bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 border-indigo-500/70 text-white shadow-indigo-600/30'
+                        : 'bg-slate-950/40 border-slate-800 text-slate-700'
+                    }`}
+                  >
+                    {/* Glowing neon aura */}
+                    {!isOpened && matchedQ && (
+                      <span className="absolute -top-10 -right-10 w-28 h-28 bg-indigo-500/25 rounded-full blur-2xl animate-pulse" />
+                    )}
+
+                    {/* Box Number */}
+                    <span className="text-4xl sm:text-5xl font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300">
+                      #{boxNum}
+                    </span>
+
+                    {/* Status Badge */}
+                    <span
+                      className={`text-[11px] sm:text-xs uppercase tracking-widest font-black px-3 py-1 rounded-full border ${
+                        isOpened
+                          ? 'bg-slate-800/60 border-slate-700 text-slate-500'
+                          : matchedQ
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400 animate-pulse'
+                          : 'bg-slate-900 border-slate-800 text-slate-600'
+                      }`}
+                    >
+                      {isOpened ? '✓ Sudah Dibuka' : matchedQ ? '★ Tersedia' : 'Kosong'}
+                    </span>
+
+                    {/* Point Hint */}
+                    {!isOpened && matchedQ && (
+                      <span className="text-[10px] font-bold text-indigo-300/80 uppercase tracking-wider">
+                        +{matchedQ.points || 100} Poin
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Live Teams Bar di Bawah Kotak */}
+            {teams.length > 0 && (
+              <div className="w-full border-t border-slate-800/80 pt-4 flex flex-wrap items-center justify-center gap-3">
+                {teams.map((t) => (
+                  <div
+                    key={t.id}
+                    className="px-4 py-2 rounded-2xl bg-slate-900/80 border border-slate-800 flex items-center gap-2.5 shadow-sm"
+                  >
+                    <span className="w-3 h-3 rounded-full shadow" style={{ backgroundColor: t.color }} />
+                    <span className="text-xs font-black text-white">{t.name}:</span>
+                    <span className="text-sm font-black font-mono text-amber-400">{t.score} PTS</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAMPILAN 3: SOAL AKTIF DI PANGGUNG */}
         {session?.current_question_id && (
           <div className="w-full flex-1 flex flex-col justify-between space-y-6">
             {/* Header Soal & Countdown */}

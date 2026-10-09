@@ -24,7 +24,8 @@ import {
   Trash2,
   X,
   Check,
-  LayoutGrid
+  LayoutGrid,
+  CheckCircle2
 } from 'lucide-react';
 import { sounds } from '@/lib/sound';
 
@@ -38,6 +39,9 @@ export default function OperatorControlPage() {
   const [teams, setTeams] = useState<Team[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
+
+  // Opened Box tracking
+  const [openedBoxIds, setOpenedBoxIds] = useState<string[]>([]);
 
   // Custom score input per regu: { [teamId]: number }
   const [customScores, setCustomScores] = useState<Record<string, string>>({});
@@ -78,6 +82,12 @@ export default function OperatorControlPage() {
 
       if (sessionData) {
         setSession(sessionData);
+
+        // Load opened boxes from localStorage
+        try {
+          const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
+          if (saved) setOpenedBoxIds(JSON.parse(saved));
+        } catch {}
 
         // Fetch questions
         const { data: qList } = await supabase
@@ -170,6 +180,9 @@ export default function OperatorControlPage() {
           if (qList) setQuestionsList(qList);
         }
       )
+      .on('broadcast', { event: 'reset_boxes' }, () => {
+        setOpenedBoxIds([]);
+      })
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
       });
@@ -284,8 +297,8 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Ubah Tampilan Layar Proyektor dari Panel Control Operator ('welcome' | 'question_active')
-  const handleSetProjectorView = async (view: 'welcome' | 'question_active') => {
+  // Ubah Tampilan Layar Proyektor ('welcome' | 'box_select' | 'question_active')
+  const handleSetProjectorView = async (view: 'welcome' | 'box_select' | 'question_active') => {
     if (!session) return;
     const nowIso = new Date().toISOString();
 
@@ -293,6 +306,7 @@ export default function OperatorControlPage() {
       setCurrentQuestion(null);
       setSession({
         ...session,
+        status: 'waiting',
         current_question_id: null,
         is_timer_running: false,
         is_answer_revealed: false,
@@ -302,6 +316,28 @@ export default function OperatorControlPage() {
       await supabase
         .from('game_sessions')
         .update({
+          status: 'waiting',
+          current_question_id: null,
+          is_timer_running: false,
+          is_answer_revealed: false,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id);
+    } else if (view === 'box_select') {
+      setCurrentQuestion(null);
+      setSession({
+        ...session,
+        status: 'active',
+        current_question_id: null,
+        is_timer_running: false,
+        is_answer_revealed: false,
+        updated_at: nowIso,
+      });
+
+      await supabase
+        .from('game_sessions')
+        .update({
+          status: 'active',
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
@@ -311,17 +347,17 @@ export default function OperatorControlPage() {
     } else if (view === 'question_active' && currentQuestion) {
       setSession({
         ...session,
+        status: 'active',
         current_question_id: currentQuestion.id,
         updated_at: nowIso,
-        status: 'active',
       });
 
       await supabase
         .from('game_sessions')
         .update({
+          status: 'active',
           current_question_id: currentQuestion.id,
           updated_at: nowIso,
-          status: 'active',
         })
         .eq('id', session.id);
     }
@@ -350,27 +386,57 @@ export default function OperatorControlPage() {
     setRemainingTime(dur);
     setSession({
       ...session,
+      status: 'active',
       current_question_id: q.id,
       is_answer_revealed: false,
       timer_remaining: dur,
       is_timer_running: autoStartTimer,
       updated_at: nowIso,
-      status: 'active',
+    });
+
+    // Tandai kotak sebagai sudah dibuka
+    setOpenedBoxIds((prev) => {
+      if (prev.includes(q.id)) return prev;
+      const next = [...prev, q.id];
+      try {
+        localStorage.setItem(`opened_boxes_${session.id}`, JSON.stringify(next));
+      } catch {}
+      return next;
     });
 
     await supabase
       .from('game_sessions')
       .update({
+        status: 'active',
         current_question_id: q.id,
         is_answer_revealed: false,
         timer_remaining: dur,
         is_timer_running: autoStartTimer,
         updated_at: nowIso,
-        status: 'active',
       })
       .eq('id', session.id);
 
     setLoadingAction(false);
+  };
+
+  // Reset status kotak yang sudah dibuka
+  const handleResetBoxes = async () => {
+    if (!session) return;
+    const confirm = window.confirm('Buka ulang semua kotak (reset status kotak yang sudah dibuka)?');
+    if (!confirm) return;
+
+    setOpenedBoxIds([]);
+    try {
+      localStorage.removeItem(`opened_boxes_${session.id}`);
+    } catch {}
+
+    // Broadcast ke proyektor
+    const channelName = `room_sync_${session.id}`;
+    await supabase.channel(channelName).send({
+      type: 'broadcast',
+      event: 'reset_boxes',
+      payload: {},
+    });
   };
 
   const handleNextQuestion = async () => {
@@ -613,16 +679,22 @@ export default function OperatorControlPage() {
         <div className="flex items-center gap-2">
           <Tv className="w-4 h-4 text-purple-400" />
           <span className="text-xs font-bold text-white uppercase tracking-wider">
-            Tampilan Layar Proyektor Saat Ini:
+            Layar Proyektor Sedang Menampilkan:
           </span>
           <span
             className={`text-xs font-black uppercase px-2.5 py-0.5 rounded-full ${
-              !session?.current_question_id
+              session?.status === 'waiting'
                 ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
+                : !session?.current_question_id
+                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40'
                 : 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
             }`}
           >
-            {!session?.current_question_id ? 'Dashboard Sambutan (Arena)' : 'Soal Aktif'}
+            {session?.status === 'waiting'
+              ? 'Sambutan Arena (Opening)'
+              : !session?.current_question_id
+              ? 'Papan Kotak Blink Box'
+              : 'Soal Aktif'}
           </span>
         </div>
 
@@ -630,13 +702,25 @@ export default function OperatorControlPage() {
           <button
             onClick={() => handleSetProjectorView('welcome')}
             className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-              !session?.current_question_id
+              session?.status === 'waiting'
                 ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30 border border-purple-400'
                 : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
             }`}
           >
             <Sparkles className="w-3.5 h-3.5" />
-            <span>Tampilkan Dashboard Sambutan</span>
+            <span>Sambutan Arena</span>
+          </button>
+
+          <button
+            onClick={() => handleSetProjectorView('box_select')}
+            className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
+              session?.status !== 'waiting' && !session?.current_question_id
+                ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
+                : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
+            }`}
+          >
+            <LayoutGrid className="w-3.5 h-3.5" />
+            <span>Papan Kotak (Proyektor)</span>
           </button>
 
           {currentQuestion && (
@@ -649,7 +733,7 @@ export default function OperatorControlPage() {
               }`}
             >
               <Check className="w-3.5 h-3.5" />
-              <span>Tampilkan Soal Aktif di Proyektor</span>
+              <span>Soal Aktif di Proyektor</span>
             </button>
           )}
         </div>
@@ -672,8 +756,8 @@ export default function OperatorControlPage() {
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
         {/* KOLOM KIRI (7/12): SOAL AKTIF & KONTROL TIMER & NAVIGASI */}
         <section className="lg:col-span-7 space-y-6 flex flex-col justify-between">
-          {/* TAMPILAN JIKA PROYEKTOR SEDANG MENAMPILKAN DASHBOARD SAMBUTAN */}
-          {!session?.current_question_id ? (
+          {/* TAMPILAN 1: JIKA PROYEKTOR SEDANG MENAMPILKAN SAMBUTAN ARENA */}
+          {session?.status === 'waiting' && !session?.current_question_id && (
             <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center flex flex-col items-center justify-center space-y-3">
               <div className="w-14 h-14 rounded-2xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 mb-1">
                 <Sparkles className="w-7 h-7 animate-bounce" />
@@ -685,11 +769,38 @@ export default function OperatorControlPage() {
                 Layar Proyektor Menampilkan Sambutan Panggung
               </h2>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Layar proyektor saat ini bersih menyambut hadirin. Pilih salah satu kotak Blink Box atau daftar soal di bawah untuk langsung menampilkannya di proyektor panggung!
+                Layar proyektor saat ini menyambut hadirin. Klik tombol di bawah untuk membuka Papan Kotak Blink Box di layar panggung!
+              </p>
+              <button
+                onClick={() => handleSetProjectorView('box_select')}
+                className="mt-2 px-5 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs uppercase tracking-wider shadow-lg shadow-indigo-600/30 flex items-center gap-2"
+              >
+                <LayoutGrid className="w-4 h-4" />
+                <span>Buka Papan Kotak di Proyektor</span>
+              </button>
+            </div>
+          )}
+
+          {/* TAMPILAN 2: JIKA PROYEKTOR SEDANG MENAMPILKAN PAPAN KOTAK */}
+          {session?.status !== 'waiting' && !session?.current_question_id && (
+            <div className="bg-slate-900/90 border border-indigo-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center flex flex-col items-center justify-center space-y-3">
+              <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-1">
+                <LayoutGrid className="w-7 h-7" />
+              </div>
+              <span className="text-[11px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
+                Papan Kotak Proyektor Aktif
+              </span>
+              <h2 className="text-lg sm:text-xl font-black text-white uppercase">
+                Layar Proyektor Menampilkan Papan Kotak Blink Box
+              </h2>
+              <p className="text-xs text-slate-400 max-w-md mx-auto">
+                Peserta di panggung sedang melihat kotak di proyektor. Klik salah satu nomor kotak di bawah untuk langsung membuka soalnya di proyektor!
               </p>
             </div>
-          ) : (
-            /* KOTAK SOAL AKTIF & KUNCI CONTEKAN OPERATOR */
+          )}
+
+          {/* TAMPILAN 3: KOTAK SOAL AKTIF & KUNCI CONTEKAN OPERATOR */}
+          {session?.current_question_id && (
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
               <div className="flex items-center justify-between mb-3">
                 <span className="px-2.5 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-purple-500/20 text-purple-400 border border-purple-500/30">
@@ -770,19 +881,19 @@ export default function OperatorControlPage() {
                 </div>
               </div>
 
-              {/* ACTION BUTTONS: TIMER, BUKA KUNCI, SOAL BERIKUTNYA */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* ACTION BUTTONS: TIMER, BUKA KUNCI, KEMBALI KE KOTAK, SOAL BERIKUTNYA */}
+              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                 {/* Play / Pause Timer */}
                 <button
                   onClick={toggleTimer}
-                  className={`p-4 rounded-2xl font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg ${
+                  className={`p-3.5 rounded-2xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg ${
                     session?.is_timer_running
                       ? 'bg-amber-600 hover:bg-amber-500 text-slate-950 shadow-amber-600/20'
                       : 'bg-emerald-600 hover:bg-emerald-500 text-white shadow-emerald-600/20'
                   }`}
                 >
-                  {session?.is_timer_running ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6" />}
-                  <span className="text-xs uppercase tracking-wider font-bold">
+                  {session?.is_timer_running ? <Pause className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                  <span className="text-[11px] uppercase tracking-wider font-bold">
                     {session?.is_timer_running ? `Jeda (${remainingTime}s)` : `Jalankan (${remainingTime}s)`}
                   </span>
                 </button>
@@ -790,35 +901,45 @@ export default function OperatorControlPage() {
                 {/* Reset Timer */}
                 <button
                   onClick={resetTimer}
-                  className="p-4 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex flex-col items-center justify-center gap-1.5 transition-all"
+                  className="p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex flex-col items-center justify-center gap-1 transition-all"
                 >
-                  <RotateCcw className="w-6 h-6 text-slate-400" />
-                  <span className="text-xs uppercase tracking-wider">Reset Timer</span>
+                  <RotateCcw className="w-5 h-5 text-slate-400" />
+                  <span className="text-[11px] uppercase tracking-wider">Reset Timer</span>
                 </button>
 
                 {/* Buka / Tutup Kunci Jawaban */}
                 <button
                   onClick={toggleRevealAnswer}
-                  className={`p-4 rounded-2xl font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg ${
+                  className={`p-3.5 rounded-2xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg ${
                     session?.is_answer_revealed
                       ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-purple-600/20'
                       : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
                   }`}
                 >
-                  <Eye className="w-6 h-6 text-amber-400" />
-                  <span className="text-xs uppercase tracking-wider">
+                  <Eye className="w-5 h-5 text-amber-400" />
+                  <span className="text-[11px] uppercase tracking-wider">
                     {session?.is_answer_revealed ? 'Tutup Kunci' : 'Buka Kunci'}
                   </span>
+                </button>
+
+                {/* Kembali ke Papan Kotak */}
+                <button
+                  onClick={() => handleSetProjectorView('box_select')}
+                  className="p-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg shadow-indigo-600/20"
+                  title="Tutup soal ini & kembali ke tampilan kotak panggung"
+                >
+                  <LayoutGrid className="w-5 h-5" />
+                  <span className="text-[11px] uppercase tracking-wider">Papan Kotak</span>
                 </button>
 
                 {/* Soal Berikutnya */}
                 <button
                   onClick={handleNextQuestion}
                   disabled={loadingAction}
-                  className="p-4 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold flex flex-col items-center justify-center gap-1.5 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
+                  className="p-3.5 rounded-2xl bg-blue-600 hover:bg-blue-500 text-white font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg shadow-blue-600/20 disabled:opacity-50"
                 >
-                  <SkipForward className="w-6 h-6" />
-                  <span className="text-xs uppercase tracking-wider">Soal Selanjutnya</span>
+                  <SkipForward className="w-5 h-5" />
+                  <span className="text-[11px] uppercase tracking-wider">Soal Lanjut</span>
                 </button>
               </div>
             </>
@@ -833,9 +954,18 @@ export default function OperatorControlPage() {
                   Pilih Kotak Blink Box ({session?.blink_box_count === 9 ? '9 Kotak' : '6 Kotak'}):
                 </span>
               </div>
-              <span className="text-[11px] text-slate-400">
-                Klik kotak untuk langsung membuka soal di proyektor
-              </span>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleResetBoxes}
+                  className="text-[10px] text-slate-400 hover:text-white px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 border border-slate-700 transition-all"
+                  title="Buka ulang semua kotak"
+                >
+                  ↺ Reset Kotak
+                </button>
+                <span className="text-[11px] text-slate-400 hidden sm:inline">
+                  Klik kotak untuk langsung membuka soal di proyektor
+                </span>
+              </div>
             </div>
 
             <div
@@ -848,23 +978,34 @@ export default function OperatorControlPage() {
                 const matchedQ =
                   questionsList.find((q) => q.box_number === boxNum) || questionsList[idx];
                 const isActive = currentQuestion?.id === matchedQ?.id && session?.current_question_id === matchedQ?.id;
+                const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
 
                 return (
                   <button
                     key={boxNum}
                     disabled={!matchedQ}
                     onClick={() => matchedQ && handleSelectQuestion(matchedQ, true)}
-                    className={`p-3 rounded-xl font-bold flex flex-col items-center justify-center transition-all ${
+                    className={`p-3 rounded-xl font-bold flex flex-col items-center justify-center transition-all relative ${
                       isActive
-                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 border border-blue-400'
+                        ? 'bg-blue-600 text-white shadow-lg shadow-blue-600/30 border border-blue-400 scale-105'
+                        : isOpened
+                        ? 'bg-slate-950/80 border border-slate-800 text-slate-500 opacity-60 hover:opacity-100 hover:border-slate-700'
                         : matchedQ
                         ? 'bg-slate-950 border border-slate-800 hover:border-blue-500 text-slate-200 hover:text-white'
                         : 'bg-slate-950/40 border border-slate-800 text-slate-600 cursor-not-allowed'
                     }`}
                   >
+                    {isOpened && (
+                      <span className="absolute top-1 right-1 text-[9px] font-bold text-emerald-400">
+                        ✓
+                      </span>
+                    )}
                     <span className="text-base font-mono font-black">#{boxNum}</span>
                     <span className="text-[9px] uppercase tracking-wider truncate max-w-[80px]">
                       {matchedQ ? matchedQ.question_text.slice(0, 10) + '...' : 'Kosong'}
+                    </span>
+                    <span className="text-[8px] mt-0.5 text-slate-500">
+                      {isOpened ? 'Sudah Dibuka' : 'Tersedia'}
                     </span>
                   </button>
                 );
