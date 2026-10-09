@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, GameSession, Question, Team } from '@/lib/supabase';
+import { supabase, GameSession, Question, Team, parseQuestionMeta } from '@/lib/supabase';
 import {
   Play,
   Pause,
@@ -109,14 +109,17 @@ export default function OperatorControlPage() {
           .from('questions')
           .select('*')
           .order('created_at', { ascending: true });
-        if (qList) setQuestionsList(qList);
+        if (qList) {
+          const parsed = qList.map(parseQuestionMeta);
+          setQuestionsList(parsed);
 
-        // Current question
-        if (sessionData.current_question_id) {
-          const foundQ = qList?.find((q) => q.id === sessionData.current_question_id);
-          if (foundQ) setCurrentQuestion(foundQ);
-        } else {
-          setCurrentQuestion(null);
+          // Current question
+          if (sessionData.current_question_id) {
+            const foundQ = parsed.find((q) => q.id === sessionData.current_question_id);
+            if (foundQ) setCurrentQuestion(foundQ);
+          } else {
+            setCurrentQuestion(null);
+          }
         }
 
         // Teams
@@ -165,7 +168,7 @@ export default function OperatorControlPage() {
                 .select('*')
                 .eq('id', updated.current_question_id)
                 .single();
-              if (qData) setCurrentQuestion(qData);
+              if (qData) setCurrentQuestion(parseQuestionMeta(qData));
             } else {
               setCurrentQuestion(null);
             }
@@ -192,7 +195,7 @@ export default function OperatorControlPage() {
             .from('questions')
             .select('*')
             .order('created_at', { ascending: true });
-          if (qList) setQuestionsList(qList);
+          if (qList) setQuestionsList(qList.map(parseQuestionMeta));
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase, Question, QuestionType, Team } from '@/lib/supabase';
+import { supabase, Question, QuestionType, Team, parseQuestionMeta, buildExplanationWithMeta } from '@/lib/supabase';
 import {
   BookOpen,
   Plus,
@@ -24,19 +24,23 @@ import {
   Shuffle,
   Copy,
   Search,
-  LayoutGrid
+  LayoutGrid,
+  Tag,
+  FolderPlus
 } from 'lucide-react';
 
 interface Category {
   id: string;
   name: string;
+  description?: string | null;
+  created_at?: string;
 }
 
 export default function AdminDashboardPage() {
   const router = useRouter();
 
-  // Active Tab: 'soal' | 'regu'
-  const [activeTab, setActiveTab] = useState<'soal' | 'regu'>('soal');
+  // Active Tab: 'soal' | 'kategori' | 'regu'
+  const [activeTab, setActiveTab] = useState<'soal' | 'kategori' | 'regu'>('soal');
 
   // Shared session
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -49,6 +53,13 @@ export default function AdminDashboardPage() {
   const [packageFilter, setPackageFilter] = useState('all');
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Category Management States
+  const [isCatModalOpen, setIsCatModalOpen] = useState(false);
+  const [editingCat, setEditingCat] = useState<Category | null>(null);
+  const [catFormName, setCatFormName] = useState('');
+  const [catFormDesc, setCatFormDesc] = useState('');
+  const [savingCat, setSavingCat] = useState(false);
 
   // Event Settings State (Judul Acara & Jumlah Kotak)
   const [eventTitle, setEventTitle] = useState('Kuis Battle Panggung');
@@ -129,7 +140,7 @@ export default function AdminDashboardPage() {
       }
 
       const { data: qs } = await query;
-      if (qs) setQuestions(qs);
+      if (qs) setQuestions(qs.map(parseQuestionMeta));
 
       if (sData) {
         const { data: tData } = await supabase
@@ -260,17 +271,20 @@ export default function AdminDashboardPage() {
   // Duplikat Soal Cepat
   const handleDuplicateQuestion = async (q: Question) => {
     try {
+      const explanationWithMeta = buildExplanationWithMeta(
+        q.explanation,
+        null,
+        q.package_name
+      );
       const payload = {
-        category_id: q.category_id,
+        category_id: q.category_id || null,
         type: q.type,
         question_text: `${q.question_text} (Salinan)`,
         options: q.options || [],
         correct_answer: q.correct_answer,
-        explanation: q.explanation,
+        explanation: explanationWithMeta,
         timer_duration: q.timer_duration || 30,
         points: q.points || 100,
-        package_name: q.package_name || 'Umum / Bebas',
-        box_number: null,
       };
       const { error } = await supabase.from('questions').insert(payload);
       if (error) throw error;
@@ -278,6 +292,152 @@ export default function AdminDashboardPage() {
       loadData();
     } catch {
       setStatusMsg({ text: 'Gagal menduplikat soal', type: 'error' });
+    }
+  };
+
+  // Category Management Handlers
+  const handleOpenAddCategory = () => {
+    setEditingCat(null);
+    setCatFormName('');
+    setCatFormDesc('');
+    setIsCatModalOpen(true);
+  };
+
+  const handleOpenEditCategory = (cat: Category) => {
+    setEditingCat(cat);
+    setCatFormName(cat.name);
+    setCatFormDesc(cat.description || '');
+    setIsCatModalOpen(true);
+  };
+
+  const handleSaveCategory = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!catFormName.trim()) {
+      setStatusMsg({ text: 'Nama kategori tidak boleh kosong', type: 'error' });
+      return;
+    }
+    setSavingCat(true);
+    try {
+      if (editingCat) {
+        const { error } = await supabase
+          .from('categories')
+          .update({
+            name: catFormName.trim(),
+            description: catFormDesc.trim() || null,
+          })
+          .eq('id', editingCat.id);
+        if (error) throw error;
+        setStatusMsg({ text: `Kategori "${catFormName.trim()}" berhasil diperbarui!`, type: 'success' });
+      } else {
+        const { error } = await supabase
+          .from('categories')
+          .insert({
+            name: catFormName.trim(),
+            description: catFormDesc.trim() || null,
+          });
+        if (error) throw error;
+        setStatusMsg({ text: `Kategori baru "${catFormName.trim()}" berhasil ditambahkan!`, type: 'success' });
+      }
+
+      setIsCatModalOpen(false);
+      setEditingCat(null);
+      setCatFormName('');
+      setCatFormDesc('');
+
+      const { data: cats } = await supabase.from('categories').select('*').order('name');
+      if (cats) setCategories(cats);
+    } catch (err: unknown) {
+      console.error('Save category error:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menyimpan kategori: ${msg}`, type: 'error' });
+    } finally {
+      setSavingCat(false);
+    }
+  };
+
+  const handleDeleteCategory = async (cat: Category) => {
+    const linkedCount = questions.filter((q) => q.category_id === cat.id).length;
+    const confirmText = linkedCount > 0
+      ? `Hapus kategori "${cat.name}"?\nPerhatian: Ada ${linkedCount} soal terkait kategori ini. Soal tidak akan dihapus, namun status kategorinya akan menjadi kosong.`
+      : `Hapus kategori "${cat.name}"?`;
+
+    if (!window.confirm(confirmText)) return;
+
+    try {
+      const { error } = await supabase.from('categories').delete().eq('id', cat.id);
+      if (error) throw error;
+
+      setCategories((prev) => prev.filter((c) => c.id !== cat.id));
+      setQuestions((prev) =>
+        prev.map((q) => (q.category_id === cat.id ? { ...q, category_id: null } : q))
+      );
+      if (selectedCategory === cat.id) setSelectedCategory('all');
+
+      setStatusMsg({ text: `Kategori "${cat.name}" berhasil dihapus`, type: 'success' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menghapus kategori: ${msg}`, type: 'error' });
+    }
+  };
+
+  // Quick Assign Slot Kotak (Panggung) Langsung dari Tabel
+  const handleQuickAssignBox = async (q: Question, newBoxNum: number | null) => {
+    try {
+      const explanationWithMeta = buildExplanationWithMeta(
+        q.explanation,
+        newBoxNum,
+        q.package_name
+      );
+
+      const { error } = await supabase
+        .from('questions')
+        .update({ explanation: explanationWithMeta })
+        .eq('id', q.id);
+
+      if (error) throw error;
+
+      setQuestions((prev) =>
+        prev.map((item) =>
+          item.id === q.id ? { ...item, box_number: newBoxNum } : item
+        )
+      );
+
+      setStatusMsg({
+        text: newBoxNum
+          ? `Soal disetel ke Slot Kotak #${newBoxNum} panggung!`
+          : 'Slot soal dikembalikan ke urutan otomatis.',
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal mengubah slot kotak: ${msg}`, type: 'error' });
+    }
+  };
+
+  // Quick Assign Kategori Soal Langsung dari Tabel
+  const handleQuickAssignCategory = async (q: Question, newCatId: string | null) => {
+    try {
+      const { error } = await supabase
+        .from('questions')
+        .update({ category_id: newCatId || null })
+        .eq('id', q.id);
+
+      if (error) throw error;
+
+      setQuestions((prev) =>
+        prev.map((item) =>
+          item.id === q.id ? { ...item, category_id: newCatId || null } : item
+        )
+      );
+
+      const catName = categories.find((c) => c.id === newCatId)?.name || 'Tanpa Kategori';
+      setStatusMsg({
+        text: `Kategori soal berhasil diubah ke: ${catName}`,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal mengubah kategori: ${msg}`, type: 'error' });
     }
   };
 
@@ -346,24 +506,30 @@ export default function AdminDashboardPage() {
   const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
+      const explanationWithMeta = buildExplanationWithMeta(
+        formData.explanation,
+        formData.box_number ? Number(formData.box_number) : null,
+        formData.package_name
+      );
+
       const payload = {
         category_id: formData.category_id || null,
         type: formData.type,
         question_text: formData.question_text,
         options: formData.type === 'pilihan_ganda' ? formData.options : [],
         correct_answer: formData.correct_answer,
-        explanation: formData.explanation,
+        explanation: explanationWithMeta,
         timer_duration: Number(formData.timer_duration),
         points: Number(formData.points),
-        package_name: formData.package_name || 'Umum / Bebas',
-        box_number: formData.box_number ? Number(formData.box_number) : null,
       };
 
       if (editingId) {
-        await supabase.from('questions').update(payload).eq('id', editingId);
+        const { error } = await supabase.from('questions').update(payload).eq('id', editingId);
+        if (error) throw error;
         setStatusMsg({ text: 'Soal berhasil diperbarui', type: 'success' });
       } else {
-        await supabase.from('questions').insert(payload);
+        const { error } = await supabase.from('questions').insert(payload);
+        if (error) throw error;
         setStatusMsg({ text: 'Soal baru berhasil ditambahkan', type: 'success' });
       }
 
@@ -627,11 +793,11 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* TAB SELECTOR: BANK SOAL vs MANAJEMEN REGU/PESERTA */}
-      <div className="my-4 flex items-center gap-2 border-b border-slate-800 pb-3">
+      {/* TAB SELECTOR: BANK SOAL vs KELOLA KATEGORI vs MANAJEMEN REGU/PESERTA */}
+      <div className="my-4 flex items-center gap-2 border-b border-slate-800 pb-3 overflow-x-auto">
         <button
           onClick={() => setActiveTab('soal')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
             activeTab === 'soal'
               ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
               : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
@@ -642,8 +808,20 @@ export default function AdminDashboardPage() {
         </button>
 
         <button
+          onClick={() => setActiveTab('kategori')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
+            activeTab === 'kategori'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+              : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
+          }`}
+        >
+          <Tag className="w-4 h-4 text-emerald-400" />
+          <span>Kelola Kategori ({categories.length})</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('regu')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all ${
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
             activeTab === 'regu'
               ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
               : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-800'
@@ -742,6 +920,15 @@ export default function AdminDashboardPage() {
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  onClick={handleOpenAddCategory}
+                  className="flex items-center gap-1 px-2.5 py-1.5 bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-700/60 text-emerald-300 rounded-xl text-xs font-bold transition-all shadow-sm"
+                  title="Tambah Kategori Baru"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Kategori</span>
+                </button>
               </div>
 
               {/* Paket Soal filter (Opsional) */}
@@ -805,7 +992,8 @@ export default function AdminDashboardPage() {
                 <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                   <tr>
                     <th className="py-3 px-4">#</th>
-                    <th className="py-3 px-4">Slot Kotak</th>
+                    <th className="py-3 px-4">Kategori</th>
+                    <th className="py-3 px-4">Slot Kotak (Panggung)</th>
                     <th className="py-3 px-4">Tipe</th>
                     <th className="py-3 px-4">Pertanyaan</th>
                     <th className="py-3 px-4">Kunci Jawaban</th>
@@ -817,7 +1005,7 @@ export default function AdminDashboardPage() {
                 <tbody className="divide-y divide-slate-800/60">
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-10 text-slate-500">
+                      <td colSpan={9} className="text-center py-10 text-slate-500">
                         Memuat data...
                       </td>
                     </tr>
@@ -835,7 +1023,7 @@ export default function AdminDashboardPage() {
                     if (filtered.length === 0) {
                       return (
                         <tr>
-                          <td colSpan={8} className="text-center py-10 text-slate-500">
+                          <td colSpan={9} className="text-center py-10 text-slate-500">
                             Tidak ada soal yang sesuai pencarian atau filter.
                           </td>
                         </tr>
@@ -846,14 +1034,40 @@ export default function AdminDashboardPage() {
                       <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
                         <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
                         <td className="py-3 px-4">
-                          {q.box_number ? (
-                            <span className="inline-flex items-center gap-1 font-mono text-[10px] font-black px-2 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">
-                              <LayoutGrid className="w-3 h-3" />
-                              Kotak #{q.box_number}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-slate-500 italic">Otomatis</span>
-                          )}
+                          <select
+                            value={q.category_id || ''}
+                            onChange={(e) => handleQuickAssignCategory(q, e.target.value || null)}
+                            className="bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] font-semibold text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 max-w-[130px] truncate"
+                            title="Ubah kategori soal langsung"
+                          >
+                            <option value="">(Tanpa Kategori)</option>
+                            {categories.map((c) => (
+                              <option key={c.id} value={c.id}>
+                                {c.name}
+                              </option>
+                            ))}
+                          </select>
+                        </td>
+                        <td className="py-3 px-4">
+                          <select
+                            value={q.box_number ?? ''}
+                            onChange={(e) =>
+                              handleQuickAssignBox(q, e.target.value ? Number(e.target.value) : null)
+                            }
+                            className={`border rounded-lg px-2 py-1 text-[11px] font-mono font-bold focus:outline-none focus:ring-1 ${
+                              q.box_number
+                                ? 'bg-blue-950/80 border-blue-500/50 text-blue-300 focus:ring-blue-400'
+                                : 'bg-slate-950 border-slate-700/80 text-slate-400 focus:ring-purple-500'
+                            }`}
+                            title="Pilih nomor kotak panggung tempat soal ini muncul"
+                          >
+                            <option value="">Otomatis</option>
+                            {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num) => (
+                              <option key={num} value={num}>
+                                Kotak #{num}
+                              </option>
+                            ))}
+                          </select>
                         </td>
                         <td className="py-3 px-4">
                           <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
@@ -916,7 +1130,99 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* KONTEN TAB 2: MANAJEMEN REGU & PESERTA */}
+      {/* KONTEN TAB 2: KELOLA KATEGORI SOAL */}
+      {activeTab === 'kategori' && (
+        <div className="space-y-4 flex-1 flex flex-col">
+          {/* TOOLBAR KATEGORI */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+            <div>
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Tag className="w-4 h-4 text-emerald-400" />
+                <span>Daftar Kategori Soal ({categories.length})</span>
+              </h3>
+              <p className="text-xs text-slate-400">
+                Kelola kategori dan topik untuk mengelompokkan soal kuis di panggung
+              </p>
+            </div>
+            <button
+              onClick={handleOpenAddCategory}
+              className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-600/30"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Tambah Kategori Baru</span>
+            </button>
+          </div>
+
+          {/* TABEL KATEGORI */}
+          <div className="flex-1 bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
+                  <tr>
+                    <th className="py-3 px-4">#</th>
+                    <th className="py-3 px-4">Nama Kategori</th>
+                    <th className="py-3 px-4">Deskripsi</th>
+                    <th className="py-3 px-4 text-center">Jumlah Soal Terkait</th>
+                    <th className="py-3 px-4 text-right">Aksi</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800/60">
+                  {categories.length === 0 ? (
+                    <tr>
+                      <td colSpan={5} className="text-center py-10 text-slate-500">
+                        Belum ada kategori yang dibuat. Klik &apos;Tambah Kategori Baru&apos; di atas.
+                      </td>
+                    </tr>
+                  ) : (
+                    categories.map((cat, idx) => {
+                      const count = questions.filter((q) => q.category_id === cat.id).length;
+                      return (
+                        <tr key={cat.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
+                          <td className="py-3 px-4">
+                            <span className="inline-flex items-center gap-1.5 font-bold text-xs px-2.5 py-1 rounded-lg bg-emerald-950/60 border border-emerald-700/50 text-emerald-300">
+                              <Tag className="w-3.5 h-3.5 text-emerald-400" />
+                              {cat.name}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 text-slate-300 max-w-md truncate">
+                            {cat.description || (
+                              <span className="text-slate-500 italic">Tidak ada deskripsi</span>
+                            )}
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono font-bold text-emerald-400">
+                            {count} Soal
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button
+                                onClick={() => handleOpenEditCategory(cat)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                                title="Edit Kategori"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteCategory(cat)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
+                                title="Hapus Kategori"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* KONTEN TAB 3: MANAJEMEN REGU & PESERTA */}
       {activeTab === 'regu' && (
         <div className="space-y-4 flex-1 flex flex-col">
           {/* TOOLBAR REGU */}
@@ -1030,9 +1336,19 @@ export default function AdminDashboardPage() {
             <form onSubmit={handleSaveQuestion} className="space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                    Kategori
-                  </label>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                      Kategori Soal
+                    </label>
+                    <button
+                      type="button"
+                      onClick={handleOpenAddCategory}
+                      className="text-[11px] font-bold text-emerald-400 hover:text-emerald-300 flex items-center gap-1"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>Kategori Baru</span>
+                    </button>
+                  </div>
                   <select
                     value={formData.category_id}
                     onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
@@ -1376,6 +1692,74 @@ export default function AdminDashboardPage() {
                   className="px-5 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold shadow-lg shadow-blue-600/30"
                 >
                   {editingTeam ? 'Simpan Perubahan' : 'Tambahkan Regu'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL TAMBAH / EDIT KATEGORI SOAL */}
+      {isCatModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-md w-full shadow-2xl relative">
+            <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
+              <h3 className="text-base font-black text-white uppercase tracking-wider flex items-center gap-2">
+                <Tag className="w-5 h-5 text-emerald-400" />
+                <span>{editingCat ? 'Edit Kategori Soal' : 'Tambah Kategori Baru'}</span>
+              </h3>
+              <button
+                onClick={() => setIsCatModalOpen(false)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCategory} className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Nama Kategori
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={catFormName}
+                  onChange={(e) => setCatFormName(e.target.value)}
+                  placeholder="Contoh: Pengetahuan Umum, Sains & Teknologi, Sejarah..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-semibold"
+                  autoFocus
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                  Deskripsi Kategori (Opsional)
+                </label>
+                <textarea
+                  rows={3}
+                  value={catFormDesc}
+                  onChange={(e) => setCatFormDesc(e.target.value)}
+                  placeholder="Keterangan singkat mengenai topik kategori ini..."
+                  className="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-xs text-white focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                />
+              </div>
+
+              <div className="pt-4 flex items-center justify-end gap-3 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsCatModalOpen(false)}
+                  className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingCat}
+                  className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-600/30 flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{savingCat ? 'Menyimpan...' : 'Simpan Kategori'}</span>
                 </button>
               </div>
             </form>

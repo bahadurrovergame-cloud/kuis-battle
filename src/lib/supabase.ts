@@ -57,3 +57,37 @@ export interface Team {
   created_at?: string;
   updated_at?: string;
 }
+
+export function parseQuestionMeta(q: Question): Question {
+  const boxMatch = q.explanation?.match(/\[BOX:(\d+)\]/);
+  const pkgMatch = q.explanation?.match(/\[PAKET:([^\]]+)\]/);
+  const cleanExp = q.explanation
+    ? q.explanation.replace(/\[BOX:\d+\]/g, '').replace(/\[PAKET:[^\]]+\]/g, '').trim()
+    : null;
+
+  return {
+    ...q,
+    box_number: boxMatch ? parseInt(boxMatch[1], 10) : (q.box_number ?? null),
+    package_name: pkgMatch ? pkgMatch[1] : (q.package_name || 'Umum / Bebas'),
+    explanation: cleanExp,
+  };
+}
+
+export function buildExplanationWithMeta(
+  cleanExplanation: string | null | undefined,
+  boxNumber: number | null | undefined,
+  packageName?: string | null | undefined
+): string | null {
+  const clean = cleanExplanation
+    ? cleanExplanation.replace(/\[BOX:\d+\]/g, '').replace(/\[PAKET:[^\]]+\]/g, '').trim()
+    : '';
+  let result = clean;
+  if (boxNumber) {
+    result += ` [BOX:${boxNumber}]`;
+  }
+  if (packageName && packageName !== 'Umum / Bebas') {
+    result += ` [PAKET:${packageName}]`;
+  }
+  return result.trim() || null;
+}
+

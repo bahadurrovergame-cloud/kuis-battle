@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { supabase, GameSession, Question, Team } from '@/lib/supabase';
+import { supabase, GameSession, Question, Team, parseQuestionMeta } from '@/lib/supabase';
 import CircularTimer from '@/components/CircularTimer';
 import QuestionDisplay from '@/components/QuestionDisplay';
 import Leaderboard from '@/components/Leaderboard';
@@ -107,7 +107,7 @@ export default function OperatorProjectorPage() {
         .from('questions')
         .select('*')
         .order('created_at', { ascending: true });
-      if (qDataList) setQuestionsList(qDataList);
+      if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
     } catch {
       // Quiet fail
     }
@@ -186,7 +186,7 @@ export default function OperatorProjectorPage() {
             .from('questions')
             .select('*')
             .order('created_at', { ascending: true });
-          if (qDataList) setQuestionsList(qDataList);
+          if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
