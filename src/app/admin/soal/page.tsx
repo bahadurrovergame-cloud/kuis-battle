@@ -58,7 +58,7 @@ export default function AdminDashboardPage() {
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [openedBoxIds, setOpenedBoxIds] = useState<string[]>([]);
 
-  // Ref untuk memastikan inisialisasi babak hanya terjadi 1 kali saat buka halaman
+  // Ref penanda inisialisasi babak
   const isInitialLoadedRef = useRef(false);
 
   // Event Settings State (Judul Acara)
@@ -136,19 +136,19 @@ export default function AdminDashboardPage() {
   const [teamFormMemberCount, setTeamFormMemberCount] = useState<number>(3);
   const [teamFormMembers, setTeamFormMembers] = useState('');
 
-  // Auth gate check
+  // KEAMANAN KETAT: Hanya peran 'admin' yang diizinkan mengakses halaman ini
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
 
   useEffect(() => {
     const role = sessionStorage.getItem('auth_role');
-    if (!role) {
+    if (role !== 'admin') {
       router.push('/login');
     } else {
       setIsAuthorized(true);
     }
   }, [router]);
 
-  // Fungsi khusus untuk mengambil daftar soal pada babak yang sedang dipilih
+  // Muat soal babak yang dipilih
   const loadRoundQuestions = useCallback(async (targetRoundName: string, targetSessionId: string) => {
     try {
       const { data: sqData } = await supabase
@@ -210,7 +210,6 @@ export default function AdminDashboardPage() {
         setCurrentRoomCode(sData.room_code);
         setActiveQuestionId(sData.current_question_id || null);
 
-        // Hanya set activeRound dari database saat pertama kali halaman dimuat
         if (!isInitialLoadedRef.current) {
           if (sData.active_round) {
             setActiveRound(sData.active_round);
@@ -230,7 +229,6 @@ export default function AdminDashboardPage() {
         setEventTitle(cleanTitle);
         setRoundBoxCount(boxCount || 12);
 
-        // Muat soal babak aktif saat ini
         const currentActive = isInitialLoadedRef.current ? activeRound : (sData.active_round || 'Babak 1');
         loadRoundQuestions(currentActive, sData.id);
       }
@@ -260,7 +258,6 @@ export default function AdminDashboardPage() {
     loadData();
   }, [loadData]);
 
-  // Handler saat admin berganti tab babak di UI (tidak akan menimpa pilihan klik)
   const handleSelectRoundTab = (targetRoundName: string) => {
     setActiveRound(targetRoundName);
     if (sessionId) {
