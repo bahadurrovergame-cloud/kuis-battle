@@ -94,17 +94,38 @@ export function buildExplanationWithMeta(
 export function parseSessionMeta(session: GameSession | null | undefined): {
   cleanTitle: string;
   boxCount: number;
+  activeCategoryId: string | null;
 } {
-  if (!session) return { cleanTitle: 'Kuis Battle Panggung', boxCount: 6 };
+  if (!session) return { cleanTitle: 'Kuis Battle Panggung', boxCount: 6, activeCategoryId: null };
   const rawTitle = session.title || 'Kuis Battle Panggung';
   const boxMatch = rawTitle.match(/\[BOXES:(\d+)\]/);
-  const cleanTitle = rawTitle.replace(/\[BOXES:\d+\]/g, '').trim() || 'Kuis Battle Panggung';
+  const catMatch = rawTitle.match(/\[CAT:([^\]]+)\]/);
+  const cleanTitle = rawTitle
+    .replace(/\[BOXES:\d+\]/g, '')
+    .replace(/\[CAT:[^\]]+\]/g, '')
+    .trim() || 'Kuis Battle Panggung';
   const boxCount = boxMatch ? parseInt(boxMatch[1], 10) : (session.blink_box_count || 6);
-  return { cleanTitle, boxCount: Math.max(1, boxCount) };
+  const activeCategoryId = catMatch ? catMatch[1] : null;
+  return { cleanTitle, boxCount: Math.max(1, boxCount), activeCategoryId };
+}
+
+export function buildSessionTitleWithMeta(
+  cleanTitle: string,
+  boxCount: number,
+  activeCategoryId?: string | null
+): string {
+  const clean = cleanTitle
+    .replace(/\[BOXES:\d+\]/g, '')
+    .replace(/\[CAT:[^\]]+\]/g, '')
+    .trim() || 'Kuis Battle Panggung';
+  let res = `${clean} [BOXES:${Math.max(1, boxCount)}]`;
+  if (activeCategoryId && activeCategoryId !== 'all') {
+    res += ` [CAT:${activeCategoryId}]`;
+  }
+  return res;
 }
 
 export function buildSessionTitleWithBoxes(cleanTitle: string, boxCount: number): string {
-  const clean = cleanTitle.replace(/\[BOXES:\d+\]/g, '').trim() || 'Kuis Battle Panggung';
-  return `${clean} [BOXES:${Math.max(1, boxCount)}]`;
+  return buildSessionTitleWithMeta(cleanTitle, boxCount, null);
 }
 

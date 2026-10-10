@@ -60,8 +60,14 @@ export default function AdminDashboardPage() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [packageFilter, setPackageFilter] = useState('all');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(10);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedCategory, searchQuery, packageFilter, pageSize]);
 
   // Category Management States
   const [isCatModalOpen, setIsCatModalOpen] = useState(false);
@@ -1042,117 +1048,238 @@ export default function AdminDashboardPage() {
                         !searchQuery ||
                         q.question_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
                         q.correct_answer.toLowerCase().includes(searchQuery.toLowerCase());
+                      const matchesCategory =
+                        selectedCategory === 'all' || q.category_id === selectedCategory;
                       const matchesPackage =
                         packageFilter === 'all' || (q.package_name || 'Umum / Bebas') === packageFilter;
-                      return matchesSearch && matchesPackage;
+                      return matchesSearch && matchesCategory && matchesPackage;
                     });
 
                     if (filtered.length === 0) {
                       return (
                         <tr>
                           <td colSpan={9} className="text-center py-10 text-slate-500">
-                            Tidak ada soal yang sesuai pencarian atau filter.
+                            Tidak ada soal yang sesuai pencarian atau filter kategori/paket.
                           </td>
                         </tr>
                       );
                     }
 
-                    return filtered.map((q, idx) => (
-                      <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="py-3 px-4 font-mono text-slate-500">{idx + 1}</td>
-                        <td className="py-3 px-4">
-                          <select
-                            value={q.category_id || ''}
-                            onChange={(e) => handleQuickAssignCategory(q, e.target.value || null)}
-                            className="bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] font-semibold text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 max-w-[130px] truncate"
-                            title="Ubah kategori soal langsung"
-                          >
-                            <option value="">(Tanpa Kategori)</option>
-                            {categories.map((c) => (
-                              <option key={c.id} value={c.id}>
-                                {c.name}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="py-3 px-4">
-                          <select
-                            value={q.box_number ?? ''}
-                            onChange={(e) =>
-                              handleQuickAssignBox(q, e.target.value ? Number(e.target.value) : null)
-                            }
-                            className={`border rounded-lg px-2 py-1 text-[11px] font-mono font-bold focus:outline-none focus:ring-1 ${
-                              q.box_number
-                                ? 'bg-blue-950/80 border-blue-500/50 text-blue-300 focus:ring-blue-400'
-                                : 'bg-slate-950 border-slate-700/80 text-slate-400 focus:ring-purple-500'
-                            }`}
-                            title="Pilih nomor kotak panggung tempat soal ini muncul"
-                          >
-                            <option value="">Otomatis</option>
-                            {Array.from({ length: Math.max(12, blinkBoxCount) }).map((_, i) => (
-                              <option key={i + 1} value={i + 1}>
-                                Kotak #{i + 1}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-                        <td className="py-3 px-4">
-                          <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                            {q.type.replace('_', ' ')}
-                          </span>
-                        </td>
-                        <td className="py-3 px-4 font-semibold text-slate-200 max-w-xs truncate">
-                          {q.question_text}
-                        </td>
-                        <td className="py-3 px-4 font-mono font-bold text-emerald-400 max-w-[150px] truncate">
-                          {q.correct_answer}
-                        </td>
-                        <td className="py-3 px-4 text-center font-mono text-slate-400">
-                          {q.timer_duration}s
-                        </td>
-                        <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
-                          +{q.points}
-                        </td>
-                        <td className="py-3 px-4 text-right">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {q.type === 'pilihan_ganda' && (
-                              <button
-                                onClick={() => handleShuffleQuestion(q)}
-                                className="p-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/50"
-                                title="Smart Shuffle: Acak posisi opsi & pindahkan kunci jawaban otomatis"
+                    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+                    const safePage = Math.min(Math.max(1, currentPage), totalPages);
+                    const startIndex = (safePage - 1) * pageSize;
+                    const paginatedQuestions = filtered.slice(startIndex, startIndex + pageSize);
+
+                    return paginatedQuestions.map((q, idx) => {
+                      const rowNum = startIndex + idx + 1;
+                      const catName = categories.find((c) => c.id === q.category_id)?.name;
+                      return (
+                        <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4 font-mono text-slate-500">{rowNum}</td>
+                          <td className="py-3 px-4">
+                            <div className="flex flex-col gap-1">
+                              <select
+                                value={q.category_id || ''}
+                                onChange={(e) => handleQuickAssignCategory(q, e.target.value || null)}
+                                className="bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] font-semibold text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 max-w-[130px] truncate"
+                                title="Ubah kategori soal langsung"
                               >
-                                <Shuffle className="w-3.5 h-3.5" />
+                                <option value="">(Tanpa Kategori)</option>
+                                {categories.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
+                                ))}
+                              </select>
+                              {catName && (
+                                <span className="text-[9px] text-emerald-400/80 font-bold">
+                                  🏷️ {catName}
+                                </span>
+                              )}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4">
+                            <select
+                              value={q.box_number ?? ''}
+                              onChange={(e) =>
+                                handleQuickAssignBox(q, e.target.value ? Number(e.target.value) : null)
+                              }
+                              className={`border rounded-lg px-2 py-1 text-[11px] font-mono font-bold focus:outline-none focus:ring-1 ${
+                                q.box_number
+                                  ? 'bg-blue-950/80 border-blue-500/50 text-blue-300 focus:ring-blue-400'
+                                  : 'bg-slate-950 border-slate-700/80 text-slate-400 focus:ring-purple-500'
+                              }`}
+                              title="Pilih nomor kotak panggung tempat soal ini muncul"
+                            >
+                              <option value="">Otomatis</option>
+                              {Array.from({ length: Math.max(12, blinkBoxCount) }).map((_, i) => (
+                                <option key={i + 1} value={i + 1}>
+                                  Kotak #{i + 1}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="py-3 px-4">
+                            <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                              {q.type.replace('_', ' ')}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4 font-semibold text-slate-200 max-w-xs truncate">
+                            {q.question_text}
+                          </td>
+                          <td className="py-3 px-4 font-mono font-bold text-emerald-400 max-w-[150px] truncate">
+                            {q.correct_answer}
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono text-slate-400">
+                            {q.timer_duration}s
+                          </td>
+                          <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
+                            +{q.points}
+                          </td>
+                          <td className="py-3 px-4 text-right">
+                            <div className="flex items-center justify-end gap-1.5">
+                              {q.type === 'pilihan_ganda' && (
+                                <button
+                                  onClick={() => handleShuffleQuestion(q)}
+                                  className="p-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/50"
+                                  title="Smart Shuffle: Acak posisi opsi & pindahkan kunci jawaban otomatis"
+                                >
+                                  <Shuffle className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <button
+                                onClick={() => handleDuplicateQuestion(q)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                                title="Duplikat Soal"
+                              >
+                                <Copy className="w-3.5 h-3.5" />
                               </button>
-                            )}
-                            <button
-                              onClick={() => handleDuplicateQuestion(q)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
-                              title="Duplikat Soal"
-                            >
-                              <Copy className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleOpenEditSoal(q)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
-                              title="Edit Soal"
-                            >
-                              <Edit className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteSoal(q.id)}
-                              className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
-                              title="Hapus Soal"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ));
+                              <button
+                                onClick={() => handleOpenEditSoal(q)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                                title="Edit Soal"
+                              >
+                                <Edit className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={() => handleDeleteSoal(q.id)}
+                                className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
+                                title="Hapus Soal"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    });
                   })()}
                 </tbody>
               </table>
             </div>
+
+            {/* PAGINATION TOOLBAR */}
+            {(() => {
+              const filtered = questions.filter((q) => {
+                const matchesSearch =
+                  !searchQuery ||
+                  q.question_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                  q.correct_answer.toLowerCase().includes(searchQuery.toLowerCase());
+                const matchesCategory =
+                  selectedCategory === 'all' || q.category_id === selectedCategory;
+                const matchesPackage =
+                  packageFilter === 'all' || (q.package_name || 'Umum / Bebas') === packageFilter;
+                return matchesSearch && matchesCategory && matchesPackage;
+              });
+
+              const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+              const safePage = Math.min(Math.max(1, currentPage), totalPages);
+              const startIndex = (safePage - 1) * pageSize;
+
+              if (filtered.length === 0) return null;
+
+              return (
+                <div className="bg-slate-950 border-t border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex items-center gap-3 text-xs text-slate-400">
+                    <span>
+                      Menampilkan <strong className="text-white font-mono">{startIndex + 1}</strong> - <strong className="text-white font-mono">{Math.min(startIndex + pageSize, filtered.length)}</strong> dari <strong className="text-white font-mono">{filtered.length}</strong> soal
+                    </span>
+                    <span className="text-slate-600">|</span>
+                    <div className="flex items-center gap-1.5">
+                      <span>Per Halaman:</span>
+                      <select
+                        value={pageSize}
+                        onChange={(e) => setPageSize(Number(e.target.value))}
+                        className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                      >
+                        <option value={10}>10 Baris</option>
+                        <option value={20}>20 Baris</option>
+                        <option value={50}>50 Baris</option>
+                        <option value={100}>100 Baris</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => setCurrentPage(1)}
+                      disabled={safePage <= 1}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                      title="Halaman Pertama"
+                    >
+                      «
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                      disabled={safePage <= 1}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                    >
+                      ‹ Sebelumnya
+                    </button>
+
+                    <div className="flex items-center gap-1 px-1">
+                      {Array.from({ length: totalPages }, (_, i) => i + 1)
+                        .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
+                        .map((p, idx, arr) => {
+                          const prev = arr[idx - 1];
+                          const hasGap = prev && p - prev > 1;
+                          return (
+                            <span key={p} className="flex items-center gap-1">
+                              {hasGap && <span className="text-slate-600 text-xs px-1">...</span>}
+                              <button
+                                onClick={() => setCurrentPage(p)}
+                                className={`min-w-[28px] h-7 px-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
+                                  safePage === p
+                                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                                    : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
+                                }`}
+                              >
+                                {p}
+                              </button>
+                            </span>
+                          );
+                        })}
+                    </div>
+
+                    <button
+                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={safePage >= totalPages}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                    >
+                      Selanjutnya ›
+                    </button>
+                    <button
+                      onClick={() => setCurrentPage(totalPages)}
+                      disabled={safePage >= totalPages}
+                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                      title="Halaman Terakhir"
+                    >
+                      »
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       )}
