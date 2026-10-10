@@ -22,8 +22,8 @@ export interface Question {
   explanation: string | null;
   timer_duration: number;
   points: number;
-  package_name?: string; // default "Umum / Bebas"
-  box_number?: number | null; // 1 s/d 9
+  package_name?: string;
+  box_number?: number | null;
   is_active_box?: boolean;
   is_opened?: boolean;
   created_at?: string;
@@ -33,15 +33,38 @@ export interface GameSession {
   id: string;
   room_code: string;
   title: string;
-  status: 'waiting' | 'active' | 'paused' | 'finished' | 'type_select' | 'box_pilihan_ganda' | 'box_benar_salah' | 'box_essay' | string;
+  status:
+    | 'waiting'
+    | 'active'
+    | 'paused'
+    | 'finished'
+    | 'type_select'
+    | 'category_select'
+    | 'box_pilihan_ganda'
+    | 'box_benar_salah'
+    | 'box_essay'
+    | string;
+  active_round?: string; // Menyimpan babak aktif room ini (misal: "Babak 1", "Babak 2", "Final")
   current_question_id: string | null;
   is_answer_revealed: boolean;
   timer_remaining: number;
   is_timer_running: boolean;
-  blink_box_count?: number; // 6 atau 9
+  blink_box_count?: number;
   active_view?: 'welcome' | 'category_select' | 'question_active';
   created_at?: string;
   updated_at?: string;
+}
+
+// Tipe data pemetaan paket soal & slot kotak per room
+export interface SessionQuestion {
+  id: string;
+  session_id: string;
+  question_id: string;
+  round_name: string;
+  box_number: number | null;
+  is_opened: boolean;
+  created_at?: string;
+  question?: Question;
 }
 
 export interface Team {
@@ -53,7 +76,7 @@ export interface Team {
   rank: number;
   is_active: boolean;
   member_count?: number;
-  members?: string; // string nama-nama peserta (contoh: "Ahmad, Budi, Siti")
+  members?: string;
   created_at?: string;
   updated_at?: string;
 }
@@ -96,15 +119,16 @@ export function parseSessionMeta(session: GameSession | null | undefined): {
   boxCount: number;
   activeCategoryId: string | null;
 } {
-  if (!session) return { cleanTitle: 'Kuis Battle Panggung', boxCount: 6, activeCategoryId: null };
+  if (!session) return { cleanTitle: 'Kuis Battle Panggung', boxCount: 12, activeCategoryId: null };
   const rawTitle = session.title || 'Kuis Battle Panggung';
   const boxMatch = rawTitle.match(/\[BOXES:(\d+)\]/);
   const catMatch = rawTitle.match(/\[CAT:([^\]]+)\]/);
-  const cleanTitle = rawTitle
-    .replace(/\[BOXES:\d+\]/g, '')
-    .replace(/\[CAT:[^\]]+\]/g, '')
-    .trim() || 'Kuis Battle Panggung';
-  const boxCount = boxMatch ? parseInt(boxMatch[1], 10) : (session.blink_box_count || 6);
+  const cleanTitle =
+    rawTitle
+      .replace(/\[BOXES:\d+\]/g, '')
+      .replace(/\[CAT:[^\]]+\]/g, '')
+      .trim() || 'Kuis Battle Panggung';
+  const boxCount = boxMatch ? parseInt(boxMatch[1], 10) : (session.blink_box_count || 12);
   const activeCategoryId = catMatch ? catMatch[1] : null;
   return { cleanTitle, boxCount: Math.max(1, boxCount), activeCategoryId };
 }
@@ -114,10 +138,11 @@ export function buildSessionTitleWithMeta(
   boxCount: number,
   activeCategoryId?: string | null
 ): string {
-  const clean = cleanTitle
-    .replace(/\[BOXES:\d+\]/g, '')
-    .replace(/\[CAT:[^\]]+\]/g, '')
-    .trim() || 'Kuis Battle Panggung';
+  const clean =
+    cleanTitle
+      .replace(/\[BOXES:\d+\]/g, '')
+      .replace(/\[CAT:[^\]]+\]/g, '')
+      .trim() || 'Kuis Battle Panggung';
   let res = `${clean} [BOXES:${Math.max(1, boxCount)}]`;
   if (activeCategoryId && activeCategoryId !== 'all') {
     res += ` [CAT:${activeCategoryId}]`;
@@ -128,4 +153,3 @@ export function buildSessionTitleWithMeta(
 export function buildSessionTitleWithBoxes(cleanTitle: string, boxCount: number): string {
   return buildSessionTitleWithMeta(cleanTitle, boxCount, null);
 }
-
