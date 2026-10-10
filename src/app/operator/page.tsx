@@ -655,7 +655,7 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 3: PILIH KATEGORI SOAL DI LAYAR PROYEKTOR (JUDUL SELALU MUNCUL TEBAL & JELAS) */}
+        {/* TAMPILAN 3: PILIH KATEGORI SOAL DI LAYAR PROYEKTOR (SELARAS DENGAN OPERATOR) */}
         {(session?.status?.startsWith('category_') || session?.status === 'category_select') && !session?.current_question_id && (
           <div className="max-w-5xl w-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 animate-in fade-in duration-500 flex-1 min-h-0">
             <div className="space-y-1 shrink-0">
@@ -673,19 +673,21 @@ export default function OperatorProjectorPage() {
             {/* Grid Kartu Kategori */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4 w-full pt-1 max-h-[62vh] overflow-y-auto pr-1 pb-2">
               {/* Kartu Semua Kategori (Campuran) */}
-              <div className="p-3 sm:p-4 rounded-2xl bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/90 border-2 border-indigo-500/50 shadow-xl flex flex-col items-center justify-center text-center min-h-[110px] sm:min-h-[130px] transition-all hover:border-indigo-400 group">
-                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-1.5 shrink-0 shadow-md">
-                  <LayoutGrid className="w-4 h-4 sm:w-5 sm:h-5" />
+              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/90 border-2 border-indigo-500/50 shadow-xl flex flex-col justify-between text-left transition-all hover:border-indigo-400">
+                <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-2 sm:mb-3 shadow-md shrink-0">
+                  <LayoutGrid className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
-                <h3 className="text-xs sm:text-sm md:text-base font-black text-white uppercase tracking-wide shrink-0 my-0.5 w-full truncate px-1">
-                  Semua Kategori
-                </h3>
-                <span className="mt-1 text-[10px] sm:text-xs font-bold text-indigo-300 bg-indigo-500/20 px-2.5 py-0.5 rounded-full border border-indigo-500/30 shrink-0">
-                  {questionsList.filter((q) => q.type === activeGameType).length} Soal Tersedia
-                </span>
+                <div>
+                  <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wide leading-snug mb-1">
+                    Semua Kategori
+                  </h3>
+                  <p className="text-[11px] sm:text-xs font-bold text-indigo-300">
+                    {questionsList.filter((q) => q.type === activeGameType).length} Soal Tersedia
+                  </p>
+                </div>
               </div>
 
-              {/* Kartu Tiap Kategori (Judul cat.name selalu tampil tebal & tidak terpotong) */}
+              {/* Kartu Tiap Kategori */}
               {categories.map((cat) => {
                 const count = questionsList.filter(
                   (q) => q.type === activeGameType && q.category_id === cat.id
@@ -693,17 +695,19 @@ export default function OperatorProjectorPage() {
                 return (
                   <div
                     key={cat.id}
-                    className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border-2 border-pink-500/40 shadow-xl flex flex-col items-center justify-center text-center min-h-[110px] sm:min-h-[130px] transition-all hover:border-pink-400 group"
+                    className="p-4 sm:p-5 rounded-2xl bg-slate-900/90 border-2 border-pink-500/40 shadow-xl flex flex-col justify-between text-left transition-all hover:border-pink-400"
                   >
-                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-pink-600/25 border border-pink-500/40 flex items-center justify-center text-pink-400 mb-1.5 shrink-0 shadow-md">
-                      <Tag className="w-4 h-4 sm:w-5 sm:h-5" />
+                    <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-pink-600/25 border border-pink-500/40 flex items-center justify-center text-pink-400 mb-2 sm:mb-3 shadow-md shrink-0">
+                      <Tag className="w-5 h-5 sm:w-6 sm:h-6" />
                     </div>
-                    <h3 className="text-xs sm:text-sm md:text-base font-black text-white uppercase tracking-wide shrink-0 my-0.5 w-full truncate px-1">
-                      {cat.name}
-                    </h3>
-                    <span className="mt-1 text-[10px] sm:text-xs font-bold text-pink-300 bg-pink-500/20 px-2.5 py-0.5 rounded-full border border-pink-500/30 shrink-0">
-                      {count} Soal Tersedia
-                    </span>
+                    <div>
+                      <h3 className="text-sm sm:text-base font-black text-white uppercase tracking-wide leading-snug mb-1">
+                        {cat.name}
+                      </h3>
+                      <p className="text-[11px] sm:text-xs font-bold text-pink-300">
+                        {count} Soal Tersedia
+                      </p>
+                    </div>
                   </div>
                 );
               })}
