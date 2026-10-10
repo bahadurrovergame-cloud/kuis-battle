@@ -7,8 +7,8 @@ import {
   Question,
   QuestionType,
   Team,
+  SessionQuestion,
   parseQuestionMeta,
-  buildExplanationWithMeta,
   parseSessionMeta,
   buildSessionTitleWithBoxes
 } from '@/lib/supabase';
@@ -67,6 +67,7 @@ export default function AdminDashboardPage() {
   // Babak / Round Management States
   const [activeRound, setActiveRound] = useState<string>('Babak 1');
   const [roundBoxCount, setRoundBoxCount] = useState<number>(12);
+  const [roundQuestions, setRoundQuestions] = useState<SessionQuestion[]>([]);
   const [isPickerModalOpen, setIsPickerModalOpen] = useState(false);
   const [pickerSelectedIds, setPickerSelectedIds] = useState<string[]>([]);
   const [pickerCategoryFilter, setPickerCategoryFilter] = useState<string>('all');
@@ -78,7 +79,6 @@ export default function AdminDashboardPage() {
   const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedTypeTab, setSelectedTypeTab] = useState<'all' | 'pilihan_ganda' | 'benar_salah' | 'essay'>('all');
-  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [packageFilter, setPackageFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -88,7 +88,6 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-    setSelectedQuestionIds([]);
   }, [selectedCategory, selectedTypeTab, searchQuery, packageFilter, pageSize]);
 
   // Category Management States
@@ -110,8 +109,6 @@ export default function AdminDashboardPage() {
     explanation: string;
     timer_duration: number;
     points: number;
-    package_name: string;
-    box_number: number | null;
   }>({
     category_id: '',
     type: 'pilihan_ganda',
@@ -126,8 +123,6 @@ export default function AdminDashboardPage() {
     explanation: '',
     timer_duration: 30,
     points: 100,
-    package_name: 'Umum / Bebas',
-    box_number: null,
   });
 
   // Regu / Peserta States
@@ -152,7 +147,7 @@ export default function AdminDashboardPage() {
     }
   }, [router]);
 
-  // Load Session and Questions
+  // Load Session, Categories, Master Questions, and Round Questions
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -193,6 +188,7 @@ export default function AdminDashboardPage() {
         setSessionId(sData.id);
         setCurrentRoomCode(sData.room_code);
         setActiveQuestionId(sData.current_question_id || null);
+        if (sData.active_round) setActiveRound(sData.active_round);
 
         if (typeof window !== 'undefined') {
           localStorage.setItem('active_room_code', sData.room_code);
@@ -210,12 +206,7 @@ export default function AdminDashboardPage() {
       const { data: cats } = await supabase.from('categories').select('*').order('name');
       if (cats) setCategories(cats);
 
-      let query = supabase.from('questions').select('*').order('created_at', { ascending: false });
-      if (selectedCategory !== 'all') {
-        query = query.eq('category_id', selectedCategory);
-      }
-
-      const { data: qs } = await query;
+      const { data: qs } = await supabase.from('questions').select('*').order('created_at', { ascending: false });
       if (qs) setQuestions(qs.map(parseQuestionMeta));
 
       if (sData) {
@@ -225,19 +216,29 @@ export default function AdminDashboardPage() {
           .eq('session_id', sData.id)
           .order('score', { ascending: false });
         if (tData) setTeams(tData);
+
+        // Load round questions for current activeRound
+        const { data: sqData } = await supabase
+          .from('session_questions')
+          .select('*, question:questions(*)')
+          .eq('session_id', sData.id)
+          .eq('round_name', activeRound)
+          .order('box_number', { ascending: true, nullsFirst: false });
+
+        if (sqData) setRoundQuestions(sqData);
       }
     } catch {
       setStatusMsg({ text: 'Gagal memuat data', type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [selectedCategory]);
+  }, [activeRound]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
 
-  // Realtime subscription untuk memantau status kotak panggung
+  // Realtime subscription
   useEffect(() => {
     if (!sessionId) return;
     const channelName = `room_sync_${sessionId}`;
@@ -249,7 +250,15 @@ export default function AdminDashboardPage() {
         (payload: any) => {
           if (payload.new) {
             setActiveQuestionId(payload.new.current_question_id || null);
+            if (payload.new.active_round) setActiveRound(payload.new.active_round);
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'session_questions', filter: `session_id=eq.${sessionId}` },
+        () => {
+          loadData();
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
@@ -260,9 +269,9 @@ export default function AdminDashboardPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [sessionId]);
+  }, [sessionId, loadData]);
 
-  // Simpan Sinkronisasi Babak & Jumlah Kotak ke Panggung
+  // Simpan & Sinkronkan Babak & Jumlah Kotak ke Panggung
   const handleSyncRoundToStage = async () => {
     if (!sessionId) return;
     setSavingSettings(true);
@@ -271,7 +280,10 @@ export default function AdminDashboardPage() {
 
       const { error } = await supabase
         .from('game_sessions')
-        .update({ title: titlePayload })
+        .update({
+          title: titlePayload,
+          active_round: activeRound,
+        })
         .eq('id', sessionId);
 
       if (error) throw error;
@@ -279,11 +291,11 @@ export default function AdminDashboardPage() {
       supabase.channel(`room_sync_${sessionId}`).send({
         type: 'broadcast',
         event: 'box_count_sync',
-        payload: { boxCount: roundBoxCount },
+        payload: { boxCount: roundBoxCount, activeRound },
       });
 
       setStatusMsg({
-        text: `Sukses! ${activeRound} dengan ${roundBoxCount} Kotak berhasil disinkronkan ke layar proyektor!`,
+        text: `Sukses! ${activeRound} (${roundBoxCount} Kotak) berhasil disinkronkan ke layar panggung!`,
         type: 'success',
       });
     } catch (err: unknown) {
@@ -297,7 +309,7 @@ export default function AdminDashboardPage() {
   // Reset status kotak panggung
   const handleResetStageStatus = async () => {
     if (!sessionId) return;
-    if (!window.confirm(`Reset status kotak untuk ${activeRound}? Semua soal akan kembali berstatus "Tersedia".`)) return;
+    if (!window.confirm(`Reset status kotak untuk ${activeRound}? Semua kotak akan kembali berstatus "Tersedia".`)) return;
 
     setOpenedBoxIds([]);
     try {
@@ -313,110 +325,82 @@ export default function AdminDashboardPage() {
     setStatusMsg({ text: 'Status seluruh kotak berhasil direset menjadi Tersedia!', type: 'success' });
   };
 
-  // Filter soal milik babak aktif saat ini
-  const roundQuestions = questions
-    .filter((q) => (q.package_name || 'Umum / Bebas') === activeRound)
-    .sort((a, b) => (a.box_number || 999) - (b.box_number || 999));
-
-  // Lepas soal dari babak aktif
-  const handleRemoveQuestionFromRound = async (q: Question) => {
+  // Ubah nomor slot kotak di babak via tabel session_questions
+  const handleUpdateRoundBoxNumber = async (sqId: string, newBoxNum: number | null) => {
     try {
-      const explanationWithMeta = buildExplanationWithMeta(q.explanation, null, 'Umum / Bebas');
       const { error } = await supabase
-        .from('questions')
-        .update({ explanation: explanationWithMeta })
-        .eq('id', q.id);
+        .from('session_questions')
+        .update({ box_number: newBoxNum })
+        .eq('id', sqId);
 
       if (error) throw error;
 
-      setQuestions((prev) =>
-        prev.map((item) =>
-          item.id === q.id ? { ...item, package_name: 'Umum / Bebas', box_number: null } : item
-        )
+      setRoundQuestions((prev) =>
+        prev.map((item) => (item.id === sqId ? { ...item, box_number: newBoxNum } : item))
       );
-      setStatusMsg({ text: 'Soal berhasil dilepas dari babak ini.', type: 'success' });
+      setStatusMsg({ text: newBoxNum ? `Slot dipindah ke Kotak #${newBoxNum}` : 'Slot diatur otomatis', type: 'success' });
     } catch {
-      setStatusMsg({ text: 'Gagal melepas soal.', type: 'error' });
+      setStatusMsg({ text: 'Gagal mengubah slot kotak', type: 'error' });
     }
   };
 
-  // Ubah nomor slot kotak di babak
-  const handleQuickAssignBox = async (q: Question, newBoxNum: number | null) => {
+  // Keluarkan soal dari babak ini
+  const handleRemoveFromRound = async (sqId: string) => {
     try {
-      const explanationWithMeta = buildExplanationWithMeta(
-        q.explanation,
-        newBoxNum,
-        q.package_name || activeRound
-      );
-
-      const { error } = await supabase
-        .from('questions')
-        .update({ explanation: explanationWithMeta })
-        .eq('id', q.id);
-
+      const { error } = await supabase.from('session_questions').delete().eq('id', sqId);
       if (error) throw error;
 
-      setQuestions((prev) =>
-        prev.map((item) => (item.id === q.id ? { ...item, box_number: newBoxNum } : item))
-      );
-
-      setStatusMsg({
-        text: newBoxNum ? `Soal disetel ke Slot Kotak #${newBoxNum}!` : 'Slot soal dikembalikan otomatis.',
-        type: 'success',
-      });
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : JSON.stringify(err);
-      setStatusMsg({ text: `Gagal mengubah slot kotak: ${msg}`, type: 'error' });
+      setRoundQuestions((prev) => prev.filter((item) => item.id !== sqId));
+      setStatusMsg({ text: 'Soal berhasil dikeluarkan dari babak.', type: 'success' });
+    } catch {
+      setStatusMsg({ text: 'Gagal mengeluarkan soal.', type: 'error' });
     }
   };
 
-  // Proses menambahkan soal yang dicomot dari Bank Soal ke Babak Aktif
+  // Tambah soal terpilih dari Bank Soal ke Babak Aktif
   const handleConfirmPickQuestions = async () => {
-    if (pickerSelectedIds.length === 0) return;
+    if (!sessionId || pickerSelectedIds.length === 0) return;
     setLoading(true);
 
     try {
-      // Ambil slot tertinggi yang sudah dipakai di babak ini
+      const existingQIds = roundQuestions.map((sq) => sq.question_id);
       let nextSlot = 1;
-      const usedSlots = roundQuestions.map((q) => q.box_number).filter((n): n is number => n !== null);
+      const usedSlots = roundQuestions.map((sq) => sq.box_number).filter((n): n is number => n !== null);
 
+      const payloads = [];
       for (const qId of pickerSelectedIds) {
+        if (existingQIds.includes(qId)) continue;
         while (usedSlots.includes(nextSlot)) {
           nextSlot++;
         }
-        const targetQ = questions.find((q) => q.id === qId);
-        if (targetQ) {
-          const explanationWithMeta = buildExplanationWithMeta(
-            targetQ.explanation,
-            nextSlot <= roundBoxCount ? nextSlot : null,
-            activeRound
-          );
-
-          await supabase
-            .from('questions')
-            .update({ explanation: explanationWithMeta })
-            .eq('id', qId);
-
-          usedSlots.push(nextSlot);
-          nextSlot++;
-        }
+        payloads.push({
+          session_id: sessionId,
+          question_id: qId,
+          round_name: activeRound,
+          box_number: nextSlot <= roundBoxCount ? nextSlot : null,
+        });
+        usedSlots.push(nextSlot);
+        nextSlot++;
       }
 
-      setStatusMsg({
-        text: `Berhasil menambahkan ${pickerSelectedIds.length} soal ke ${activeRound}!`,
-        type: 'success',
-      });
+      if (payloads.length > 0) {
+        const { error } = await supabase.from('session_questions').insert(payloads);
+        if (error) throw error;
+      }
+
+      setStatusMsg({ text: `Berhasil menambahkan ${payloads.length} soal ke ${activeRound}!`, type: 'success' });
       setIsPickerModalOpen(false);
       setPickerSelectedIds([]);
       loadData();
-    } catch {
-      setStatusMsg({ text: 'Gagal menambahkan soal ke babak ini.', type: 'error' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menambahkan soal: ${msg}`, type: 'error' });
     } finally {
       setLoading(false);
     }
   };
 
-  // Bank Soal Handlers
+  // Master Bank Soal Handlers
   const handleShuffleQuestion = async (q: Question) => {
     if (q.type !== 'pilihan_ganda' || !q.options || q.options.length < 2) {
       setStatusMsg({ text: 'Hanya soal Pilihan Ganda dengan opsi yang bisa diacak', type: 'error' });
@@ -440,9 +424,7 @@ export default function AdminDashboardPage() {
       if (error) throw error;
 
       setQuestions((prev) =>
-        prev.map((item) =>
-          item.id === q.id ? { ...item, options: newOptions, correct_answer: newCorrect } : item
-        )
+        prev.map((item) => (item.id === q.id ? { ...item, options: newOptions, correct_answer: newCorrect } : item))
       );
       setStatusMsg({ text: `Kunci soal berhasil diacak: Opsi baru [${newCorrect}]`, type: 'success' });
     } catch {
@@ -452,14 +434,13 @@ export default function AdminDashboardPage() {
 
   const handleDuplicateQuestion = async (q: Question) => {
     try {
-      const explanationWithMeta = buildExplanationWithMeta(q.explanation, null, q.package_name);
       const payload = {
         category_id: q.category_id || null,
         type: q.type,
         question_text: `${q.question_text} (Salinan)`,
         options: q.options || [],
         correct_answer: q.correct_answer,
-        explanation: explanationWithMeta,
+        explanation: q.explanation || null,
         timer_duration: q.timer_duration || 30,
         points: q.points || 100,
       };
@@ -492,8 +473,6 @@ export default function AdminDashboardPage() {
       explanation: '',
       timer_duration: 30,
       points: 100,
-      package_name: 'Umum / Bebas',
-      box_number: null,
     });
   };
 
@@ -521,19 +500,17 @@ export default function AdminDashboardPage() {
       explanation: q.explanation || '',
       timer_duration: q.timer_duration || 30,
       points: q.points || 100,
-      package_name: q.package_name || 'Umum / Bebas',
-      box_number: q.box_number ?? null,
     });
     setIsModalOpen(true);
   };
 
   const handleDeleteSoal = async (id: string) => {
-    if (!window.confirm('Hapus soal ini dari database?')) return;
+    if (!window.confirm('Hapus soal ini dari database master?')) return;
     try {
       await supabase.from('questions').delete().eq('id', id);
       setQuestions(questions.filter((q) => q.id !== id));
-      setSelectedQuestionIds((prev) => prev.filter((item) => item !== id));
       setStatusMsg({ text: 'Soal berhasil dihapus', type: 'success' });
+      loadData();
     } catch {
       setStatusMsg({ text: 'Gagal menghapus soal', type: 'error' });
     }
@@ -542,19 +519,13 @@ export default function AdminDashboardPage() {
   const handleSaveQuestion = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
-      const explanationWithMeta = buildExplanationWithMeta(
-        formData.explanation,
-        formData.box_number ? Number(formData.box_number) : null,
-        formData.package_name
-      );
-
       const payload = {
         category_id: formData.category_id || null,
         type: formData.type,
         question_text: formData.question_text,
         options: formData.type === 'pilihan_ganda' ? formData.options : [],
         correct_answer: formData.correct_answer,
-        explanation: explanationWithMeta,
+        explanation: formData.explanation || null,
         timer_duration: Number(formData.timer_duration),
         points: Number(formData.points),
       };
@@ -599,16 +570,14 @@ export default function AdminDashboardPage() {
     setSavingCat(true);
     try {
       if (editingCat) {
-        const { error } = await supabase
+        await supabase
           .from('categories')
           .update({ name: catFormName.trim(), description: catFormDesc.trim() || null })
           .eq('id', editingCat.id);
-        if (error) throw error;
       } else {
-        const { error } = await supabase
+        await supabase
           .from('categories')
           .insert({ name: catFormName.trim(), description: catFormDesc.trim() || null });
-        if (error) throw error;
       }
       setIsCatModalOpen(false);
       const { data: cats } = await supabase.from('categories').select('*').order('name');
@@ -717,9 +686,10 @@ export default function AdminDashboardPage() {
   const startIndex = (safePage - 1) * pageSize;
   const paginatedQuestions = filteredQuestions.slice(startIndex, startIndex + pageSize);
 
-  // Soal yang tersedia untuk dicomot ke Babak di Picker Modal
+  // Soal yang tersedia di picker modal
+  const assignedQIds = roundQuestions.map((sq) => sq.question_id);
   const availableToPickQuestions = questions.filter((q) => {
-    const notInThisRound = (q.package_name || 'Umum / Bebas') !== activeRound;
+    const notInThisRound = !assignedQIds.includes(q.id);
     const matchCat = pickerCategoryFilter === 'all' || q.category_id === pickerCategoryFilter;
     const matchType = pickerTypeFilter === 'all' || q.type === pickerTypeFilter;
     const matchSearch = !pickerSearch || q.question_text.toLowerCase().includes(pickerSearch.toLowerCase());
@@ -882,7 +852,7 @@ export default function AdminDashboardPage() {
         </button>
       </div>
 
-      {/* TAB 1: ATUR BABAK & PANGGUNG (KONTROL UTAMA BABAK + SET KOTAK EKSKLUSIF DI SINI) */}
+      {/* TAB 1: ATUR BABAK & PANGGUNG (PENGATURAN PAKET SOAL & SLOT KOTAK KHUSUS ROOM INI) */}
       {activeTab === 'babak' && (
         <div className="space-y-4 flex-1 flex flex-col">
           {/* PANEL ATUR BABAK & JUMLAH KOTAK */}
@@ -892,7 +862,7 @@ export default function AdminDashboardPage() {
               <div>
                 <label className="block text-[11px] font-black text-purple-300 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                   <Layers className="w-3.5 h-3.5 text-purple-400" />
-                  <span>Pilih Babak Permainan:</span>
+                  <span>Pilih Babak Permainan (Room {currentRoomCode}):</span>
                 </label>
                 <div className="flex items-center gap-1.5 bg-slate-950 border border-purple-500/40 p-1 rounded-xl">
                   {['Babak 1', 'Babak 2', 'Final'].map((rName) => (
@@ -954,7 +924,7 @@ export default function AdminDashboardPage() {
               {/* INDIKATOR STATUS SLOT KOTAK */}
               <div className="bg-slate-950/80 border border-slate-800 px-4 py-2 rounded-2xl flex flex-col justify-center">
                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  Kelengkapan Kotak:
+                  Kelengkapan Slot:
                 </span>
                 <span className="text-sm font-black font-mono">
                   <span className={roundQuestions.length >= roundBoxCount ? 'text-emerald-400' : 'text-amber-400'}>
@@ -974,7 +944,7 @@ export default function AdminDashboardPage() {
                 title="Kembalikan semua kotak ke status Tersedia"
               >
                 <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
-                <span>Reset Status Selesai</span>
+                <span>Reset Status</span>
               </button>
 
               <button
@@ -993,13 +963,8 @@ export default function AdminDashboardPage() {
           <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-3 rounded-2xl">
             <div className="flex items-center gap-2">
               <span className="text-xs font-black uppercase tracking-wider text-white">
-                Daftar Soal yang Terdaftar di {activeRound} ({roundQuestions.length} Soal)
+                Daftar Soal {activeRound} untuk Room {currentRoomCode} ({roundQuestions.length} Soal)
               </span>
-              {roundQuestions.length < roundBoxCount && (
-                <span className="text-[10px] font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
-                  Kurang {roundBoxCount - roundQuestions.length} Soal lagi
-                </span>
-              )}
             </div>
 
             <button
@@ -1011,7 +976,7 @@ export default function AdminDashboardPage() {
               className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all shadow-md shadow-emerald-600/30 flex items-center gap-1.5"
             >
               <Plus className="w-4 h-4" />
-              <span>+ Ambil Soal dari Bank Soal</span>
+              <span>+ Ambil Soal dari Bank Soal Master</span>
             </button>
           </div>
 
@@ -1035,25 +1000,27 @@ export default function AdminDashboardPage() {
                   {roundQuestions.length === 0 ? (
                     <tr>
                       <td colSpan={8} className="text-center py-12 text-slate-500">
-                        Belum ada soal yang dimasukkan ke {activeRound}.<br />
+                        Belum ada soal di {activeRound} untuk ruangan ini.<br />
                         <button
                           type="button"
                           onClick={() => setIsPickerModalOpen(true)}
                           className="mt-3 px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs"
                         >
-                          + Ambil Soal dari Bank Soal Sekarang
+                          + Ambil Soal dari Bank Soal Master
                         </button>
                       </td>
                     </tr>
                   ) : (
-                    roundQuestions.map((q) => {
+                    roundQuestions.map((sq) => {
+                      const q = sq.question;
+                      if (!q) return null;
                       const isNowPlaying = activeQuestionId === q.id;
                       const isFinished = openedBoxIds.includes(q.id);
                       const catName = categories.find((c) => c.id === q.category_id)?.name;
 
                       return (
                         <tr
-                          key={q.id}
+                          key={sq.id}
                           className={`transition-colors ${
                             isNowPlaying
                               ? 'bg-blue-950/40 border-l-4 border-blue-500'
@@ -1065,9 +1032,9 @@ export default function AdminDashboardPage() {
                           {/* SLOT KOTAK */}
                           <td className="py-3 px-3 text-center">
                             <select
-                              value={q.box_number ?? ''}
+                              value={sq.box_number ?? ''}
                               onChange={(e) =>
-                                handleQuickAssignBox(q, e.target.value ? Number(e.target.value) : null)
+                                handleUpdateRoundBoxNumber(sq.id, e.target.value ? Number(e.target.value) : null)
                               }
                               className="bg-blue-950 border border-blue-500/50 text-blue-300 font-mono font-black text-xs rounded-lg px-2 py-1 focus:outline-none"
                             >
@@ -1080,7 +1047,7 @@ export default function AdminDashboardPage() {
                             </select>
                           </td>
 
-                          {/* STATUS PANGGUNG (TERSEDIA / SEDANG TAYANG / SUDAH SELESAI) */}
+                          {/* STATUS PANGGUNG */}
                           <td className="py-3 px-3">
                             {isNowPlaying ? (
                               <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-black uppercase bg-blue-500/20 text-blue-400 border border-blue-500/40 animate-pulse">
@@ -1131,9 +1098,9 @@ export default function AdminDashboardPage() {
                           <td className="py-3 px-3 text-right">
                             <button
                               type="button"
-                              onClick={() => handleRemoveQuestionFromRound(q)}
+                              onClick={() => handleRemoveFromRound(sq.id)}
                               className="px-2 py-1 bg-rose-950/70 hover:bg-rose-900 border border-rose-800 text-rose-300 rounded-lg text-[10px] font-bold transition-all"
-                              title="Lepas soal ini dari babak"
+                              title="Keluarkan dari babak ini"
                             >
                               Keluarkan
                             </button>
@@ -1149,7 +1116,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* TAB 2: BANK SOAL MASTER (DATABASE MURNI TANPA SET KOTAK YANG DOBEL) */}
+      {/* TAB 2: BANK SOAL MASTER (MURNI GUDANG SOAL TANPA URUSAN KOTAK PANGGUNG) */}
       {activeTab === 'soal' && (
         <div className="space-y-4 flex-1 flex flex-col">
           {/* JUDUL ACARA BAR */}
@@ -1182,10 +1149,8 @@ export default function AdminDashboardPage() {
               <button
                 type="button"
                 onClick={() => setSelectedTypeTab('all')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  selectedTypeTab === 'all'
-                    ? 'bg-purple-600 text-white'
-                    : 'bg-slate-950 text-slate-400 border border-slate-800'
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  selectedTypeTab === 'all' ? 'bg-purple-600 text-white' : 'bg-slate-950 text-slate-400 border border-slate-800'
                 }`}
               >
                 <span>Semua ({questions.length})</span>
@@ -1193,10 +1158,8 @@ export default function AdminDashboardPage() {
               <button
                 type="button"
                 onClick={() => setSelectedTypeTab('pilihan_ganda')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  selectedTypeTab === 'pilihan_ganda'
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-slate-950 text-blue-400 border border-slate-800'
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  selectedTypeTab === 'pilihan_ganda' ? 'bg-blue-600 text-white' : 'bg-slate-950 text-blue-400 border border-slate-800'
                 }`}
               >
                 <span>Pilihan Ganda ({questions.filter((q) => q.type === 'pilihan_ganda').length})</span>
@@ -1204,10 +1167,8 @@ export default function AdminDashboardPage() {
               <button
                 type="button"
                 onClick={() => setSelectedTypeTab('benar_salah')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  selectedTypeTab === 'benar_salah'
-                    ? 'bg-emerald-600 text-white'
-                    : 'bg-slate-950 text-emerald-400 border border-slate-800'
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  selectedTypeTab === 'benar_salah' ? 'bg-emerald-600 text-white' : 'bg-slate-950 text-emerald-400 border border-slate-800'
                 }`}
               >
                 <span>Benar / Salah ({questions.filter((q) => q.type === 'benar_salah').length})</span>
@@ -1215,26 +1176,22 @@ export default function AdminDashboardPage() {
               <button
                 type="button"
                 onClick={() => setSelectedTypeTab('essay')}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 ${
-                  selectedTypeTab === 'essay'
-                    ? 'bg-amber-600 text-white'
-                    : 'bg-slate-950 text-amber-400 border border-slate-800'
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+                  selectedTypeTab === 'essay' ? 'bg-amber-600 text-white' : 'bg-slate-950 text-amber-400 border border-slate-800'
                 }`}
               >
                 <span>Rebutan ({questions.filter((q) => q.type === 'essay').length})</span>
               </button>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => handleOpenAddSoal()}
-                className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
-              >
-                <Plus className="w-4 h-4" />
-                <span>+ Buat Soal Baru</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => handleOpenAddSoal()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
+            >
+              <Plus className="w-4 h-4" />
+              <span>+ Buat Soal Master Baru</span>
+            </button>
           </div>
 
           {/* FILTER BANK SOAL */}
@@ -1264,21 +1221,6 @@ export default function AdminDashboardPage() {
                   ))}
                 </select>
               </div>
-
-              <div className="flex items-center gap-1.5">
-                <label className="text-xs font-bold text-slate-400 uppercase tracking-wider">Paket:</label>
-                <select
-                  value={packageFilter}
-                  onChange={(e) => setPackageFilter(e.target.value)}
-                  className="bg-slate-950 border border-slate-700 rounded-xl px-3 py-1.5 text-xs text-white"
-                >
-                  <option value="all">Semua Paket</option>
-                  <option value="Umum / Bebas">Umum / Bebas</option>
-                  <option value="Babak 1">Babak 1</option>
-                  <option value="Babak 2">Babak 2</option>
-                  <option value="Final">Final</option>
-                </select>
-              </div>
             </div>
           </div>
 
@@ -1290,7 +1232,6 @@ export default function AdminDashboardPage() {
                   <tr>
                     <th className="py-3 px-3 w-10">#</th>
                     <th className="py-3 px-4">Kategori</th>
-                    <th className="py-3 px-4">Paket / Babak</th>
                     <th className="py-3 px-4">Tipe</th>
                     <th className="py-3 px-4">Pertanyaan</th>
                     <th className="py-3 px-4">Kunci Jawaban</th>
@@ -1301,11 +1242,11 @@ export default function AdminDashboardPage() {
                 <tbody className="divide-y divide-slate-800/60">
                   {loading ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-10 text-slate-500">Memuat data...</td>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">Memuat data...</td>
                     </tr>
                   ) : filteredQuestions.length === 0 ? (
                     <tr>
-                      <td colSpan={8} className="text-center py-10 text-slate-500">Tidak ada soal yang ditemukan.</td>
+                      <td colSpan={7} className="text-center py-10 text-slate-500">Tidak ada soal di master bank soal.</td>
                     </tr>
                   ) : (
                     paginatedQuestions.map((q, idx) => {
@@ -1315,11 +1256,6 @@ export default function AdminDashboardPage() {
                         <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
                           <td className="py-3 px-3 font-mono text-slate-500">{rowNum}</td>
                           <td className="py-3 px-4 font-bold text-pink-300">{catName || '(Umum)'}</td>
-                          <td className="py-3 px-4">
-                            <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 font-semibold text-[10px]">
-                              {q.package_name || 'Umum / Bebas'}
-                            </span>
-                          </td>
                           <td className="py-3 px-4 uppercase text-[10px] font-bold text-slate-400">
                             {q.type.replace('_', ' ')}
                           </td>
@@ -1378,7 +1314,7 @@ export default function AdminDashboardPage() {
             {/* PAGINATION */}
             {filteredQuestions.length > 0 && (
               <div className="bg-slate-950 border-t border-slate-800 px-4 py-3 flex items-center justify-between text-xs text-slate-400">
-                <span>Total {filteredQuestions.length} Soal</span>
+                <span>Total {filteredQuestions.length} Soal Master</span>
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
@@ -1539,7 +1475,7 @@ export default function AdminDashboardPage() {
                   <Plus className="w-4 h-4 text-emerald-400" />
                   <span>Ambil Soal untuk {activeRound}</span>
                 </h3>
-                <p className="text-xs text-slate-400">Pilih soal dari Database Master untuk dimasukkan ke babak ini</p>
+                <p className="text-xs text-slate-400">Pilih soal dari Bank Soal Master untuk dimasukkan ke babak ini</p>
               </div>
               <button onClick={() => setIsPickerModalOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -1581,7 +1517,7 @@ export default function AdminDashboardPage() {
             <div className="flex-1 overflow-y-auto space-y-1.5 pr-1 border border-slate-800 rounded-2xl p-2 bg-slate-950/60">
               {availableToPickQuestions.length === 0 ? (
                 <div className="text-center py-10 text-slate-500 text-xs">
-                  Tidak ada soal yang tersedia sesuai filter.
+                  Semua soal master sudah masuk ke babak ini atau tidak ditemukan.
                 </div>
               ) : (
                 availableToPickQuestions.map((q) => {
@@ -1663,7 +1599,7 @@ export default function AdminDashboardPage() {
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative">
             <div className="flex items-center justify-between pb-4 mb-4 border-b border-slate-800">
               <h3 className="text-lg font-black text-white uppercase">
-                {editingId ? 'Edit Soal Master' : 'Tambah Soal Baru'}
+                {editingId ? 'Edit Soal Master' : 'Tambah Soal Master Baru'}
               </h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-white">
                 <X className="w-5 h-5" />
@@ -1839,7 +1775,7 @@ export default function AdminDashboardPage() {
                   type="submit"
                   className="px-5 py-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-bold shadow-md shadow-purple-600/30"
                 >
-                  Simpan Soal
+                  Simpan Soal Master
                 </button>
               </div>
             </form>
