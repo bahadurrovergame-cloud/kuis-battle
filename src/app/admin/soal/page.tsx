@@ -54,8 +54,10 @@ export default function AdminDashboardPage() {
   // Active Tab: 'soal' | 'kategori' | 'regu'
   const [activeTab, setActiveTab] = useState<'soal' | 'kategori' | 'regu'>('soal');
 
-  // Shared session
+  // Shared session & Multi-room
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [currentRoomCode, setCurrentRoomCode] = useState<string>('KUIS88');
+  const [availableRooms, setAvailableRooms] = useState<{ id: string; room_code: string; title: string }[]>([]);
 
   // Soal States
   const [categories, setCategories] = useState<Category[]>([]);
@@ -141,13 +143,50 @@ export default function AdminDashboardPage() {
     }
   }, [router]);
 
-  // Load Session and Questions
+  // Load Session and Questions dengan dukungan Multi-Room
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
-      const { data: sData } = await supabase.from('game_sessions').select('*').limit(1).single();
+      // Ambil daftar seluruh ruangan untuk switcher
+      const { data: allSessions } = await supabase
+        .from('game_sessions')
+        .select('id, room_code, title')
+        .order('created_at', { ascending: true });
+      if (allSessions) setAvailableRooms(allSessions);
+
+      const roomFromUrl =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('room')?.toUpperCase().trim() || null
+          : null;
+      const roomFromStorage =
+        typeof window !== 'undefined' ? localStorage.getItem('active_room_code') : null;
+      const targetRoom = roomFromUrl || roomFromStorage;
+
+      let sQuery = supabase.from('game_sessions').select('*');
+      if (targetRoom) {
+        sQuery = sQuery.eq('room_code', targetRoom);
+      } else {
+        sQuery = sQuery.order('created_at', { ascending: true }).limit(1);
+      }
+
+      let { data: sData } = await sQuery.single();
+
+      if (!sData && targetRoom) {
+        const { data: fallbackData } = await supabase
+          .from('game_sessions')
+          .select('*')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .single();
+        sData = fallbackData;
+      }
+
       if (sData) {
         setSessionId(sData.id);
+        setCurrentRoomCode(sData.room_code);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('active_room_code', sData.room_code);
+        }
         const { cleanTitle, boxCount } = parseSessionMeta(sData);
         setEventTitle(cleanTitle);
         setBlinkBoxCount(boxCount);
@@ -892,9 +931,40 @@ export default function AdminDashboardPage() {
             <ShieldCheck className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-wide text-white uppercase">
-              Admin Pusat Perlombaan
-            </h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-black tracking-wide text-white uppercase">
+                Admin Pusat Perlombaan
+              </h1>
+              {availableRooms.length > 1 ? (
+                <div className="flex items-center gap-1 bg-amber-400/10 border border-amber-400/30 rounded-lg px-2 py-0.5">
+                  <span className="text-[10px] font-bold text-amber-300">ROOM:</span>
+                  <select
+                    value={currentRoomCode}
+                    onChange={(e) => {
+                      const newRoom = e.target.value;
+                      if (newRoom && newRoom !== currentRoomCode) {
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('active_room_code', newRoom);
+                          window.location.href = `/admin/soal?room=${encodeURIComponent(newRoom)}`;
+                        }
+                      }
+                    }}
+                    className="bg-transparent font-mono font-black text-xs text-amber-400 focus:outline-none cursor-pointer"
+                    title="Ganti Ruangan Panggung Aktif"
+                  >
+                    {availableRooms.map((r) => (
+                      <option key={r.id} value={r.room_code} className="bg-slate-900 text-white">
+                        {r.room_code} - {r.title.replace(/\[BOXES:\d+\]/g, '').replace(/\[CAT:[^\]]+\]/g, '').trim()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <span className="text-xs font-mono font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
+                  ROOM: {currentRoomCode}
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-400">Kelola Bank Soal, Daftar Regu, dan Anggota Peserta</p>
           </div>
         </div>
@@ -908,7 +978,7 @@ export default function AdminDashboardPage() {
           </a>
 
           <a
-            href="/control"
+            href={`/control?room=${encodeURIComponent(currentRoomCode)}`}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-blue-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
           >
             <MonitorPlay className="w-3.5 h-3.5 text-blue-400" />
@@ -916,7 +986,7 @@ export default function AdminDashboardPage() {
           </a>
 
           <a
-            href="/operator"
+            href={`/operator?room=${encodeURIComponent(currentRoomCode)}`}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-cyan-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"

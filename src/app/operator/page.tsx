@@ -23,7 +23,9 @@ import {
   BookOpen,
   HelpCircle,
   Layers,
-  Tag
+  Tag,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 
 export default function OperatorProjectorPage() {
@@ -36,10 +38,25 @@ export default function OperatorProjectorPage() {
   const [showQrModal, setShowQrModal] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
 
+  // Header Collapse state (Bisa buka-tutup agar tampilan proyektor bersih)
+  const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
+
   // Floating Leaderboard Auto-Fade state
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const [isIdle, setIsIdle] = useState(false);
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Keyboard shortcut 'H' untuk buka / tutup header proyektor secara instan
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'h' || e.key === 'H') {
+        setIsHeaderCollapsed((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // Local synced countdown timer
   const [remainingTime, setRemainingTime] = useState<number>(30);
@@ -66,36 +83,63 @@ export default function OperatorProjectorPage() {
     };
   }, []);
 
-  // Set Join URL from browser origin
+  // Set Join URL from browser origin & active room_code
   useEffect(() => {
     if (typeof window !== 'undefined') {
-      const url = `${window.location.origin}/peserta`;
+      const rCode = session?.room_code;
+      const url = rCode
+        ? `${window.location.origin}/peserta?room=${encodeURIComponent(rCode)}`
+        : `${window.location.origin}/peserta`;
       setJoinUrl(url);
     }
-  }, []);
+  }, [session?.room_code]);
 
-  // Fetch initial data (session, questions, teams)
+  // Fetch initial data (session, questions, teams) dengan dukungan Multi-Room
   const fetchInitialData = async () => {
     try {
-      // 1. Fetch Game Session
-      const { data: sessionData } = await supabase
-        .from('game_sessions')
-        .select('*')
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .single();
+      const roomFromUrl =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('room')?.toUpperCase().trim() || null
+          : null;
+      const roomFromStorage =
+        typeof window !== 'undefined' ? localStorage.getItem('active_room_code') : null;
+      const targetRoom = roomFromUrl || roomFromStorage;
+
+      let sessionQuery = supabase.from('game_sessions').select('*');
+      if (targetRoom) {
+        sessionQuery = sessionQuery.eq('room_code', targetRoom);
+      } else {
+        sessionQuery = sessionQuery.order('created_at', { ascending: true }).limit(1);
+      }
+
+      let { data: sessionData } = await sessionQuery.single();
+
+      // Fallback jika kode ruangan dari URL/storage tidak ditemukan
+      if (!sessionData && targetRoom) {
+        const { data: fallbackData } = await supabase
+          .from('game_sessions')
+          .select('*')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .single();
+        sessionData = fallbackData;
+      }
 
       if (sessionData) {
         setSession(sessionData);
         setRemainingTime(sessionData.timer_remaining);
 
-        // Load opened boxes
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('active_room_code', sessionData.room_code);
+        }
+
+        // Load opened boxes untuk sesi ruangan ini
         try {
           const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
           if (saved) setOpenedBoxIds(JSON.parse(saved));
         } catch {}
 
-        // 2. Fetch Teams
+        // 2. Fetch Teams untuk sesi ruangan ini
         const { data: teamsData } = await supabase
           .from('teams')
           .select('*')
@@ -348,71 +392,100 @@ export default function OperatorProjectorPage() {
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
 
+      {/* FLOATING RESTORE HEADER BUTTON (SAAT HEADER DITUTUP AGAR PROYEKTOR BERSIH) */}
+      {isHeaderCollapsed && (
+        <div className="fixed top-3 right-4 z-50 flex items-center gap-2 animate-in fade-in">
+          <button
+            onClick={() => setIsHeaderCollapsed(false)}
+            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-slate-900/80 hover:bg-slate-900 border border-slate-700/80 text-slate-300 hover:text-white text-xs font-bold shadow-2xl backdrop-blur-md transition-all hover:scale-105"
+            title="Buka kembali header panggung (Tekan tombol 'H' di keyboard)"
+          >
+            <span className="font-mono text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20 text-[10px]">
+              ROOM: {session?.room_code || '---'}
+            </span>
+            <ChevronDown className="w-3.5 h-3.5 text-blue-400" />
+            <span className="text-[11px]">Buka Header (H)</span>
+          </button>
+        </div>
+      )}
+
       {/* TOP BAR: Room info, Judul Dinamis, Controls & Live Status */}
-      <header className="flex items-center justify-between pb-3 border-b border-slate-800/80 z-20 shrink-0">
-        <div className="flex items-center gap-4">
-          <div className="p-2.5 bg-blue-600/20 border border-blue-500/30 rounded-2xl text-blue-400">
-            <Tv className="w-6 h-6" />
-          </div>
-          <div>
-            <h1 className="text-xl font-black tracking-wide text-white uppercase flex items-center gap-2">
-              <span>{cleanTitle}</span>
-              <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-widest">
-                STAGE LIVE
-              </span>
-            </h1>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-xs font-mono font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
-                ROOM: {session?.room_code || '---'}
-              </span>
-              <span className="text-xs text-slate-400">Layar Utama Proyektor</span>
+      {!isHeaderCollapsed && (
+        <header className="flex items-center justify-between pb-3 border-b border-slate-800/80 z-20 shrink-0 animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-4">
+            <div className="p-2.5 bg-blue-600/20 border border-blue-500/30 rounded-2xl text-blue-400">
+              <Tv className="w-6 h-6" />
+            </div>
+            <div>
+              <h1 className="text-xl font-black tracking-wide text-white uppercase flex items-center gap-2">
+                <span>{cleanTitle}</span>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-widest">
+                  STAGE LIVE
+                </span>
+              </h1>
+              <div className="flex items-center gap-2 mt-0.5">
+                <span className="text-xs font-mono font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
+                  ROOM: {session?.room_code || '---'}
+                </span>
+                <span className="text-xs text-slate-400">Layar Utama Proyektor</span>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="flex items-center gap-3">
-          {/* Unlock Audio Button */}
-          {!audioUnlocked && (
+          <div className="flex items-center gap-2.5">
+            {/* Unlock Audio Button */}
+            {!audioUnlocked && (
+              <button
+                onClick={unlockAudio}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold hover:bg-amber-500/30 transition-all animate-pulse"
+              >
+                <Volume2 className="w-4 h-4" />
+                <span>Aktifkan Audio SFX</span>
+              </button>
+            )}
+
+            {/* QR Code toggle */}
             <button
-              onClick={unlockAudio}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs font-bold hover:bg-amber-500/30 transition-all animate-pulse"
+              onClick={() => setShowQrModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs font-semibold hover:border-slate-700 transition-all"
             >
-              <Volume2 className="w-4 h-4" />
-              <span>Aktifkan Audio SFX</span>
+              <QrCode className="w-4 h-4 text-emerald-400" />
+              <span>QR Masuk</span>
             </button>
-          )}
 
-          {/* QR Code toggle */}
-          <button
-            onClick={() => setShowQrModal(true)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs font-semibold hover:border-slate-700 transition-all"
-          >
-            <QrCode className="w-4 h-4 text-emerald-400" />
-            <span>QR Masuk</span>
-          </button>
+            {/* Fullscreen Button */}
+            <button
+              onClick={toggleFullscreen}
+              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all"
+              title="Layar Penuh (F11)"
+            >
+              <Maximize className="w-4 h-4" />
+            </button>
 
-          {/* Fullscreen Button */}
-          <button
-            onClick={toggleFullscreen}
-            className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all"
-            title="Layar Penuh (F11)"
-          >
-            <Maximize className="w-4 h-4" />
-          </button>
+            {/* Connection Status */}
+            <div
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
+                isConnected
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+              }`}
+            >
+              {isConnected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
+              <span>{isConnected ? 'Realtime Live' : 'Menghubungkan...'}</span>
+            </div>
 
-          {/* Connection Status */}
-          <div
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
-              isConnected
-                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-            }`}
-          >
-            {isConnected ? <Wifi className="w-4 h-4" /> : <WifiOff className="w-4 h-4" />}
-            <span>{isConnected ? 'Realtime Live' : 'Menghubungkan...'}</span>
+            {/* Tombol Tutup Header (Agar Proyektor Bersih) */}
+            <button
+              onClick={() => setIsHeaderCollapsed(true)}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white text-xs font-semibold transition-all shadow-sm"
+              title="Sembunyikan Header agar layar proyektor bersih (Tekan tombol 'H' di keyboard)"
+            >
+              <ChevronUp className="w-4 h-4 text-purple-400" />
+              <span className="hidden sm:inline text-[11px]">Tutup Header</span>
+            </button>
           </div>
-        </div>
-      </header>
+        </header>
+      )}
 
       {/* FLOATING LEADERBOARD BUTTON (AUTO-FADE SAAT MOUSE DIAM) */}
       <div

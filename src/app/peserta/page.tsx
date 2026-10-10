@@ -58,12 +58,19 @@ export default function PesertaPage() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
-  // Auto-restore session from localStorage on mount
+  // Auto-restore session from localStorage on mount & deteksi parameter ?room= di URL
   useEffect(() => {
+    const urlRoom =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('room')?.toUpperCase().trim() || null
+        : null;
     const savedRoom = localStorage.getItem('peserta_room');
     const savedTeamId = localStorage.getItem('peserta_team_id');
 
-    if (savedRoom && savedTeamId) {
+    if (urlRoom) {
+      setRoomCode(urlRoom);
+      fetchRoomTeams(urlRoom);
+    } else if (savedRoom && savedTeamId) {
       setRoomCode(savedRoom);
       restoreTeam(savedRoom, savedTeamId);
     }

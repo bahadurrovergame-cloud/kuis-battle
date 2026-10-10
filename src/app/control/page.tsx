@@ -69,6 +69,7 @@ export default function OperatorControlPage() {
   const [teamFormName, setTeamFormName] = useState('');
   const [teamFormColor, setTeamFormColor] = useState('#3b82f6');
   const [teamFormScore, setTeamFormScore] = useState<number>(0);
+  const [availableRooms, setAvailableRooms] = useState<{ id: string; room_code: string; title: string }[]>([]);
 
   // Live timer countdown state
   const [remainingTime, setRemainingTime] = useState<number>(30);
@@ -97,18 +98,50 @@ export default function OperatorControlPage() {
     }
   }, [session?.status]);
 
-  // Load initial data
+  // Load initial data dengan dukungan Multi-Room
   const loadData = useCallback(async () => {
     try {
-      const { data: sessionData } = await supabase
+      // Ambil seluruh daftar ruangan untuk switcher
+      const { data: allSessions } = await supabase
         .from('game_sessions')
-        .select('*')
-        .order('created_at', { ascending: true })
-        .limit(1)
-        .single();
+        .select('id, room_code, title')
+        .order('created_at', { ascending: true });
+      if (allSessions) setAvailableRooms(allSessions);
+
+      const roomFromUrl =
+        typeof window !== 'undefined'
+          ? new URLSearchParams(window.location.search).get('room')?.toUpperCase().trim() || null
+          : null;
+      const roomFromStorage =
+        typeof window !== 'undefined' ? localStorage.getItem('active_room_code') : null;
+      const targetRoom = roomFromUrl || roomFromStorage;
+
+      let sessionQuery = supabase.from('game_sessions').select('*');
+      if (targetRoom) {
+        sessionQuery = sessionQuery.eq('room_code', targetRoom);
+      } else {
+        sessionQuery = sessionQuery.order('created_at', { ascending: true }).limit(1);
+      }
+
+      let { data: sessionData } = await sessionQuery.single();
+
+      // Fallback jika room_code target belum ada
+      if (!sessionData && targetRoom) {
+        const { data: fallbackData } = await supabase
+          .from('game_sessions')
+          .select('*')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .single();
+        sessionData = fallbackData;
+      }
 
       if (sessionData) {
         setSession(sessionData);
+
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('active_room_code', sessionData.room_code);
+        }
 
         const { activeCategoryId } = parseSessionMeta(sessionData);
         if (activeCategoryId) {
@@ -807,9 +840,35 @@ export default function OperatorControlPage() {
               Control Panggung Operator
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-xs font-mono font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
-                ROOM: {session?.room_code || '---'}
-              </span>
+              {availableRooms.length > 1 ? (
+                <div className="flex items-center gap-1 bg-amber-400/10 border border-amber-400/30 rounded-lg px-2 py-0.5">
+                  <span className="text-[10px] font-bold text-amber-300">ROOM:</span>
+                  <select
+                    value={session?.room_code || ''}
+                    onChange={(e) => {
+                      const newRoom = e.target.value;
+                      if (newRoom && newRoom !== session?.room_code) {
+                        if (typeof window !== 'undefined') {
+                          localStorage.setItem('active_room_code', newRoom);
+                          window.location.href = `/control?room=${encodeURIComponent(newRoom)}`;
+                        }
+                      }
+                    }}
+                    className="bg-transparent font-mono font-black text-xs text-amber-400 focus:outline-none cursor-pointer"
+                    title="Ganti Ruangan Panggung yang Dikontrol"
+                  >
+                    {availableRooms.map((r) => (
+                      <option key={r.id} value={r.room_code} className="bg-slate-900 text-white">
+                        {r.room_code} - {r.title.replace(/\[BOXES:\d+\]/g, '').replace(/\[CAT:[^\]]+\]/g, '').trim()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <span className="text-xs font-mono font-bold text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded border border-amber-400/20">
+                  ROOM: {session?.room_code || '---'}
+                </span>
+              )}
               <span className="text-xs text-slate-400 hidden sm:inline">
                 Status: {session?.status}
               </span>
@@ -830,7 +889,7 @@ export default function OperatorControlPage() {
           </div>
 
           <a
-            href="/operator"
+            href={session?.room_code ? `/operator?room=${encodeURIComponent(session.room_code)}` : '/operator'}
             target="_blank"
             rel="noreferrer"
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-blue-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
@@ -840,7 +899,7 @@ export default function OperatorControlPage() {
           </a>
 
           <a
-            href="/admin/soal"
+            href={session?.room_code ? `/admin/soal?room=${encodeURIComponent(session.room_code)}` : '/admin/soal'}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-purple-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
           >
             <BookOpen className="w-3.5 h-3.5 text-purple-400" />
