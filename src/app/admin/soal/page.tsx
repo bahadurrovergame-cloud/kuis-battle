@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   supabase,
@@ -17,8 +17,6 @@ import {
   Plus,
   Trash2,
   Edit,
-  Upload,
-  Download,
   CheckCircle2,
   AlertCircle,
   Tv,
@@ -59,6 +57,9 @@ export default function AdminDashboardPage() {
   const [availableRooms, setAvailableRooms] = useState<{ id: string; room_code: string; title: string }[]>([]);
   const [activeQuestionId, setActiveQuestionId] = useState<string | null>(null);
   const [openedBoxIds, setOpenedBoxIds] = useState<string[]>([]);
+
+  // Ref untuk memastikan inisialisasi babak hanya terjadi 1 kali saat buka halaman
+  const isInitialLoadedRef = useRef(false);
 
   // Event Settings State (Judul Acara)
   const [eventTitle, setEventTitle] = useState('Kuis Battle Panggung');
@@ -147,7 +148,27 @@ export default function AdminDashboardPage() {
     }
   }, [router]);
 
-  // Load Session, Categories, Master Questions, and Round Questions
+  // Fungsi khusus untuk mengambil daftar soal pada babak yang sedang dipilih
+  const loadRoundQuestions = useCallback(async (targetRoundName: string, targetSessionId: string) => {
+    try {
+      const { data: sqData } = await supabase
+        .from('session_questions')
+        .select('*, question:questions(*)')
+        .eq('session_id', targetSessionId)
+        .eq('round_name', targetRoundName)
+        .order('box_number', { ascending: true, nullsFirst: false });
+
+      if (sqData) {
+        setRoundQuestions(sqData);
+        const openedFromDb = sqData.filter((s) => s.is_opened).map((s) => s.question_id);
+        setOpenedBoxIds((prev) => Array.from(new Set([...prev, ...openedFromDb])));
+      }
+    } catch {
+      // Quiet fail
+    }
+  }, []);
+
+  // Load Session, Categories, Master Questions
   const loadData = useCallback(async () => {
     setLoading(true);
     try {
@@ -188,7 +209,14 @@ export default function AdminDashboardPage() {
         setSessionId(sData.id);
         setCurrentRoomCode(sData.room_code);
         setActiveQuestionId(sData.current_question_id || null);
-        if (sData.active_round) setActiveRound(sData.active_round);
+
+        // Hanya set activeRound dari database saat pertama kali halaman dimuat
+        if (!isInitialLoadedRef.current) {
+          if (sData.active_round) {
+            setActiveRound(sData.active_round);
+          }
+          isInitialLoadedRef.current = true;
+        }
 
         if (typeof window !== 'undefined') {
           localStorage.setItem('active_room_code', sData.room_code);
@@ -201,6 +229,10 @@ export default function AdminDashboardPage() {
         const { cleanTitle, boxCount } = parseSessionMeta(sData);
         setEventTitle(cleanTitle);
         setRoundBoxCount(boxCount || 12);
+
+        // Muat soal babak aktif saat ini
+        const currentActive = isInitialLoadedRef.current ? activeRound : (sData.active_round || 'Babak 1');
+        loadRoundQuestions(currentActive, sData.id);
       }
 
       const { data: cats } = await supabase.from('categories').select('*').order('name');
@@ -216,27 +248,25 @@ export default function AdminDashboardPage() {
           .eq('session_id', sData.id)
           .order('score', { ascending: false });
         if (tData) setTeams(tData);
-
-        // Load round questions for current activeRound
-        const { data: sqData } = await supabase
-          .from('session_questions')
-          .select('*, question:questions(*)')
-          .eq('session_id', sData.id)
-          .eq('round_name', activeRound)
-          .order('box_number', { ascending: true, nullsFirst: false });
-
-        if (sqData) setRoundQuestions(sqData);
       }
     } catch {
       setStatusMsg({ text: 'Gagal memuat data', type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [activeRound]);
+  }, [activeRound, loadRoundQuestions]);
 
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Handler saat admin berganti tab babak di UI (tidak akan menimpa pilihan klik)
+  const handleSelectRoundTab = (targetRoundName: string) => {
+    setActiveRound(targetRoundName);
+    if (sessionId) {
+      loadRoundQuestions(targetRoundName, sessionId);
+    }
+  };
 
   // Realtime subscription
   useEffect(() => {
@@ -250,7 +280,6 @@ export default function AdminDashboardPage() {
         (payload: any) => {
           if (payload.new) {
             setActiveQuestionId(payload.new.current_question_id || null);
-            if (payload.new.active_round) setActiveRound(payload.new.active_round);
           }
         }
       )
@@ -258,7 +287,9 @@ export default function AdminDashboardPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'session_questions', filter: `session_id=eq.${sessionId}` },
         () => {
-          loadData();
+          if (sessionId) {
+            loadRoundQuestions(activeRound, sessionId);
+          }
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
@@ -269,7 +300,7 @@ export default function AdminDashboardPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [sessionId, loadData]);
+  }, [sessionId, activeRound, loadRoundQuestions]);
 
   // Simpan & Sinkronkan Babak & Jumlah Kotak ke Panggung
   const handleSyncRoundToStage = async () => {
@@ -316,16 +347,26 @@ export default function AdminDashboardPage() {
       localStorage.removeItem(`opened_boxes_${sessionId}`);
     } catch {}
 
+    await supabase
+      .from('session_questions')
+      .update({ is_opened: false })
+      .eq('session_id', sessionId)
+      .eq('round_name', activeRound);
+
     await supabase.channel(`room_sync_${sessionId}`).send({
       type: 'broadcast',
       event: 'reset_boxes',
       payload: {},
     });
 
-    setStatusMsg({ text: 'Status seluruh kotak berhasil direset menjadi Tersedia!', type: 'success' });
+    if (sessionId) {
+      loadRoundQuestions(activeRound, sessionId);
+    }
+
+    setStatusMsg({ text: `Status seluruh kotak ${activeRound} berhasil direset!`, type: 'success' });
   };
 
-  // Ubah nomor slot kotak di babak via tabel session_questions
+  // Ubah nomor slot kotak di babak
   const handleUpdateRoundBoxNumber = async (sqId: string, newBoxNum: number | null) => {
     try {
       const { error } = await supabase
@@ -391,7 +432,7 @@ export default function AdminDashboardPage() {
       setStatusMsg({ text: `Berhasil menambahkan ${payloads.length} soal ke ${activeRound}!`, type: 'success' });
       setIsPickerModalOpen(false);
       setPickerSelectedIds([]);
-      loadData();
+      loadRoundQuestions(activeRound, sessionId);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : JSON.stringify(err);
       setStatusMsg({ text: `Gagal menambahkan soal: ${msg}`, type: 'error' });
@@ -852,7 +893,7 @@ export default function AdminDashboardPage() {
         </button>
       </div>
 
-      {/* TAB 1: ATUR BABAK & PANGGUNG (PENGATURAN PAKET SOAL & SLOT KOTAK KHUSUS ROOM INI) */}
+      {/* TAB 1: ATUR BABAK & PANGGUNG */}
       {activeTab === 'babak' && (
         <div className="space-y-4 flex-1 flex flex-col">
           {/* PANEL ATUR BABAK & JUMLAH KOTAK */}
@@ -869,7 +910,7 @@ export default function AdminDashboardPage() {
                     <button
                       key={rName}
                       type="button"
-                      onClick={() => setActiveRound(rName)}
+                      onClick={() => handleSelectRoundTab(rName)}
                       className={`px-3 py-1.5 rounded-lg text-xs font-extrabold transition-all ${
                         activeRound === rName
                           ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
@@ -882,7 +923,7 @@ export default function AdminDashboardPage() {
                 </div>
               </div>
 
-              {/* SET JUMLAH KOTAK UNTUK BABAK INI */}
+              {/* SET JUMLAH KOTAK */}
               <div>
                 <label className="block text-[11px] font-black text-blue-300 uppercase tracking-wider mb-1.5 flex items-center gap-1">
                   <LayoutGrid className="w-3.5 h-3.5 text-blue-400" />
@@ -1015,7 +1056,7 @@ export default function AdminDashboardPage() {
                       const q = sq.question;
                       if (!q) return null;
                       const isNowPlaying = activeQuestionId === q.id;
-                      const isFinished = openedBoxIds.includes(q.id);
+                      const isFinished = openedBoxIds.includes(q.id) || sq.is_opened;
                       const catName = categories.find((c) => c.id === q.category_id)?.name;
 
                       return (
@@ -1116,7 +1157,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* TAB 2: BANK SOAL MASTER (MURNI GUDANG SOAL TANPA URUSAN KOTAK PANGGUNG) */}
+      {/* TAB 2: BANK SOAL MASTER */}
       {activeTab === 'soal' && (
         <div className="space-y-4 flex-1 flex flex-col">
           {/* JUDUL ACARA BAR */}
