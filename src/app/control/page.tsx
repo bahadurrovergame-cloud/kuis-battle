@@ -89,11 +89,24 @@ export default function OperatorControlPage() {
 
   // Sync selectedGameType from database status
   useEffect(() => {
-    if (session?.status === 'box_benar_salah') {
+    if (
+      session?.status === 'box_benar_salah' ||
+      session?.status === 'category_benar_salah' ||
+      session?.status?.includes('benar_salah')
+    ) {
       setSelectedGameType('benar_salah');
-    } else if (session?.status === 'box_essay') {
+    } else if (
+      session?.status === 'box_essay' ||
+      session?.status === 'category_essay' ||
+      session?.status?.includes('essay')
+    ) {
       setSelectedGameType('essay');
-    } else if (session?.status === 'box_pilihan_ganda') {
+    } else if (
+      session?.status === 'box_pilihan_ganda' ||
+      session?.status === 'category_pilihan_ganda' ||
+      session?.status === 'category_select' ||
+      session?.status?.includes('pilihan_ganda')
+    ) {
       setSelectedGameType('pilihan_ganda');
     }
   }, [session?.status]);
@@ -446,26 +459,45 @@ export default function OperatorControlPage() {
         .eq('id', session.id);
     } else if (view === 'category_select') {
       setCurrentQuestion(null);
-      const newStatus = `category_${typeToUse}`;
+
+      // 'category_pilihan_ganda' (22 char) melebihi VARCHAR(20) di DB. Gunakan 'category_select' yang aman & didukung proyektor.
+      const targetStatus = typeToUse === 'pilihan_ganda' ? 'category_select' : `category_${typeToUse}`;
+
       setSession({
         ...session,
-        status: newStatus as any,
+        status: targetStatus as any,
         current_question_id: null,
         is_timer_running: false,
         is_answer_revealed: false,
         updated_at: nowIso,
       });
 
-      await supabase
+      const { error } = await supabase
         .from('game_sessions')
         .update({
-          status: newStatus,
+          status: targetStatus,
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
           updated_at: nowIso,
         })
         .eq('id', session.id);
+
+      // Jaring pengaman: fallback ke 'category_select' jika target status kustom ditolak constraint DB
+      if (error && targetStatus !== 'category_select') {
+        await supabase
+          .from('game_sessions')
+          .update({
+            status: 'category_select',
+            current_question_id: null,
+            is_timer_running: false,
+            is_answer_revealed: false,
+            updated_at: nowIso,
+          })
+          .eq('id', session.id);
+
+        setSession((prev) => (prev ? { ...prev, status: 'category_select' as any } : null));
+      }
     } else if (view === 'box_select') {
       setCurrentQuestion(null);
       const newStatus = `box_${typeToUse}`;
@@ -484,7 +516,7 @@ export default function OperatorControlPage() {
         updated_at: nowIso,
       });
 
-      await supabase
+      const { error } = await supabase
         .from('game_sessions')
         .update({
           title: updatedTitle,
@@ -495,6 +527,20 @@ export default function OperatorControlPage() {
           updated_at: nowIso,
         })
         .eq('id', session.id);
+
+      if (error) {
+        await supabase
+          .from('game_sessions')
+          .update({
+            title: updatedTitle,
+            status: 'box_select',
+            current_question_id: null,
+            is_timer_running: false,
+            is_answer_revealed: false,
+            updated_at: nowIso,
+          })
+          .eq('id', session.id);
+      }
     } else if (view === 'question_active' && currentQuestion) {
       setSession({
         ...session,
@@ -1168,6 +1214,7 @@ export default function OperatorControlPage() {
           {/* TAMPILAN 3: JIKA PROYEKTOR SEDANG MENAMPILKAN PAPAN KOTAK */}
           {!['waiting', 'type_select'].includes(session?.status || '') &&
             !session?.status?.startsWith('category_') &&
+            session?.status !== 'category_select' &&
             !session?.current_question_id && (
             <div className="bg-slate-900/90 border border-indigo-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center flex flex-col items-center justify-center space-y-3">
               <div className="w-14 h-14 rounded-2xl bg-indigo-600/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-1">
