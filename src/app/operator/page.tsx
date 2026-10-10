@@ -677,10 +677,10 @@ export default function OperatorProjectorPage() {
                 <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-2 sm:mb-3 shadow-md">
                   <LayoutGrid className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
-                <h3 className="text-sm sm:text-base font-black text-white uppercase mb-1">
+                <h3 className="text-sm sm:text-base font-black text-white uppercase mb-1 w-full truncate">
                   Semua Kategori
                 </h3>
-                <p className="text-[10px] text-slate-400 mb-3 line-clamp-1">
+                <p className="text-[10px] text-slate-400 mb-3 truncate w-full">
                   Campuran dari semua topik
                 </p>
                 <span className="mt-auto text-[10px] font-bold text-indigo-300 bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-500/30">
@@ -701,10 +701,10 @@ export default function OperatorProjectorPage() {
                     <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-pink-600/20 border border-pink-500/30 flex items-center justify-center text-pink-400 mb-2 sm:mb-3 shadow-md">
                       <Tag className="w-5 h-5 sm:w-6 sm:h-6" />
                     </div>
-                    <h3 className="text-sm sm:text-base font-black text-white uppercase mb-1 truncate max-w-full">
+                    <h3 className="text-sm sm:text-base font-black text-white uppercase mb-1 w-full truncate">
                       {cat.name}
                     </h3>
-                    <p className="text-[10px] text-slate-400 mb-3 line-clamp-1">
+                    <p className="text-[10px] text-slate-400 mb-3 truncate w-full">
                       {cat.description || 'Kategori Soal Panggung'}
                     </p>
                     <span className="mt-auto text-[10px] font-bold text-pink-300 bg-pink-500/20 px-3 py-1 rounded-full border border-pink-500/30">
@@ -720,6 +720,7 @@ export default function OperatorProjectorPage() {
         {/* TAMPILAN 4: PAPAN KOTAK BLINK BOX (Sesuai Jenis Permainan & Kategori yang Dipilih) */}
         {!['waiting', 'type_select'].includes(session?.status || '') &&
           !session?.status?.startsWith('category_') &&
+          session?.status !== 'category_select' &&
           !session?.current_question_id && (
             <div className="max-w-5xl w-full flex flex-col items-center justify-between space-y-4 sm:space-y-5 animate-in fade-in duration-500 max-h-[85vh]">
               {/* Header Papan Kotak */}
@@ -836,7 +837,7 @@ export default function OperatorProjectorPage() {
             </div>
           )}
 
-        {/* TAMPILAN 4: SOAL AKTIF DI PANGGUNG */}
+        {/* TAMPILAN 5: SOAL AKTIF DI PANGGUNG */}
         {session?.current_question_id && (
           <div className="w-full flex-1 flex flex-col justify-between space-y-6 animate-in fade-in duration-300">
             {/* Header Soal & Countdown */}
