@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { supabase, GameSession, Question, Team, parseQuestionMeta, parseSessionMeta } from '@/lib/supabase';
 import CircularTimer from '@/components/CircularTimer';
@@ -94,8 +94,8 @@ export default function OperatorProjectorPage() {
     }
   }, [session?.room_code]);
 
-  // Fetch initial data (session, questions, teams) dengan dukungan Multi-Room
-  const fetchInitialData = async () => {
+  // Fetch initial data dengan dukungan Paket Soal per Room
+  const fetchInitialData = useCallback(async () => {
     try {
       const roomFromUrl =
         typeof window !== 'undefined'
@@ -114,7 +114,6 @@ export default function OperatorProjectorPage() {
 
       let { data: sessionData } = await sessionQuery.single();
 
-      // Fallback jika kode ruangan dari URL/storage tidak ditemukan
       if (!sessionData && targetRoom) {
         const { data: fallbackData } = await supabase
           .from('game_sessions')
@@ -133,10 +132,43 @@ export default function OperatorProjectorPage() {
           localStorage.setItem('active_room_code', sessionData.room_code);
         }
 
-        // Load opened boxes untuk sesi ruangan ini
+        // 1. Ambil soal paket khusus babak aktif room ini dari session_questions
+        const currentRound = sessionData.active_round || 'Babak 1';
+        const { data: sqData } = await supabase
+          .from('session_questions')
+          .select('*, question:questions(*)')
+          .eq('session_id', sessionData.id)
+          .eq('round_name', currentRound)
+          .order('box_number', { ascending: true, nullsFirst: false });
+
+        if (sqData && sqData.length > 0) {
+          const openedFromDb = sqData.filter((s) => s.is_opened).map((s) => s.question_id);
+          setOpenedBoxIds((prev) => Array.from(new Set([...prev, ...openedFromDb])));
+
+          const parsed = sqData
+            .filter((s) => s.question)
+            .map((s) => ({
+              ...parseQuestionMeta(s.question!),
+              box_number: s.box_number ?? null,
+              is_opened: s.is_opened,
+            }));
+          setQuestionsList(parsed);
+        } else {
+          // Fallback ke tabel questions umum jika babak ini belum diisi soal
+          const { data: qDataList } = await supabase
+            .from('questions')
+            .select('*')
+            .order('created_at', { ascending: true });
+          if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
+        }
+
+        // Load opened boxes untuk sesi ruangan ini dari storage
         try {
           const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
-          if (saved) setOpenedBoxIds(JSON.parse(saved));
+          if (saved) {
+            const parsedSaved = JSON.parse(saved);
+            setOpenedBoxIds((prev) => Array.from(new Set([...prev, ...parsedSaved])));
+          }
         } catch {}
 
         // 2. Fetch Teams untuk sesi ruangan ini
@@ -148,26 +180,19 @@ export default function OperatorProjectorPage() {
         if (teamsData) setTeams(teamsData);
       }
 
-      // 3. Fetch Questions
-      const { data: qDataList } = await supabase
-        .from('questions')
-        .select('*')
-        .order('created_at', { ascending: true });
-      if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
-
-      // 4. Fetch Categories
+      // 3. Fetch Categories
       const { data: catList } = await supabase.from('categories').select('*').order('name');
       if (catList) setCategories(catList);
     } catch {
       // Quiet fail
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchInitialData();
-  }, []);
+  }, [fetchInitialData]);
 
-  // Sync openedBoxIds from localStorage and whenever a question is activated
+  // Sync openedBoxIds whenever a question is activated
   useEffect(() => {
     if (!session?.id || !session?.current_question_id) return;
     setOpenedBoxIds((prev) => {
@@ -206,14 +231,25 @@ export default function OperatorProjectorPage() {
         (payload) => {
           const newSession = payload.new as GameSession;
           if (newSession) {
-            // Sound effect ketika kunci jawaban dibuka
             if (newSession.is_answer_revealed && !prevRevealedRef.current) {
               sounds.playCorrect();
             }
             prevRevealedRef.current = newSession.is_answer_revealed;
 
+            // Jika babak diganti admin, refresh data
+            if (newSession.active_round !== session.active_round) {
+              fetchInitialData();
+            }
+
             setSession(newSession);
           }
+        }
+      )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'session_questions', filter: `session_id=eq.${session.id}` },
+        () => {
+          fetchInitialData();
         }
       )
       .on(
@@ -226,17 +262,6 @@ export default function OperatorProjectorPage() {
             .eq('session_id', session.id)
             .order('score', { ascending: false });
           if (teamsData) setTeams(teamsData);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'questions' },
-        async () => {
-          const { data: qDataList } = await supabase
-            .from('questions')
-            .select('*')
-            .order('created_at', { ascending: true });
-          if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
         }
       )
       .on(
@@ -265,7 +290,7 @@ export default function OperatorProjectorPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.id]);
+  }, [session?.id, session?.active_round, fetchInitialData]);
 
   // Safety Auto-Sync Polling setiap 2.5 detik
   useEffect(() => {
@@ -285,10 +310,14 @@ export default function OperatorProjectorPage() {
             latestSession.is_answer_revealed !== session.is_answer_revealed ||
             latestSession.is_timer_running !== session.is_timer_running ||
             latestSession.status !== session.status ||
-            latestSession.title !== session.title
+            latestSession.title !== session.title ||
+            latestSession.active_round !== session.active_round
           ) {
             if (latestSession.is_answer_revealed && !session.is_answer_revealed) {
               sounds.playCorrect();
+            }
+            if (latestSession.active_round !== session.active_round) {
+              fetchInitialData();
             }
             setSession(latestSession);
           }
@@ -299,9 +328,18 @@ export default function OperatorProjectorPage() {
     }, 2500);
 
     return () => clearInterval(interval);
-  }, [session?.id, session?.current_question_id, session?.is_answer_revealed, session?.is_timer_running, session?.status, session?.title]);
+  }, [
+    session?.id,
+    session?.current_question_id,
+    session?.is_answer_revealed,
+    session?.is_timer_running,
+    session?.status,
+    session?.title,
+    session?.active_round,
+    fetchInitialData
+  ]);
 
-  // SYNCHRONIZED COUNTDOWN TIMER (Presisi tinggi berbasis Server Timestamp)
+  // Countdown Timer
   useEffect(() => {
     if (!session?.is_timer_running || !session?.updated_at) {
       if (session) {
@@ -335,12 +373,12 @@ export default function OperatorProjectorPage() {
     return () => clearInterval(timerInterval);
   }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
 
-  // Cari Soal Aktif dari daftar pertanyaan
+  // Cari Soal Aktif
   const currentQuestion = session?.current_question_id
     ? questionsList.find((q) => q.id === session.current_question_id) || null
     : null;
 
-  // Tentukan jenis permainan / tipe soal yang aktif (default pilihan_ganda)
+  // Tipe soal aktif
   let activeGameType: 'pilihan_ganda' | 'benar_salah' | 'essay' = 'pilihan_ganda';
   if (session?.status?.includes('benar_salah')) {
     activeGameType = 'benar_salah';
@@ -350,20 +388,20 @@ export default function OperatorProjectorPage() {
     activeGameType = 'pilihan_ganda';
   }
 
-  // Hitung jumlah kotak, judul panggung, dan kategori aktif dari metadata sesi
+  // Metadata Sesi
   const { cleanTitle, boxCount: totalBoxes, activeCategoryId } = parseSessionMeta(session);
 
-  // Cari kategori aktif
+  // Kategori aktif
   const activeCategory = activeCategoryId ? categories.find((c) => c.id === activeCategoryId) : null;
 
-  // Filter daftar soal sesuai jenis permainan dan kategori aktif
+  // Filter daftar soal sesuai jenis permainan & kategori
   const filteredQuestions = questionsList.filter((q) => {
     const matchType = q.type === activeGameType;
     const matchCat = !activeCategoryId || activeCategoryId === 'all' || q.category_id === activeCategoryId;
     return matchType && matchCat;
   });
 
-  // Lock body scroll agar layar proyektor fixed tanpa scrollbar
+  // Lock body scroll
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     document.documentElement.style.overflow = 'hidden';
@@ -386,13 +424,15 @@ export default function OperatorProjectorPage() {
     setAudioUnlocked(true);
   };
 
+  const activeRoundName = session?.active_round || 'Babak 1';
+
   return (
     <main className="h-screen max-h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col p-4 sm:p-5 select-none relative">
       {/* Background glow effects */}
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
 
-      {/* FLOATING RESTORE HEADER BUTTON (SAAT HEADER DITUTUP AGAR PROYEKTOR BERSIH) */}
+      {/* FLOATING RESTORE HEADER BUTTON */}
       {isHeaderCollapsed && (
         <div className="fixed top-3 right-4 z-50 flex items-center gap-2 animate-in fade-in">
           <button
@@ -409,7 +449,7 @@ export default function OperatorProjectorPage() {
         </div>
       )}
 
-      {/* TOP BAR: Room info, Judul Dinamis, Controls & Live Status */}
+      {/* TOP BAR */}
       {!isHeaderCollapsed && (
         <header className="flex items-center justify-between pb-3 border-b border-slate-800/80 z-20 shrink-0 animate-in slide-in-from-top-2">
           <div className="flex items-center gap-4">
@@ -420,7 +460,7 @@ export default function OperatorProjectorPage() {
               <h1 className="text-xl font-black tracking-wide text-white uppercase flex items-center gap-2">
                 <span>{cleanTitle}</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-widest">
-                  STAGE LIVE
+                  {activeRoundName}
                 </span>
               </h1>
               <div className="flex items-center gap-2 mt-0.5">
@@ -433,7 +473,6 @@ export default function OperatorProjectorPage() {
           </div>
 
           <div className="flex items-center gap-2.5">
-            {/* Unlock Audio Button */}
             {!audioUnlocked && (
               <button
                 onClick={unlockAudio}
@@ -444,7 +483,6 @@ export default function OperatorProjectorPage() {
               </button>
             )}
 
-            {/* QR Code toggle */}
             <button
               onClick={() => setShowQrModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs font-semibold hover:border-slate-700 transition-all"
@@ -453,7 +491,6 @@ export default function OperatorProjectorPage() {
               <span>QR Masuk</span>
             </button>
 
-            {/* Fullscreen Button */}
             <button
               onClick={toggleFullscreen}
               className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white hover:border-slate-700 transition-all"
@@ -462,7 +499,6 @@ export default function OperatorProjectorPage() {
               <Maximize className="w-4 h-4" />
             </button>
 
-            {/* Connection Status */}
             <div
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
                 isConnected
@@ -474,11 +510,10 @@ export default function OperatorProjectorPage() {
               <span>{isConnected ? 'Realtime Live' : 'Menghubungkan...'}</span>
             </div>
 
-            {/* Tombol Tutup Header (Agar Proyektor Bersih) */}
             <button
               onClick={() => setIsHeaderCollapsed(true)}
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 hover:border-slate-700 text-slate-400 hover:text-white text-xs font-semibold transition-all shadow-sm"
-              title="Sembunyikan Header agar layar proyektor bersih (Tekan tombol 'H' di keyboard)"
+              title="Sembunyikan Header (Tekan tombol 'H' di keyboard)"
             >
               <ChevronUp className="w-4 h-4 text-purple-400" />
               <span className="hidden sm:inline text-[11px]">Tutup Header</span>
@@ -487,7 +522,7 @@ export default function OperatorProjectorPage() {
         </header>
       )}
 
-      {/* FLOATING LEADERBOARD BUTTON (AUTO-FADE SAAT MOUSE DIAM) */}
+      {/* FLOATING LEADERBOARD BUTTON */}
       <div
         className={`fixed bottom-6 right-6 z-50 transition-opacity duration-700 ${
           isIdle ? 'opacity-20 hover:opacity-100' : 'opacity-100'
@@ -502,7 +537,7 @@ export default function OperatorProjectorPage() {
         </button>
       </div>
 
-      {/* DRAWER SLIDE-IN LEADERBOARD */}
+      {/* DRAWER LEADERBOARD */}
       {isLeaderboardOpen && (
         <div className="fixed inset-y-0 right-0 w-80 md:w-96 bg-slate-950/95 border-l border-slate-800 p-6 z-40 backdrop-blur-xl shadow-2xl flex flex-col justify-between animate-in slide-in-from-right duration-300">
           <div className="flex items-center justify-between pb-4 border-b border-slate-800 mb-4">
@@ -527,7 +562,7 @@ export default function OperatorProjectorPage() {
 
       {/* MAIN STAGE CONTENT AREA */}
       <div className="flex-1 flex flex-col justify-center items-center pt-2 sm:pt-4 z-10 min-h-0 relative w-full">
-        {/* TAMPILAN 1: DASHBOARD SAMBUTAN ARENA (Ketika status === 'waiting') */}
+        {/* TAMPILAN 1: SAMBUTAN */}
         {session?.status === 'waiting' && !session?.current_question_id && (
           <div className="max-w-5xl w-full text-center py-10 px-8 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
             <div className="w-20 h-20 rounded-3xl bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-white mb-5 shadow-xl shadow-purple-600/30">
@@ -535,7 +570,7 @@ export default function OperatorProjectorPage() {
             </div>
 
             <span className="text-xs uppercase font-extrabold tracking-widest text-purple-400 bg-purple-500/10 px-4 py-1.5 rounded-full border border-purple-500/20 mb-3">
-              Selamat Datang di Arena
+              Selamat Datang di Arena • {activeRoundName}
             </span>
 
             <h2 className="text-4xl md:text-6xl font-black text-white tracking-tight uppercase mb-4 drop-shadow-md">
@@ -546,13 +581,11 @@ export default function OperatorProjectorPage() {
               Siapkan strategi regu Anda! Jawab pertanyaan dengan cepat, kumpulkan poin maksimal, dan rebut gelar juara panggung!
             </p>
 
-            {/* Status Panggung */}
             <div className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-blue-500/10 border border-blue-500/30 text-blue-400 text-xs font-bold uppercase tracking-wider mb-8 animate-pulse">
               <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
               <span>Menunggu Operator Membuka Babak Kuis...</span>
             </div>
 
-            {/* PREVIEW KLASEMEN REGUS DI PANGGUNG SAMBUTAN */}
             {teams.length > 0 && (
               <div className="w-full max-w-3xl border-t border-slate-800/80 pt-6 mt-2">
                 <div className="flex items-center justify-center gap-2 mb-4">
@@ -569,10 +602,7 @@ export default function OperatorProjectorPage() {
                       className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800 flex flex-col items-center justify-center gap-1 shadow"
                     >
                       <div className="flex items-center gap-1.5">
-                        <span
-                          className="w-2.5 h-2.5 rounded-full"
-                          style={{ backgroundColor: t.color }}
-                        />
+                        <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.color }} />
                         <span className="text-xs font-black text-white truncate max-w-[100px]">
                           {t.name}
                         </span>
@@ -588,12 +618,12 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 2: PILIH JENIS PERMAINAN / FORMAT TANTANGAN (Ketika status === 'type_select') */}
+        {/* TAMPILAN 2: PILIHAN FORMAT */}
         {session?.status === 'type_select' && !session?.current_question_id && (
           <div className="max-w-5xl w-full flex flex-col items-center justify-center text-center space-y-4 sm:space-y-6 animate-in fade-in duration-500 max-h-[82vh]">
             <div className="space-y-1.5 shrink-0">
               <span className="text-xs uppercase font-extrabold tracking-widest text-purple-400 bg-purple-500/10 px-4 py-1 rounded-full border border-purple-500/20 inline-block shadow-sm">
-                TAHAPAN 1 • FORMAT TANTANGAN
+                TAHAPAN 1 • FORMAT TANTANGAN ({activeRoundName})
               </span>
               <h2 className="text-2xl sm:text-4xl font-black text-white uppercase tracking-tight drop-shadow-md">
                 Format Tantangan Kuis
@@ -604,7 +634,6 @@ export default function OperatorProjectorPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 sm:gap-6 w-full pt-1">
-              {/* Card 1: Pilihan Ganda */}
               <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/80 border-2 border-blue-500/40 shadow-xl shadow-blue-500/10 flex flex-col items-center text-center relative overflow-hidden group">
                 <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-cyan-600 flex items-center justify-center text-white mb-3 sm:mb-4 shadow-lg shadow-blue-600/30">
                   <BookOpen className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -620,7 +649,6 @@ export default function OperatorProjectorPage() {
                 </span>
               </div>
 
-              {/* Card 2: Benar / Salah */}
               <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/80 border-2 border-amber-500/40 shadow-xl shadow-amber-500/10 flex flex-col items-center text-center relative overflow-hidden group">
                 <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-amber-600 to-orange-600 flex items-center justify-center text-white mb-3 sm:mb-4 shadow-lg shadow-amber-600/30">
                   <HelpCircle className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -636,7 +664,6 @@ export default function OperatorProjectorPage() {
                 </span>
               </div>
 
-              {/* Card 3: Essay / Rebutan */}
               <div className="p-5 sm:p-6 rounded-3xl bg-slate-900/80 border-2 border-purple-500/40 shadow-xl shadow-purple-500/10 flex flex-col items-center text-center relative overflow-hidden group">
                 <div className="w-12 h-12 sm:w-14 sm:h-14 rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-600 flex items-center justify-center text-white mb-3 sm:mb-4 shadow-lg shadow-purple-600/30">
                   <Layers className="w-6 h-6 sm:w-7 sm:h-7" />
@@ -655,7 +682,7 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 3: PILIH KATEGORI SOAL DI LAYAR PROYEKTOR (SELARAS DENGAN OPERATOR) */}
+        {/* TAMPILAN 3: PILIHAN KATEGORI */}
         {(session?.status?.startsWith('category_') || session?.status === 'category_select') && !session?.current_question_id && (
           <div className="max-w-5xl w-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 animate-in fade-in duration-500 flex-1 min-h-0">
             <div className="space-y-1 shrink-0">
@@ -670,9 +697,7 @@ export default function OperatorProjectorPage() {
               </p>
             </div>
 
-            {/* Grid Kartu Kategori */}
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4 w-full pt-1 max-h-[62vh] overflow-y-auto pr-1 pb-2">
-              {/* Kartu Semua Kategori (Campuran) */}
               <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/90 border-2 border-indigo-500/50 shadow-xl flex flex-col justify-between text-left transition-all hover:border-indigo-400">
                 <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-2 sm:mb-3 shadow-md shrink-0">
                   <LayoutGrid className="w-5 h-5 sm:w-6 sm:h-6" />
@@ -687,7 +712,6 @@ export default function OperatorProjectorPage() {
                 </div>
               </div>
 
-              {/* Kartu Tiap Kategori */}
               {categories.map((cat) => {
                 const count = questionsList.filter(
                   (q) => q.type === activeGameType && q.category_id === cat.id
@@ -715,17 +739,16 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 4: PAPAN KOTAK BLINK BOX (Sesuai Jenis Permainan & Kategori yang Dipilih) */}
+        {/* TAMPILAN 4: PAPAN KOTAK */}
         {!['waiting', 'type_select'].includes(session?.status || '') &&
           !session?.status?.startsWith('category_') &&
           session?.status !== 'category_select' &&
           !session?.current_question_id && (
             <div className="max-w-5xl w-full flex flex-col items-center justify-between space-y-4 sm:space-y-5 animate-in fade-in duration-500 max-h-[85vh]">
-              {/* Header Papan Kotak */}
               <div className="text-center space-y-1 shrink-0">
                 <div className="flex items-center justify-center gap-2 flex-wrap">
                   <span className="text-[11px] uppercase font-extrabold tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-0.5 rounded-full border border-indigo-500/20 shadow-sm">
-                    BABAK: {activeGameType === 'pilihan_ganda' ? 'PILIHAN GANDA' : activeGameType === 'benar_salah' ? 'BENAR ATAU SALAH' : 'REBUTAN / ESSAY'}
+                    {activeRoundName} • {activeGameType === 'pilihan_ganda' ? 'PILIHAN GANDA' : activeGameType === 'benar_salah' ? 'BENAR ATAU SALAH' : 'REBUTAN / ESSAY'}
                   </span>
                   {activeCategory && (
                     <span className="text-[11px] uppercase font-extrabold tracking-widest text-pink-400 bg-pink-500/10 px-3 py-0.5 rounded-full border border-pink-500/20 flex items-center gap-1 shadow-sm">
@@ -742,7 +765,6 @@ export default function OperatorProjectorPage() {
                 </p>
               </div>
 
-              {/* Grid Kotak Blink Box (Bisa Custom Jumlah Kotak) */}
               <div
                 className={`w-full grid gap-3 sm:gap-4 ${
                   totalBoxes <= 3
@@ -761,7 +783,7 @@ export default function OperatorProjectorPage() {
                 {Array.from({ length: totalBoxes }).map((_, idx) => {
                   const boxNum = idx + 1;
                   const matchedQ = filteredQuestions.find((q) => q.box_number === boxNum) || filteredQuestions[idx];
-                  const isOpened = matchedQ && openedBoxIds.includes(matchedQ.id);
+                  const isOpened = (matchedQ && openedBoxIds.includes(matchedQ.id)) || matchedQ?.is_opened;
                   const boxCatName = categories.find((c) => c.id === matchedQ?.category_id)?.name;
 
                   return (
@@ -775,17 +797,14 @@ export default function OperatorProjectorPage() {
                           : 'bg-slate-950/40 border-slate-800 text-slate-700'
                       }`}
                     >
-                      {/* Glowing neon aura */}
                       {!isOpened && matchedQ && (
                         <span className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/25 rounded-full blur-2xl animate-pulse" />
                       )}
 
-                      {/* Box Number */}
                       <span className="text-3xl sm:text-4xl font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300">
                         #{boxNum}
                       </span>
 
-                      {/* Category badge */}
                       {boxCatName && (
                         <span className="text-[9px] text-pink-300 font-bold uppercase tracking-wider truncate max-w-[120px] px-2 py-0.5 rounded-full bg-pink-950/70 border border-pink-700/50 flex items-center gap-1 shadow-sm">
                           <Tag className="w-2.5 h-2.5 text-pink-400 shrink-0" />
@@ -793,7 +812,6 @@ export default function OperatorProjectorPage() {
                         </span>
                       )}
 
-                      {/* Status Badge */}
                       <span
                         className={`text-[10px] sm:text-[11px] uppercase tracking-widest font-black px-2.5 py-0.5 rounded-full border ${
                           isOpened
@@ -806,7 +824,6 @@ export default function OperatorProjectorPage() {
                         {isOpened ? '✓ Sudah Dibuka' : matchedQ ? '★ Tersedia' : 'Kosong'}
                       </span>
 
-                      {/* Point Hint */}
                       {!isOpened && matchedQ && (
                         <span className="text-[9px] font-bold text-indigo-300/80 uppercase tracking-wider">
                           +{matchedQ.points || 100} Poin
@@ -817,7 +834,6 @@ export default function OperatorProjectorPage() {
                 })}
               </div>
 
-              {/* Live Teams Bar di Bawah Kotak */}
               {teams.length > 0 && (
                 <div className="w-full border-t border-slate-800/80 pt-2 flex flex-wrap items-center justify-center gap-2 sm:gap-3 shrink-0">
                   {teams.map((t) => (
@@ -835,15 +851,14 @@ export default function OperatorProjectorPage() {
             </div>
           )}
 
-        {/* TAMPILAN 5: SOAL AKTIF DI PANGGUNG */}
+        {/* TAMPILAN 5: SOAL AKTIF */}
         {session?.current_question_id && (
           <div className="w-full flex-1 flex flex-col justify-between space-y-6 animate-in fade-in duration-300">
-            {/* Header Soal & Countdown */}
             <div className="flex items-center justify-between bg-slate-900/60 border border-slate-800 rounded-3xl p-6 backdrop-blur-md">
               <div>
                 <div className="flex items-center gap-2 mb-1">
                   <span className="text-xs uppercase font-extrabold tracking-widest text-slate-400">
-                    Panggung Perlombaan
+                    Panggung Perlombaan • {activeRoundName}
                   </span>
                   {(() => {
                     const currentCategoryName = categories.find((c) => c.id === currentQuestion?.category_id)?.name;
@@ -860,7 +875,6 @@ export default function OperatorProjectorPage() {
                 </h2>
               </div>
 
-              {/* Circular Timer Display */}
               <CircularTimer
                 duration={currentQuestion?.timer_duration || 30}
                 remaining={remainingTime}
@@ -868,7 +882,6 @@ export default function OperatorProjectorPage() {
               />
             </div>
 
-            {/* Dynamic Question Renderer */}
             <QuestionDisplay
               question={currentQuestion}
               isAnswerRevealed={session?.is_answer_revealed ?? false}
@@ -878,7 +891,7 @@ export default function OperatorProjectorPage() {
         )}
       </div>
 
-      {/* QR CODE MODAL OVERLAY */}
+      {/* QR MODAL */}
       {showQrModal && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-8 max-w-sm w-full text-center relative shadow-2xl">
@@ -905,7 +918,7 @@ export default function OperatorProjectorPage() {
         </div>
       )}
 
-      {/* VICTORY PODIUM OVERLAY (Jika status session selesai) */}
+      {/* VICTORY PODIUM */}
       {session?.status === 'finished' && (
         <VictoryPodium
           teams={teams}
