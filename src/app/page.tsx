@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { supabase, GameSession, Team } from '@/lib/supabase';
+import { supabase, GameSession, Team, parseSessionMeta } from '@/lib/supabase';
 import {
   Tv,
   MonitorPlay,
@@ -136,9 +136,19 @@ export default function AdminHubPage() {
               <span>{isConnected ? 'Realtime Aktif' : 'Menghubungkan...'}</span>
             </div>
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white mt-2 uppercase">
-            {session?.title || 'Kuis Battle Panggung'}
-          </h1>
+          {(() => {
+            const { cleanTitle, boxCount } = parseSessionMeta(session);
+            return (
+              <div className="flex flex-wrap items-center gap-2.5 mt-2">
+                <h1 className="text-2xl sm:text-3xl font-black tracking-tight text-white uppercase">
+                  {cleanTitle}
+                </h1>
+                <span className="px-2.5 py-1 rounded-xl bg-blue-500/20 text-blue-300 border border-blue-500/30 text-xs font-mono font-bold">
+                  {boxCount} Kotak
+                </span>
+              </div>
+            );
+          })()}
           <p className="text-xs text-slate-400 mt-1">
             Pusat distribusi QR Code perangkat panggung & manajemen sesi perlombaan
           </p>
