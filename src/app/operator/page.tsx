@@ -526,7 +526,7 @@ export default function OperatorProjectorPage() {
       )}
 
       {/* MAIN STAGE CONTENT AREA */}
-      <div className="flex-1 flex flex-col justify-center items-center pt-4 z-10 min-h-0 relative w-full">
+      <div className="flex-1 flex flex-col justify-center items-center pt-2 sm:pt-4 z-10 min-h-0 relative w-full">
         {/* TAMPILAN 1: DASHBOARD SAMBUTAN ARENA (Ketika status === 'waiting') */}
         {session?.status === 'waiting' && !session?.current_question_id && (
           <div className="max-w-5xl w-full text-center py-10 px-8 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
@@ -655,10 +655,10 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 3: PILIH KATEGORI SOAL DI LAYAR PROYEKTOR */}
+        {/* TAMPILAN 3: PILIH KATEGORI SOAL DI LAYAR PROYEKTOR (JUDUL SELALU MUNCUL TEBAL & JELAS) */}
         {(session?.status?.startsWith('category_') || session?.status === 'category_select') && !session?.current_question_id && (
-          <div className="max-w-5xl w-full flex flex-col items-center justify-center text-center space-y-4 sm:space-y-6 animate-in fade-in duration-500 max-h-[82vh]">
-            <div className="space-y-1.5 shrink-0">
+          <div className="max-w-5xl w-full flex flex-col items-center justify-center text-center space-y-3 sm:space-y-4 animate-in fade-in duration-500 flex-1 min-h-0">
+            <div className="space-y-1 shrink-0">
               <span className="text-xs uppercase font-extrabold tracking-widest text-pink-400 bg-pink-500/10 px-4 py-1 rounded-full border border-pink-500/20 inline-block shadow-sm">
                 TAHAPAN 2 • PILIH KATEGORI ({activeGameType === 'pilihan_ganda' ? 'PILIHAN GANDA' : activeGameType === 'benar_salah' ? 'BENAR ATAU SALAH' : 'REBUTAN / ESSAY'})
               </span>
@@ -671,24 +671,21 @@ export default function OperatorProjectorPage() {
             </div>
 
             {/* Grid Kartu Kategori */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4 w-full pt-1 max-h-[55vh] overflow-y-auto pr-1">
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4 w-full pt-1 max-h-[62vh] overflow-y-auto pr-1 pb-2">
               {/* Kartu Semua Kategori (Campuran) */}
-              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-950/80 via-slate-900 to-purple-950/80 border-2 border-indigo-500/40 shadow-xl flex flex-col items-center text-center relative overflow-hidden group hover:border-indigo-400 transition-all">
-                <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-2 sm:mb-3 shadow-md">
-                  <LayoutGrid className="w-5 h-5 sm:w-6 sm:h-6" />
+              <div className="p-3 sm:p-4 rounded-2xl bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/90 border-2 border-indigo-500/50 shadow-xl flex flex-col items-center justify-center text-center min-h-[110px] sm:min-h-[130px] transition-all hover:border-indigo-400 group">
+                <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-1.5 shrink-0 shadow-md">
+                  <LayoutGrid className="w-4 h-4 sm:w-5 sm:h-5" />
                 </div>
-                <h3 className="text-sm sm:text-base font-black text-white uppercase mb-1 w-full truncate">
+                <h3 className="text-xs sm:text-sm md:text-base font-black text-white uppercase tracking-wide shrink-0 my-0.5 w-full truncate px-1">
                   Semua Kategori
                 </h3>
-                <p className="text-[10px] text-slate-400 mb-3 truncate w-full">
-                  Campuran dari semua topik
-                </p>
-                <span className="mt-auto text-[10px] font-bold text-indigo-300 bg-indigo-500/20 px-3 py-1 rounded-full border border-indigo-500/30">
+                <span className="mt-1 text-[10px] sm:text-xs font-bold text-indigo-300 bg-indigo-500/20 px-2.5 py-0.5 rounded-full border border-indigo-500/30 shrink-0">
                   {questionsList.filter((q) => q.type === activeGameType).length} Soal Tersedia
                 </span>
               </div>
 
-              {/* Kartu Tiap Kategori */}
+              {/* Kartu Tiap Kategori (Judul cat.name selalu tampil tebal & tidak terpotong) */}
               {categories.map((cat) => {
                 const count = questionsList.filter(
                   (q) => q.type === activeGameType && q.category_id === cat.id
@@ -696,18 +693,15 @@ export default function OperatorProjectorPage() {
                 return (
                   <div
                     key={cat.id}
-                    className="p-4 sm:p-5 rounded-2xl bg-slate-900/80 border-2 border-pink-500/30 shadow-xl flex flex-col items-center text-center relative overflow-hidden group hover:border-pink-400 transition-all"
+                    className="p-3 sm:p-4 rounded-2xl bg-slate-900/90 border-2 border-pink-500/40 shadow-xl flex flex-col items-center justify-center text-center min-h-[110px] sm:min-h-[130px] transition-all hover:border-pink-400 group"
                   >
-                    <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-pink-600/20 border border-pink-500/30 flex items-center justify-center text-pink-400 mb-2 sm:mb-3 shadow-md">
-                      <Tag className="w-5 h-5 sm:w-6 sm:h-6" />
+                    <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-pink-600/25 border border-pink-500/40 flex items-center justify-center text-pink-400 mb-1.5 shrink-0 shadow-md">
+                      <Tag className="w-4 h-4 sm:w-5 sm:h-5" />
                     </div>
-                    <h3 className="text-sm sm:text-base font-black text-white uppercase mb-1 w-full truncate">
+                    <h3 className="text-xs sm:text-sm md:text-base font-black text-white uppercase tracking-wide shrink-0 my-0.5 w-full truncate px-1">
                       {cat.name}
                     </h3>
-                    <p className="text-[10px] text-slate-400 mb-3 truncate w-full">
-                      {cat.description || 'Kategori Soal Panggung'}
-                    </p>
-                    <span className="mt-auto text-[10px] font-bold text-pink-300 bg-pink-500/20 px-3 py-1 rounded-full border border-pink-500/30">
+                    <span className="mt-1 text-[10px] sm:text-xs font-bold text-pink-300 bg-pink-500/20 px-2.5 py-0.5 rounded-full border border-pink-500/30 shrink-0">
                       {count} Soal Tersedia
                     </span>
                   </div>
