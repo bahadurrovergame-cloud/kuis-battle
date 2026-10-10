@@ -35,7 +35,10 @@ import {
   Search,
   LayoutGrid,
   Tag,
-  FolderPlus
+  FolderPlus,
+  CheckSquare,
+  Check,
+  ListFilter
 } from 'lucide-react';
 
 interface Category {
@@ -58,6 +61,8 @@ export default function AdminDashboardPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedTypeTab, setSelectedTypeTab] = useState<'all' | 'pilihan_ganda' | 'benar_salah' | 'essay'>('all');
+  const [selectedQuestionIds, setSelectedQuestionIds] = useState<string[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [packageFilter, setPackageFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -67,7 +72,8 @@ export default function AdminDashboardPage() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [selectedCategory, searchQuery, packageFilter, pageSize]);
+    setSelectedQuestionIds([]);
+  }, [selectedCategory, selectedTypeTab, searchQuery, packageFilter, pageSize]);
 
   // Category Management States
   const [isCatModalOpen, setIsCatModalOpen] = useState(false);
@@ -466,11 +472,15 @@ export default function AdminDashboardPage() {
   };
 
   // Reset form soal
-  const resetFormSoal = () => {
+  const resetFormSoal = (defaultType: QuestionType = 'pilihan_ganda') => {
     setEditingId(null);
+    let defaultAns = 'A';
+    if (defaultType === 'benar_salah') defaultAns = 'true';
+    if (defaultType === 'essay') defaultAns = '';
+
     setFormData({
-      category_id: categories[0]?.id || '',
-      type: 'pilihan_ganda',
+      category_id: selectedCategory !== 'all' ? selectedCategory : (categories[0]?.id || ''),
+      type: defaultType,
       question_text: '',
       options: [
         { key: 'A', text: '' },
@@ -478,7 +488,7 @@ export default function AdminDashboardPage() {
         { key: 'C', text: '' },
         { key: 'D', text: '' },
       ],
-      correct_answer: 'A',
+      correct_answer: defaultAns,
       explanation: '',
       timer_duration: 30,
       points: 100,
@@ -487,8 +497,9 @@ export default function AdminDashboardPage() {
     });
   };
 
-  const handleOpenAddSoal = () => {
-    resetFormSoal();
+  const handleOpenAddSoal = (defaultType?: QuestionType) => {
+    const targetType = defaultType || (selectedTypeTab !== 'all' ? selectedTypeTab : 'pilihan_ganda');
+    resetFormSoal(targetType);
     setIsModalOpen(true);
   };
 
@@ -521,9 +532,81 @@ export default function AdminDashboardPage() {
     try {
       await supabase.from('questions').delete().eq('id', id);
       setQuestions(questions.filter((q) => q.id !== id));
+      setSelectedQuestionIds((prev) => prev.filter((item) => item !== id));
       setStatusMsg({ text: 'Soal berhasil dihapus', type: 'success' });
     } catch {
       setStatusMsg({ text: 'Gagal menghapus soal', type: 'error' });
+    }
+  };
+
+  // Hapus Massal Soal Terpilih (Bulk Delete)
+  const handleBatchDeleteSoal = async () => {
+    if (selectedQuestionIds.length === 0) return;
+    const count = selectedQuestionIds.length;
+    if (
+      !window.confirm(
+        `PERINGATAN: Apakah Anda yakin ingin menghapus ${count} soal yang diceklis sekaligus?\n\nTindakan ini permanen dan soal tidak dapat dipulihkan!`
+      )
+    ) {
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase
+        .from('questions')
+        .delete()
+        .in('id', selectedQuestionIds);
+
+      if (error) throw error;
+
+      setQuestions((prev) => prev.filter((q) => !selectedQuestionIds.includes(q.id)));
+      setSelectedQuestionIds([]);
+      setStatusMsg({
+        text: `Sukses! Sebanyak ${count} soal berhasil dihapus sekaligus.`,
+        type: 'success',
+      });
+    } catch (err: unknown) {
+      console.error('Batch delete error:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal menghapus soal massal: ${msg}`, type: 'error' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Ubah Kategori Massal Soal Terpilih (Bulk Assign Category)
+  const handleBatchMoveCategory = async (targetCatId: string) => {
+    if (selectedQuestionIds.length === 0) return;
+    setLoading(true);
+    try {
+      const newCatVal = targetCatId === 'none' ? null : targetCatId;
+      const { error } = await supabase
+        .from('questions')
+        .update({ category_id: newCatVal })
+        .in('id', selectedQuestionIds);
+
+      if (error) throw error;
+
+      setQuestions((prev) =>
+        prev.map((q) =>
+          selectedQuestionIds.includes(q.id) ? { ...q, category_id: newCatVal } : q
+        )
+      );
+
+      const targetCatName =
+        categories.find((c) => c.id === targetCatId)?.name || 'Tanpa Kategori';
+      setStatusMsg({
+        text: `Kategori untuk ${selectedQuestionIds.length} soal berhasil diubah ke "${targetCatName}"!`,
+        type: 'success',
+      });
+      setSelectedQuestionIds([]);
+    } catch (err: unknown) {
+      console.error('Batch move category error:', err);
+      const msg = err instanceof Error ? err.message : JSON.stringify(err);
+      setStatusMsg({ text: `Gagal mengubah kategori massal: ${msg}`, type: 'error' });
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -735,6 +818,63 @@ export default function AdminDashboardPage() {
     downloadAnchor.remove();
   };
 
+  // Counts per question type
+  const countPG = questions.filter((q) => q.type === 'pilihan_ganda').length;
+  const countBS = questions.filter((q) => q.type === 'benar_salah').length;
+  const countEssay = questions.filter((q) => q.type === 'essay').length;
+
+  // Filtered questions based on search, category, package, and type tab
+  const filteredQuestions = questions.filter((q) => {
+    const matchesSearch =
+      !searchQuery ||
+      q.question_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      q.correct_answer.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesCategory =
+      selectedCategory === 'all' || q.category_id === selectedCategory;
+    const matchesPackage =
+      packageFilter === 'all' || (q.package_name || 'Umum / Bebas') === packageFilter;
+    const matchesType =
+      selectedTypeTab === 'all' || q.type === selectedTypeTab;
+    return matchesSearch && matchesCategory && matchesPackage && matchesType;
+  });
+
+  const totalPages = Math.max(1, Math.ceil(filteredQuestions.length / pageSize));
+  const safePage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safePage - 1) * pageSize;
+  const paginatedQuestions = filteredQuestions.slice(startIndex, startIndex + pageSize);
+
+  const isCurrentPageAllSelected =
+    paginatedQuestions.length > 0 &&
+    paginatedQuestions.every((q) => selectedQuestionIds.includes(q.id));
+
+  const isCurrentPagePartiallySelected =
+    paginatedQuestions.some((q) => selectedQuestionIds.includes(q.id)) &&
+    !isCurrentPageAllSelected;
+
+  const handleToggleSelectPage = () => {
+    if (isCurrentPageAllSelected) {
+      const pageIdSet = new Set(paginatedQuestions.map((q) => q.id));
+      setSelectedQuestionIds((prev) => prev.filter((id) => !pageIdSet.has(id)));
+    } else {
+      const pageIds = paginatedQuestions.map((q) => q.id);
+      setSelectedQuestionIds((prev) => Array.from(new Set([...prev, ...pageIds])));
+    }
+  };
+
+  const handleSelectAllFiltered = () => {
+    setSelectedQuestionIds(filteredQuestions.map((q) => q.id));
+  };
+
+  const handleClearSelection = () => {
+    setSelectedQuestionIds([]);
+  };
+
+  const handleToggleSelectOne = (id: string) => {
+    setSelectedQuestionIds((prev) =>
+      prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
   if (!isAuthorized) {
     return (
       <main className="min-h-screen bg-slate-950 flex items-center justify-center">
@@ -921,8 +1061,134 @@ export default function AdminDashboardPage() {
             </button>
           </div>
 
-          {/* TOOLBAR FILTER & AKSI SOAL */}
-          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-4 rounded-2xl">
+          {/* SUB-TABS TIPE SOAL & TOMBOL CEPAT PER JENIS */}
+          <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-md">
+            {/* Tab pemisah tipe soal */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
+              <button
+                type="button"
+                onClick={() => setSelectedTypeTab('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                  selectedTypeTab === 'all'
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                    : 'bg-slate-950 text-slate-400 hover:text-white border border-slate-800'
+                }`}
+              >
+                <span>Semua Soal</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                    selectedTypeTab === 'all'
+                      ? 'bg-white/20 text-white font-black'
+                      : 'bg-slate-800 text-slate-400'
+                  }`}
+                >
+                  {questions.length}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTypeTab('pilihan_ganda')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                  selectedTypeTab === 'pilihan_ganda'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
+                    : 'bg-slate-950 text-blue-400 hover:text-blue-300 border border-slate-800'
+                }`}
+              >
+                <span>Pilihan Ganda</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                    selectedTypeTab === 'pilihan_ganda'
+                      ? 'bg-white/20 text-white font-black'
+                      : 'bg-blue-950/80 text-blue-400 border border-blue-800/40'
+                  }`}
+                >
+                  {countPG}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTypeTab('benar_salah')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                  selectedTypeTab === 'benar_salah'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/30'
+                    : 'bg-slate-950 text-emerald-400 hover:text-emerald-300 border border-slate-800'
+                }`}
+              >
+                <span>Benar / Salah</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                    selectedTypeTab === 'benar_salah'
+                      ? 'bg-white/20 text-white font-black'
+                      : 'bg-emerald-950/80 text-emerald-400 border border-emerald-800/40'
+                  }`}
+                >
+                  {countBS}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setSelectedTypeTab('essay')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-2 whitespace-nowrap ${
+                  selectedTypeTab === 'essay'
+                    ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
+                    : 'bg-slate-950 text-amber-400 hover:text-amber-300 border border-slate-800'
+                }`}
+              >
+                <span>Rebutan / Essay</span>
+                <span
+                  className={`px-1.5 py-0.5 rounded-md text-[10px] font-mono ${
+                    selectedTypeTab === 'essay'
+                      ? 'bg-white/20 text-white font-black'
+                      : 'bg-amber-950/80 text-amber-400 border border-amber-800/40'
+                  }`}
+                >
+                  {countEssay}
+                </span>
+              </button>
+            </div>
+
+            {/* Tombol cepat tambah per jenis */}
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider hidden lg:inline">
+                Tambah Cepat:
+              </span>
+              <button
+                type="button"
+                onClick={() => handleOpenAddSoal('pilihan_ganda')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-blue-600/20"
+                title="Tambah Soal Pilihan Ganda (Opsi A - D)"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Soal PG</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenAddSoal('benar_salah')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-emerald-600/20"
+                title="Tambah Soal Benar / Salah"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Soal Benar/Salah</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenAddSoal('essay')}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-amber-600/20"
+                title="Tambah Soal Rebutan / Essay (Tanya Jawab Lisan)"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ Soal Rebutan</span>
+              </button>
+            </div>
+          </div>
+
+          {/* TOOLBAR FILTER & AKSI LAINNYA */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-3.5 rounded-2xl">
             <div className="flex flex-wrap items-center gap-3 flex-1">
               {/* Search input */}
               <div className="relative min-w-[200px] flex-1 max-w-xs">
@@ -986,12 +1252,13 @@ export default function AdminDashboardPage() {
             <div className="flex flex-wrap items-center gap-2">
               {/* Batch Shuffle Button */}
               <button
+                type="button"
                 onClick={handleBatchShuffle}
                 className="flex items-center gap-1.5 px-3 py-2 bg-indigo-950/80 hover:bg-indigo-900 border border-indigo-700/60 text-indigo-300 rounded-xl text-xs font-bold transition-all"
                 title="Acak semua kunci jawaban Pilihan Ganda secara otomatis"
               >
                 <Shuffle className="w-3.5 h-3.5 text-indigo-400" />
-                <span>Acak Semua Kunci PG</span>
+                <span>Acak Kunci PG</span>
               </button>
 
               <label className="cursor-pointer flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all">
@@ -1001,6 +1268,7 @@ export default function AdminDashboardPage() {
               </label>
 
               <button
+                type="button"
                 onClick={handleExportJson}
                 className="flex items-center gap-1.5 px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-xl text-xs font-semibold transition-all"
               >
@@ -1009,7 +1277,8 @@ export default function AdminDashboardPage() {
               </button>
 
               <button
-                onClick={handleOpenAddSoal}
+                type="button"
+                onClick={() => handleOpenAddSoal()}
                 className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
               >
                 <Plus className="w-4 h-4" />
@@ -1018,13 +1287,106 @@ export default function AdminDashboardPage() {
             </div>
           </div>
 
+          {/* BULK ACTION BAR (MUNCUL JIKA ADA SOAL YANG DICEKLIS) */}
+          {selectedQuestionIds.length > 0 && (
+            <div className="bg-gradient-to-r from-purple-950/90 via-slate-900/90 to-rose-950/90 border-2 border-purple-500/70 p-3.5 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-2xl backdrop-blur-md animate-in fade-in">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-xl bg-purple-600 flex items-center justify-center font-mono font-black text-xs text-white shadow-md">
+                  {selectedQuestionIds.length}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-black text-white tracking-wide uppercase">
+                      {selectedQuestionIds.length} Soal Terpilih
+                    </span>
+                    <span className="text-[11px] text-purple-300">
+                      (dari {filteredQuestions.length} soal di daftar)
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-slate-400">
+                    Aksi massal untuk semua soal yang sudah diceklis
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2">
+                {selectedQuestionIds.length < filteredQuestions.length && (
+                  <button
+                    type="button"
+                    onClick={handleSelectAllFiltered}
+                    className="px-3 py-1.5 bg-purple-900/60 hover:bg-purple-800 text-purple-200 border border-purple-700/60 rounded-xl text-xs font-bold transition-all shadow-sm"
+                  >
+                    Ceklis Semua ({filteredQuestions.length} Soal)
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-700 rounded-xl text-xs font-semibold transition-all"
+                >
+                  Batalkan Ceklis
+                </button>
+
+                {/* Pindah Kategori Massal */}
+                <div className="flex items-center gap-1.5 bg-slate-950 border border-purple-500/50 rounded-xl px-2.5 py-1">
+                  <span className="text-[11px] font-bold text-slate-300">Pindah Kategori:</span>
+                  <select
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        handleBatchMoveCategory(e.target.value);
+                        e.target.value = '';
+                      }
+                    }}
+                    defaultValue=""
+                    className="bg-slate-900 text-xs font-bold text-emerald-300 border border-slate-700 rounded-lg px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-500"
+                  >
+                    <option value="" disabled>
+                      Pilih Target Kategori...
+                    </option>
+                    <option value="none">(Tanpa Kategori)</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* HAPUS MASSAL */}
+                <button
+                  type="button"
+                  onClick={handleBatchDeleteSoal}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black transition-all shadow-lg shadow-rose-600/40"
+                  title="Hapus semua soal yang terpilih sekaligus"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Hapus {selectedQuestionIds.length} Soal Sekaligus</span>
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* TABEL SOAL */}
           <div className="flex-1 bg-slate-900/80 border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-950 text-slate-400 uppercase tracking-wider text-[10px] border-b border-slate-800">
                   <tr>
-                    <th className="py-3 px-4">#</th>
+                    {/* MASTER CHECKBOX */}
+                    <th className="py-3 px-3 w-10 text-center">
+                      <input
+                        type="checkbox"
+                        checked={isCurrentPageAllSelected}
+                        ref={(el) => {
+                          if (el) el.indeterminate = isCurrentPagePartiallySelected;
+                        }}
+                        onChange={handleToggleSelectPage}
+                        className="w-4 h-4 rounded border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
+                        title="Pilih / Batalkan semua soal di halaman ini"
+                      />
+                    </th>
+                    <th className="py-3 px-3 w-10">#</th>
                     <th className="py-3 px-4">Kategori</th>
                     <th className="py-3 px-4">Slot Kotak (Panggung)</th>
                     <th className="py-3 px-4">Tipe</th>
@@ -1038,49 +1400,56 @@ export default function AdminDashboardPage() {
                 <tbody className="divide-y divide-slate-800/60">
                   {loading ? (
                     <tr>
-                      <td colSpan={9} className="text-center py-10 text-slate-500">
+                      <td colSpan={10} className="text-center py-10 text-slate-500">
                         Memuat data...
                       </td>
                     </tr>
-                  ) : (() => {
-                    const filtered = questions.filter((q) => {
-                      const matchesSearch =
-                        !searchQuery ||
-                        q.question_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        q.correct_answer.toLowerCase().includes(searchQuery.toLowerCase());
-                      const matchesCategory =
-                        selectedCategory === 'all' || q.category_id === selectedCategory;
-                      const matchesPackage =
-                        packageFilter === 'all' || (q.package_name || 'Umum / Bebas') === packageFilter;
-                      return matchesSearch && matchesCategory && matchesPackage;
-                    });
-
-                    if (filtered.length === 0) {
-                      return (
-                        <tr>
-                          <td colSpan={9} className="text-center py-10 text-slate-500">
-                            Tidak ada soal yang sesuai pencarian atau filter kategori/paket.
-                          </td>
-                        </tr>
-                      );
-                    }
-
-                    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-                    const safePage = Math.min(Math.max(1, currentPage), totalPages);
-                    const startIndex = (safePage - 1) * pageSize;
-                    const paginatedQuestions = filtered.slice(startIndex, startIndex + pageSize);
-
-                    return paginatedQuestions.map((q, idx) => {
+                  ) : filteredQuestions.length === 0 ? (
+                    <tr>
+                      <td colSpan={10} className="text-center py-10 text-slate-500">
+                        Tidak ada soal yang sesuai pencarian atau filter kategori/tipe/paket.
+                      </td>
+                    </tr>
+                  ) : (
+                    paginatedQuestions.map((q, idx) => {
                       const rowNum = startIndex + idx + 1;
                       const catName = categories.find((c) => c.id === q.category_id)?.name;
+                      const isSelected = selectedQuestionIds.includes(q.id);
+
+                      // Temukan teks kunci jika PG
+                      const pgOptText =
+                        q.type === 'pilihan_ganda'
+                          ? q.options?.find((opt) => opt.key === q.correct_answer)?.text
+                          : null;
+
                       return (
-                        <tr key={q.id} className="hover:bg-slate-800/40 transition-colors">
-                          <td className="py-3 px-4 font-mono text-slate-500">{rowNum}</td>
+                        <tr
+                          key={q.id}
+                          className={`transition-colors ${
+                            isSelected
+                              ? 'bg-purple-950/25 border-l-2 border-purple-500 hover:bg-purple-950/35'
+                              : 'hover:bg-slate-800/40'
+                          }`}
+                        >
+                          {/* CHECKBOX BARIS */}
+                          <td className="py-3 px-3 text-center">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={() => handleToggleSelectOne(q.id)}
+                              className="w-4 h-4 rounded border-slate-700 text-purple-600 focus:ring-purple-500 cursor-pointer accent-purple-600"
+                            />
+                          </td>
+
+                          <td className="py-3 px-3 font-mono text-slate-500">{rowNum}</td>
+
                           <td className="py-3 px-4">
                             <div className="flex flex-col gap-1">
                               <select
                                 value={q.category_id || ''}
-                                onChange={(e) => handleQuickAssignCategory(q, e.target.value || null)}
+                                onChange={(e) =>
+                                  handleQuickAssignCategory(q, e.target.value || null)
+                                }
                                 className="bg-slate-950 border border-slate-700/80 rounded-lg px-2 py-1 text-[11px] font-semibold text-emerald-400 focus:outline-none focus:ring-1 focus:ring-emerald-500 max-w-[130px] truncate"
                                 title="Ubah kategori soal langsung"
                               >
@@ -1092,17 +1461,21 @@ export default function AdminDashboardPage() {
                                 ))}
                               </select>
                               {catName && (
-                                <span className="text-[9px] text-emerald-400/80 font-bold">
+                                <span className="text-[9px] text-emerald-400/80 font-bold truncate max-w-[130px]">
                                   🏷️ {catName}
                                 </span>
                               )}
                             </div>
                           </td>
+
                           <td className="py-3 px-4">
                             <select
                               value={q.box_number ?? ''}
                               onChange={(e) =>
-                                handleQuickAssignBox(q, e.target.value ? Number(e.target.value) : null)
+                                handleQuickAssignBox(
+                                  q,
+                                  e.target.value ? Number(e.target.value) : null
+                                )
                               }
                               className={`border rounded-lg px-2 py-1 text-[11px] font-mono font-bold focus:outline-none focus:ring-1 ${
                                 q.box_number
@@ -1119,27 +1492,73 @@ export default function AdminDashboardPage() {
                               ))}
                             </select>
                           </td>
+
+                          {/* TIPE SOAL BADGE */}
                           <td className="py-3 px-4">
-                            <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">
-                              {q.type.replace('_', ' ')}
-                            </span>
+                            {q.type === 'pilihan_ganda' && (
+                              <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-blue-950/80 text-blue-300 border border-blue-700/50">
+                                Pilihan Ganda
+                              </span>
+                            )}
+                            {q.type === 'benar_salah' && (
+                              <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700/50">
+                                Benar / Salah
+                              </span>
+                            )}
+                            {q.type === 'essay' && (
+                              <span className="uppercase text-[10px] font-bold px-2 py-0.5 rounded bg-amber-950/80 text-amber-300 border border-amber-700/50">
+                                Rebutan / Essay
+                              </span>
+                            )}
                           </td>
+
+                          {/* TEKS PERTANYAAN */}
                           <td className="py-3 px-4 font-semibold text-slate-200 max-w-xs truncate">
                             {q.question_text}
                           </td>
-                          <td className="py-3 px-4 font-mono font-bold text-emerald-400 max-w-[150px] truncate">
-                            {q.correct_answer}
+
+                          {/* KUNCI JAWABAN */}
+                          <td className="py-3 px-4 max-w-[170px] truncate">
+                            {q.type === 'pilihan_ganda' ? (
+                              <div className="flex items-center gap-1.5 font-mono text-xs">
+                                <span className="px-1.5 py-0.5 rounded bg-blue-600 text-white font-bold text-[10px]">
+                                  {q.correct_answer}
+                                </span>
+                                <span className="text-emerald-400 font-semibold truncate text-[11px]">
+                                  {pgOptText || '(Opsi Teks)'}
+                                </span>
+                              </div>
+                            ) : q.type === 'benar_salah' ? (
+                              q.correct_answer === 'true' ? (
+                                <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-700/60 text-emerald-300 font-bold text-[10px]">
+                                  ✓ BENAR
+                                </span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded bg-rose-950 border border-rose-700/60 text-rose-300 font-bold text-[10px]">
+                                  ✗ SALAH
+                                </span>
+                              )
+                            ) : (
+                              <span className="font-mono text-amber-300 font-semibold text-[11px] truncate block">
+                                {q.correct_answer || '(Rujukan Juri)'}
+                              </span>
+                            )}
                           </td>
+
                           <td className="py-3 px-4 text-center font-mono text-slate-400">
                             {q.timer_duration}s
                           </td>
+
                           <td className="py-3 px-4 text-center font-mono font-bold text-amber-400">
                             +{q.points}
                           </td>
+
+                          {/* AKSI BARIS */}
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-1.5">
                               {q.type === 'pilihan_ganda' && (
                                 <button
+                                  type="button"
                                   onClick={() => handleShuffleQuestion(q)}
                                   className="p-1.5 rounded-lg bg-indigo-950 hover:bg-indigo-900 text-indigo-300 border border-indigo-800/50"
                                   title="Smart Shuffle: Acak posisi opsi & pindahkan kunci jawaban otomatis"
@@ -1148,6 +1567,7 @@ export default function AdminDashboardPage() {
                                 </button>
                               )}
                               <button
+                                type="button"
                                 onClick={() => handleDuplicateQuestion(q)}
                                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
                                 title="Duplikat Soal"
@@ -1155,6 +1575,7 @@ export default function AdminDashboardPage() {
                                 <Copy className="w-3.5 h-3.5" />
                               </button>
                               <button
+                                type="button"
                                 onClick={() => handleOpenEditSoal(q)}
                                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
                                 title="Edit Soal"
@@ -1162,6 +1583,7 @@ export default function AdminDashboardPage() {
                                 <Edit className="w-3.5 h-3.5" />
                               </button>
                               <button
+                                type="button"
                                 onClick={() => handleDeleteSoal(q.id)}
                                 className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950 hover:text-rose-400 text-slate-300"
                                 title="Hapus Soal"
@@ -1172,114 +1594,104 @@ export default function AdminDashboardPage() {
                           </td>
                         </tr>
                       );
-                    });
-                  })()}
+                    })
+                  )}
                 </tbody>
               </table>
             </div>
 
             {/* PAGINATION TOOLBAR */}
-            {(() => {
-              const filtered = questions.filter((q) => {
-                const matchesSearch =
-                  !searchQuery ||
-                  q.question_text.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                  q.correct_answer.toLowerCase().includes(searchQuery.toLowerCase());
-                const matchesCategory =
-                  selectedCategory === 'all' || q.category_id === selectedCategory;
-                const matchesPackage =
-                  packageFilter === 'all' || (q.package_name || 'Umum / Bebas') === packageFilter;
-                return matchesSearch && matchesCategory && matchesPackage;
-              });
-
-              const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
-              const safePage = Math.min(Math.max(1, currentPage), totalPages);
-              const startIndex = (safePage - 1) * pageSize;
-
-              if (filtered.length === 0) return null;
-
-              return (
-                <div className="bg-slate-950 border-t border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-                  <div className="flex items-center gap-3 text-xs text-slate-400">
-                    <span>
-                      Menampilkan <strong className="text-white font-mono">{startIndex + 1}</strong> - <strong className="text-white font-mono">{Math.min(startIndex + pageSize, filtered.length)}</strong> dari <strong className="text-white font-mono">{filtered.length}</strong> soal
-                    </span>
-                    <span className="text-slate-600">|</span>
-                    <div className="flex items-center gap-1.5">
-                      <span>Per Halaman:</span>
-                      <select
-                        value={pageSize}
-                        onChange={(e) => setPageSize(Number(e.target.value))}
-                        className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
-                      >
-                        <option value={10}>10 Baris</option>
-                        <option value={20}>20 Baris</option>
-                        <option value={50}>50 Baris</option>
-                        <option value={100}>100 Baris</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => setCurrentPage(1)}
-                      disabled={safePage <= 1}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
-                      title="Halaman Pertama"
+            {filteredQuestions.length > 0 && (
+              <div className="bg-slate-950 border-t border-slate-800 px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3 text-xs text-slate-400">
+                  <span>
+                    Menampilkan <strong className="text-white font-mono">{startIndex + 1}</strong> -{' '}
+                    <strong className="text-white font-mono">
+                      {Math.min(startIndex + pageSize, filteredQuestions.length)}
+                    </strong>{' '}
+                    dari <strong className="text-white font-mono">{filteredQuestions.length}</strong>{' '}
+                    soal
+                  </span>
+                  <span className="text-slate-600">|</span>
+                  <div className="flex items-center gap-1.5">
+                    <span>Per Halaman:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => setPageSize(Number(e.target.value))}
+                      className="bg-slate-900 border border-slate-700 text-white rounded-lg px-2 py-1 text-xs font-mono font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
                     >
-                      «
-                    </button>
-                    <button
-                      onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-                      disabled={safePage <= 1}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
-                    >
-                      ‹ Sebelumnya
-                    </button>
-
-                    <div className="flex items-center gap-1 px-1">
-                      {Array.from({ length: totalPages }, (_, i) => i + 1)
-                        .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
-                        .map((p, idx, arr) => {
-                          const prev = arr[idx - 1];
-                          const hasGap = prev && p - prev > 1;
-                          return (
-                            <span key={p} className="flex items-center gap-1">
-                              {hasGap && <span className="text-slate-600 text-xs px-1">...</span>}
-                              <button
-                                onClick={() => setCurrentPage(p)}
-                                className={`min-w-[28px] h-7 px-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
-                                  safePage === p
-                                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
-                                    : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
-                                }`}
-                              >
-                                {p}
-                              </button>
-                            </span>
-                          );
-                        })}
-                    </div>
-
-                    <button
-                      onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
-                      disabled={safePage >= totalPages}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
-                    >
-                      Selanjutnya ›
-                    </button>
-                    <button
-                      onClick={() => setCurrentPage(totalPages)}
-                      disabled={safePage >= totalPages}
-                      className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
-                      title="Halaman Terakhir"
-                    >
-                      »
-                    </button>
+                      <option value={10}>10 Baris</option>
+                      <option value={20}>20 Baris</option>
+                      <option value={50}>50 Baris</option>
+                      <option value={100}>100 Baris</option>
+                    </select>
                   </div>
                 </div>
-              );
-            })()}
+
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(1)}
+                    disabled={safePage <= 1}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                    title="Halaman Pertama"
+                  >
+                    «
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                    disabled={safePage <= 1}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                  >
+                    ‹ Sebelumnya
+                  </button>
+
+                  <div className="flex items-center gap-1 px-1">
+                    {Array.from({ length: totalPages }, (_, i) => i + 1)
+                      .filter((p) => p === 1 || p === totalPages || Math.abs(p - safePage) <= 2)
+                      .map((p, idx, arr) => {
+                        const prev = arr[idx - 1];
+                        const hasGap = prev && p - prev > 1;
+                        return (
+                          <span key={p} className="flex items-center gap-1">
+                            {hasGap && <span className="text-slate-600 text-xs px-1">...</span>}
+                            <button
+                              type="button"
+                              onClick={() => setCurrentPage(p)}
+                              className={`min-w-[28px] h-7 px-1.5 rounded-lg text-xs font-mono font-bold transition-all ${
+                                safePage === p
+                                  ? 'bg-purple-600 text-white shadow-md shadow-purple-600/30'
+                                  : 'bg-slate-900 border border-slate-800 text-slate-400 hover:text-white hover:bg-slate-800'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          </span>
+                        );
+                      })}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                    disabled={safePage >= totalPages}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                  >
+                    Selanjutnya ›
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCurrentPage(totalPages)}
+                    disabled={safePage >= totalPages}
+                    className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-slate-900 border border-slate-800 hover:bg-slate-800 disabled:opacity-40 disabled:cursor-not-allowed text-slate-300"
+                    title="Halaman Terakhir"
+                  >
+                    »
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
