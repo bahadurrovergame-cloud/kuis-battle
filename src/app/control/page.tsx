@@ -37,7 +37,9 @@ import {
   LayoutGrid,
   HelpCircle,
   Layers,
-  Tag
+  Tag,
+  KeyRound,
+  ShieldCheck
 } from 'lucide-react';
 import { sounds } from '@/lib/sound';
 
@@ -53,6 +55,12 @@ export default function OperatorControlPage() {
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('all');
   const [isConnected, setIsConnected] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
+
+  // Modal Verifikasi PIN Admin untuk membuka Bank Soal
+  const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
+  const [adminPin, setAdminPin] = useState('');
+  const [adminPinError, setAdminPinError] = useState('');
+  const [adminPinLoading, setAdminPinLoading] = useState(false);
 
   // Active game type (pilihan_ganda | benar_salah | essay)
   const [selectedGameType, setSelectedGameType] = useState<'pilihan_ganda' | 'benar_salah' | 'essay'>('pilihan_ganda');
@@ -160,7 +168,6 @@ export default function OperatorControlPage() {
           setSelectedCategoryFilter(activeCategoryId);
         }
 
-        // 1. Ambil Soal khusus paket room ini dari session_questions
         const targetRound = sessionData.active_round || 'Babak 1';
         const { data: sqData } = await supabase
           .from('session_questions')
@@ -171,7 +178,6 @@ export default function OperatorControlPage() {
 
         let parsedQs: Question[] = [];
         if (sqData && sqData.length > 0) {
-          // Sinkronkan opened boxes dari database
           const openedFromDb = sqData.filter((s) => s.is_opened).map((s) => s.question_id);
           setOpenedBoxIds((prev) => Array.from(new Set([...prev, ...openedFromDb])));
 
@@ -184,7 +190,6 @@ export default function OperatorControlPage() {
             }));
           setQuestionsList(parsedQs);
         } else {
-          // Fallback jika belum ada soal yang dimasukkan ke babak ini: ambil dari tabel questions
           const { data: qList } = await supabase
             .from('questions')
             .select('*')
@@ -195,7 +200,6 @@ export default function OperatorControlPage() {
           }
         }
 
-        // Set Current question jika ada
         if (sessionData.current_question_id) {
           const foundQ = parsedQs.find((q) => q.id === sessionData.current_question_id);
           if (foundQ) {
@@ -212,7 +216,6 @@ export default function OperatorControlPage() {
           setCurrentQuestion(null);
         }
 
-        // Load opened boxes dari localStorage
         try {
           const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
           if (saved) {
@@ -221,7 +224,6 @@ export default function OperatorControlPage() {
           }
         } catch {}
 
-        // Teams
         const { data: teamsData } = await supabase
           .from('teams')
           .select('*')
@@ -229,7 +231,6 @@ export default function OperatorControlPage() {
           .order('score', { ascending: false });
         if (teamsData) setTeams(teamsData);
 
-        // Categories
         const { data: catData } = await supabase
           .from('categories')
           .select('*')
@@ -607,7 +608,6 @@ export default function OperatorControlPage() {
       updated_at: nowIso,
     });
 
-    // Tandai kotak lokal & storage
     setOpenedBoxIds((prev) => {
       if (prev.includes(q.id)) return prev;
       const next = [...prev, q.id];
@@ -617,7 +617,6 @@ export default function OperatorControlPage() {
       return next;
     });
 
-    // Tandai kotak di tabel session_questions agar admin langsung tahu statusnya "Sudah Selesai"
     await supabase
       .from('session_questions')
       .update({ is_opened: true })
@@ -650,14 +649,12 @@ export default function OperatorControlPage() {
       localStorage.removeItem(`opened_boxes_${session.id}`);
     } catch {}
 
-    // Reset di tabel database session_questions
     await supabase
       .from('session_questions')
       .update({ is_opened: false })
       .eq('session_id', session.id)
       .eq('round_name', session.active_round || 'Babak 1');
 
-    // Broadcast ke proyektor
     const channelName = `room_sync_${session.id}`;
     await supabase.channel(channelName).send({
       type: 'broadcast',
@@ -852,6 +849,54 @@ export default function OperatorControlPage() {
     setIsTeamModalOpen(false);
   };
 
+  // Handler saat tombol Bank Soal diklik di Operator
+  const handleClickBankSoal = () => {
+    const currentRole = sessionStorage.getItem('auth_role');
+    const targetUrl = session?.room_code
+      ? `/admin/soal?room=${encodeURIComponent(session.room_code)}`
+      : '/admin/soal';
+
+    if (currentRole === 'admin') {
+      router.push(targetUrl);
+    } else {
+      setAdminPin('');
+      setAdminPinError('');
+      setIsAdminPinModalOpen(true);
+    }
+  };
+
+  // Verifikasi PIN Admin via API /api/verify-pin
+  const handleVerifyAdminPin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAdminPinError('');
+    setAdminPinLoading(true);
+
+    try {
+      const res = await fetch('/api/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: adminPin, role: 'admin' }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        sessionStorage.setItem('auth_role', 'admin');
+        setIsAdminPinModalOpen(false);
+        const targetUrl = session?.room_code
+          ? `/admin/soal?room=${encodeURIComponent(session.room_code)}`
+          : '/admin/soal';
+        router.push(targetUrl);
+      } else {
+        setAdminPinError(data.message || 'PIN Admin tidak valid');
+      }
+    } catch {
+      setAdminPinError('Gagal memverifikasi PIN Admin');
+    } finally {
+      setAdminPinLoading(false);
+    }
+  };
+
   // Keyboard shortcut Spacebar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -973,13 +1018,16 @@ export default function OperatorControlPage() {
             <span className="hidden sm:inline">Buka Layar Proyektor</span>
           </a>
 
-          <a
-            href={session?.room_code ? `/admin/soal?room=${encodeURIComponent(session.room_code)}` : '/admin/soal'}
+          {/* TOMBOL BANK SOAL DILENGKAPI VERIFIKASI PIN ADMIN */}
+          <button
+            type="button"
+            onClick={handleClickBankSoal}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-purple-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
+            title="Kelola Bank Soal & Atur Babak (Memerlukan PIN Admin)"
           >
             <BookOpen className="w-3.5 h-3.5 text-purple-400" />
             <span className="hidden sm:inline">Bank Soal</span>
-          </a>
+          </button>
 
           <button
             onClick={handleLogout}
@@ -1702,13 +1750,13 @@ export default function OperatorControlPage() {
                           onClick={() => handleOpenEditTeam(t)}
                           className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
                         >
-                          <Edit2 className="w-3 h-3" />
+                          <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleDeleteTeam(t.id)}
                           className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800"
                         >
-                          <Trash2 className="w-3 h-3" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>
@@ -1787,6 +1835,69 @@ export default function OperatorControlPage() {
           </div>
         </section>
       </div>
+
+      {/* MODAL VERIFIKASI PIN ADMIN (SAAT OPERATOR KLIK BANK SOAL) */}
+      {isAdminPinModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 max-w-sm w-full shadow-2xl relative">
+            <button
+              onClick={() => { setIsAdminPinModalOpen(false); setAdminPinError(''); }}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            <div className="text-center mb-5">
+              <div className="w-12 h-12 mx-auto mb-2 bg-purple-600/20 border border-purple-500/30 rounded-2xl flex items-center justify-center text-purple-400 shadow-md">
+                <KeyRound className="w-6 h-6" />
+              </div>
+              <h3 className="text-base font-black text-white uppercase tracking-wider">Akses Khusus Admin</h3>
+              <p className="text-xs text-slate-400 mt-1">Masukkan PIN Admin untuk membuka Bank Soal & Atur Babak</p>
+            </div>
+
+            <form onSubmit={handleVerifyAdminPin} className="space-y-4">
+              <div>
+                <input
+                  type="password"
+                  inputMode="numeric"
+                  maxLength={6}
+                  value={adminPin}
+                  onChange={(e) => setAdminPin(e.target.value)}
+                  placeholder="••••••"
+                  className="w-full text-center tracking-[0.5em] text-2xl font-bold bg-slate-950 border border-slate-700 rounded-xl px-4 py-2.5 text-white focus:outline-none focus:ring-2 focus:ring-purple-500 transition-all placeholder:tracking-normal placeholder:text-slate-600"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              {adminPinError && (
+                <div className="flex items-center gap-2 p-2.5 bg-rose-950/50 border border-rose-800/60 rounded-xl text-rose-400 text-xs">
+                  <AlertCircle className="w-4 h-4 shrink-0" />
+                  <span>{adminPinError}</span>
+                </div>
+              )}
+
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => { setIsAdminPinModalOpen(false); setAdminPinError(''); }}
+                  className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold rounded-xl text-xs transition-all"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={adminPinLoading || !adminPin}
+                  className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-purple-600/30 flex items-center justify-center gap-1.5"
+                >
+                  <ShieldCheck className="w-4 h-4" />
+                  <span>{adminPinLoading ? 'Memeriksa...' : 'Buka Akses'}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL REGU */}
       {isTeamModalOpen && (
