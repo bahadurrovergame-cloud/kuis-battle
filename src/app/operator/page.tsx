@@ -38,7 +38,7 @@ export default function OperatorProjectorPage() {
   const [showQrModal, setShowQrModal] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
 
-  // Header Collapse state (Bisa buka-tutup agar tampilan proyektor bersih)
+  // Header Collapse state
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
 
   // Floating Leaderboard Auto-Fade state
@@ -46,7 +46,7 @@ export default function OperatorProjectorPage() {
   const [isIdle, setIsIdle] = useState(false);
   const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Keyboard shortcut 'H' untuk buka / tutup header proyektor secara instan
+  // Keyboard shortcut 'H'
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -132,7 +132,6 @@ export default function OperatorProjectorPage() {
           localStorage.setItem('active_room_code', sessionData.room_code);
         }
 
-        // 1. Ambil soal paket khusus babak aktif room ini dari session_questions
         const currentRound = sessionData.active_round || 'Babak 1';
         const { data: sqData } = await supabase
           .from('session_questions')
@@ -154,7 +153,6 @@ export default function OperatorProjectorPage() {
             }));
           setQuestionsList(parsed);
         } else {
-          // Fallback ke tabel questions umum jika babak ini belum diisi soal
           const { data: qDataList } = await supabase
             .from('questions')
             .select('*')
@@ -162,7 +160,6 @@ export default function OperatorProjectorPage() {
           if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
         }
 
-        // Load opened boxes untuk sesi ruangan ini dari storage
         try {
           const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
           if (saved) {
@@ -171,7 +168,6 @@ export default function OperatorProjectorPage() {
           }
         } catch {}
 
-        // 2. Fetch Teams untuk sesi ruangan ini
         const { data: teamsData } = await supabase
           .from('teams')
           .select('*')
@@ -180,7 +176,6 @@ export default function OperatorProjectorPage() {
         if (teamsData) setTeams(teamsData);
       }
 
-      // 3. Fetch Categories
       const { data: catList } = await supabase.from('categories').select('*').order('name');
       if (catList) setCategories(catList);
     } catch {
@@ -236,7 +231,6 @@ export default function OperatorProjectorPage() {
             }
             prevRevealedRef.current = newSession.is_answer_revealed;
 
-            // Jika babak diganti admin, refresh data
             if (newSession.active_round !== session.active_round) {
               fetchInitialData();
             }
@@ -292,7 +286,7 @@ export default function OperatorProjectorPage() {
     };
   }, [session?.id, session?.active_round, fetchInitialData]);
 
-  // Safety Auto-Sync Polling setiap 2.5 detik
+  // Safety Auto-Sync Polling
   useEffect(() => {
     if (!session?.id) return;
 
@@ -373,12 +367,10 @@ export default function OperatorProjectorPage() {
     return () => clearInterval(timerInterval);
   }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
 
-  // Cari Soal Aktif
   const currentQuestion = session?.current_question_id
     ? questionsList.find((q) => q.id === session.current_question_id) || null
     : null;
 
-  // Tipe soal aktif
   let activeGameType: 'pilihan_ganda' | 'benar_salah' | 'essay' = 'pilihan_ganda';
   if (session?.status?.includes('benar_salah')) {
     activeGameType = 'benar_salah';
@@ -388,13 +380,9 @@ export default function OperatorProjectorPage() {
     activeGameType = 'pilihan_ganda';
   }
 
-  // Metadata Sesi
   const { cleanTitle, boxCount: totalBoxes, activeCategoryId } = parseSessionMeta(session);
-
-  // Kategori aktif
   const activeCategory = activeCategoryId ? categories.find((c) => c.id === activeCategoryId) : null;
 
-  // Filter daftar soal sesuai jenis permainan & kategori
   const filteredQuestions = questionsList.filter((q) => {
     const matchType = q.type === activeGameType;
     const matchCat = !activeCategoryId || activeCategoryId === 'all' || q.category_id === activeCategoryId;
@@ -426,9 +414,29 @@ export default function OperatorProjectorPage() {
 
   const activeRoundName = session?.active_round || 'Babak 1';
 
+  // Kepadatan layout dinamis untuk 30 kotak panggung
+  const isUltraDense = totalBoxes > 20;
+  const isDense = totalBoxes > 12 && totalBoxes <= 20;
+
+  const gridColsClass =
+    totalBoxes <= 3
+      ? 'grid-cols-3 max-w-3xl'
+      : totalBoxes <= 4
+      ? 'grid-cols-2 sm:grid-cols-4 max-w-4xl'
+      : totalBoxes <= 6
+      ? 'grid-cols-2 md:grid-cols-3 max-w-5xl'
+      : totalBoxes <= 9
+      ? 'grid-cols-3 max-w-5xl'
+      : totalBoxes <= 12
+      ? 'grid-cols-3 sm:grid-cols-4 max-w-6xl'
+      : totalBoxes <= 16
+      ? 'grid-cols-4 sm:grid-cols-4 max-w-6xl'
+      : totalBoxes <= 20
+      ? 'grid-cols-4 sm:grid-cols-5 max-w-6xl'
+      : 'grid-cols-4 sm:grid-cols-5 md:grid-cols-6 max-w-7xl';
+
   return (
-    <main className="h-screen max-h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col p-4 sm:p-5 select-none relative">
-      {/* Background glow effects */}
+    <main className="h-screen max-h-screen w-screen overflow-hidden bg-slate-950 text-slate-100 flex flex-col p-3 sm:p-4 select-none relative">
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
 
@@ -451,13 +459,13 @@ export default function OperatorProjectorPage() {
 
       {/* TOP BAR */}
       {!isHeaderCollapsed && (
-        <header className="flex items-center justify-between pb-3 border-b border-slate-800/80 z-20 shrink-0 animate-in slide-in-from-top-2">
-          <div className="flex items-center gap-4">
-            <div className="p-2.5 bg-blue-600/20 border border-blue-500/30 rounded-2xl text-blue-400">
-              <Tv className="w-6 h-6" />
+        <header className="flex items-center justify-between pb-2 sm:pb-3 border-b border-slate-800/80 z-20 shrink-0 animate-in slide-in-from-top-2">
+          <div className="flex items-center gap-3 sm:gap-4">
+            <div className="p-2 sm:p-2.5 bg-blue-600/20 border border-blue-500/30 rounded-2xl text-blue-400">
+              <Tv className="w-5 h-5 sm:w-6 sm:h-6" />
             </div>
             <div>
-              <h1 className="text-xl font-black tracking-wide text-white uppercase flex items-center gap-2">
+              <h1 className="text-lg sm:text-xl font-black tracking-wide text-white uppercase flex items-center gap-2">
                 <span>{cleanTitle}</span>
                 <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30 uppercase tracking-widest">
                   {activeRoundName}
@@ -472,7 +480,7 @@ export default function OperatorProjectorPage() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             {!audioUnlocked && (
               <button
                 onClick={unlockAudio}
@@ -561,7 +569,7 @@ export default function OperatorProjectorPage() {
       )}
 
       {/* MAIN STAGE CONTENT AREA */}
-      <div className="flex-1 flex flex-col justify-center items-center pt-2 sm:pt-4 z-10 min-h-0 relative w-full">
+      <div className="flex-1 flex flex-col justify-center items-center pt-1 sm:pt-2 z-10 min-h-0 relative w-full">
         {/* TAMPILAN 1: SAMBUTAN */}
         {session?.status === 'waiting' && !session?.current_question_id && (
           <div className="max-w-5xl w-full text-center py-10 px-8 bg-slate-900/60 border border-slate-800 rounded-3xl backdrop-blur-xl shadow-2xl relative overflow-hidden flex flex-col items-center justify-center">
@@ -739,46 +747,35 @@ export default function OperatorProjectorPage() {
           </div>
         )}
 
-        {/* TAMPILAN 4: PAPAN KOTAK */}
+        {/* TAMPILAN 4: PAPAN KOTAK (MUAT UTUH HINGGA 30 KOTAK DALAM SATU LAYAR PENUH) */}
         {!['waiting', 'type_select'].includes(session?.status || '') &&
           !session?.status?.startsWith('category_') &&
           session?.status !== 'category_select' &&
           !session?.current_question_id && (
-            <div className="max-w-5xl w-full flex flex-col items-center justify-between space-y-4 sm:space-y-5 animate-in fade-in duration-500 max-h-[85vh]">
-              <div className="text-center space-y-1 shrink-0">
+            <div className={`max-w-7xl w-full flex flex-col items-center justify-between ${isUltraDense ? 'space-y-1 sm:space-y-2' : 'space-y-3 sm:space-y-4'} animate-in fade-in duration-500 max-h-[88vh]`}>
+              <div className="text-center space-y-0.5 shrink-0">
                 <div className="flex items-center justify-center gap-2 flex-wrap">
-                  <span className="text-[11px] uppercase font-extrabold tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-0.5 rounded-full border border-indigo-500/20 shadow-sm">
+                  <span className="text-[10px] sm:text-[11px] uppercase font-extrabold tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-0.5 rounded-full border border-indigo-500/20 shadow-sm">
                     {activeRoundName} • {activeGameType === 'pilihan_ganda' ? 'PILIHAN GANDA' : activeGameType === 'benar_salah' ? 'BENAR ATAU SALAH' : 'REBUTAN / ESSAY'}
                   </span>
                   {activeCategory && (
-                    <span className="text-[11px] uppercase font-extrabold tracking-widest text-pink-400 bg-pink-500/10 px-3 py-0.5 rounded-full border border-pink-500/20 flex items-center gap-1 shadow-sm">
+                    <span className="text-[10px] sm:text-[11px] uppercase font-extrabold tracking-widest text-pink-400 bg-pink-500/10 px-3 py-0.5 rounded-full border border-pink-500/20 flex items-center gap-1 shadow-sm">
                       <Tag className="w-3 h-3 text-pink-400" />
                       KATEGORI: {activeCategory.name}
                     </span>
                   )}
                 </div>
-                <h2 className="text-2xl sm:text-4xl font-black text-white uppercase tracking-tight drop-shadow-md">
+                <h2 className={`${isUltraDense ? 'text-lg sm:text-2xl' : 'text-2xl sm:text-4xl'} font-black text-white uppercase tracking-tight drop-shadow-md`}>
                   Pilih Kotak Tantangan
                 </h2>
-                <p className="text-xs text-slate-400 font-medium max-w-xl mx-auto">
+                <p className="text-[11px] sm:text-xs text-slate-400 font-medium max-w-xl mx-auto">
                   Silakan regu yang bertanding memilih salah satu nomor kotak yang tersedia di layar!
                 </p>
               </div>
 
+              {/* GRID KOTAK: 6 KOLOM DENGAN TINGGI PROPORSIAL AGAR 30 KOTAK TIDAK TERPOTONG */}
               <div
-                className={`w-full grid gap-3 sm:gap-4 ${
-                  totalBoxes <= 3
-                    ? 'grid-cols-3 max-w-3xl'
-                    : totalBoxes <= 4
-                    ? 'grid-cols-2 sm:grid-cols-4 max-w-4xl'
-                    : totalBoxes <= 6
-                    ? 'grid-cols-2 md:grid-cols-3 max-w-5xl'
-                    : totalBoxes <= 9
-                    ? 'grid-cols-3 max-w-5xl'
-                    : totalBoxes <= 12
-                    ? 'grid-cols-3 sm:grid-cols-4 max-w-6xl'
-                    : 'grid-cols-3 sm:grid-cols-4 md:grid-cols-5 max-w-6xl'
-                }`}
+                className={`w-full grid gap-1.5 sm:gap-2 ${gridColsClass} overflow-y-auto max-h-[72vh] px-1 py-1`}
               >
                 {Array.from({ length: totalBoxes }).map((_, idx) => {
                   const boxNum = idx + 1;
@@ -789,7 +786,15 @@ export default function OperatorProjectorPage() {
                   return (
                     <div
                       key={boxNum}
-                      className={`${totalBoxes > 9 ? 'h-20 sm:h-24 md:h-28' : 'h-24 sm:h-28 md:h-32'} rounded-2xl sm:rounded-3xl font-black flex flex-col items-center justify-center gap-1 sm:gap-1.5 transition-all duration-500 relative overflow-hidden select-none border-2 shadow-2xl ${
+                      className={`${
+                        isUltraDense
+                          ? 'h-14 sm:h-16 md:h-20'
+                          : isDense
+                          ? 'h-20 sm:h-22 md:h-24'
+                          : totalBoxes > 9
+                          ? 'h-20 sm:h-24 md:h-28'
+                          : 'h-24 sm:h-28 md:h-32'
+                      } rounded-xl sm:rounded-2xl font-black flex flex-col items-center justify-center gap-0.5 sm:gap-1 transition-all duration-300 relative overflow-hidden select-none border-2 shadow-xl ${
                         isOpened
                           ? 'bg-slate-950/60 border-slate-800/80 text-slate-600 opacity-40 scale-95'
                           : matchedQ
@@ -798,22 +803,25 @@ export default function OperatorProjectorPage() {
                       }`}
                     >
                       {!isOpened && matchedQ && (
-                        <span className="absolute -top-10 -right-10 w-24 h-24 bg-indigo-500/25 rounded-full blur-2xl animate-pulse" />
+                        <span className="absolute -top-10 -right-10 w-20 h-20 bg-indigo-500/25 rounded-full blur-xl animate-pulse" />
                       )}
 
-                      <span className="text-3xl sm:text-4xl font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300">
+                      {/* Nomor Kotak */}
+                      <span className={`${isUltraDense ? 'text-xl sm:text-2xl md:text-3xl' : 'text-3xl sm:text-4xl'} font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300`}>
                         #{boxNum}
                       </span>
 
+                      {/* Tag Kategori */}
                       {boxCatName && (
-                        <span className="text-[9px] text-pink-300 font-bold uppercase tracking-wider truncate max-w-[120px] px-2 py-0.5 rounded-full bg-pink-950/70 border border-pink-700/50 flex items-center gap-1 shadow-sm">
-                          <Tag className="w-2.5 h-2.5 text-pink-400 shrink-0" />
+                        <span className={`${isUltraDense ? 'text-[7px] sm:text-[8px] px-1 py-0' : 'text-[9px] px-2 py-0.5'} text-pink-300 font-bold uppercase tracking-wider truncate max-w-[85px] sm:max-w-[110px] rounded-full bg-pink-950/70 border border-pink-700/50 flex items-center gap-1 shadow-sm`}>
+                          <Tag className="w-2 h-2 text-pink-400 shrink-0" />
                           <span className="truncate">{boxCatName}</span>
                         </span>
                       )}
 
+                      {/* Status Kotak */}
                       <span
-                        className={`text-[10px] sm:text-[11px] uppercase tracking-widest font-black px-2.5 py-0.5 rounded-full border ${
+                        className={`${isUltraDense ? 'text-[8px] sm:text-[9px] px-1.5 py-0' : 'text-[10px] sm:text-[11px] px-2.5 py-0.5'} uppercase tracking-widest font-black rounded-full border ${
                           isOpened
                             ? 'bg-slate-800/60 border-slate-700 text-slate-500'
                             : matchedQ
@@ -821,11 +829,12 @@ export default function OperatorProjectorPage() {
                             : 'bg-slate-900 border-slate-800 text-slate-600'
                         }`}
                       >
-                        {isOpened ? '✓ Sudah Dibuka' : matchedQ ? '★ Tersedia' : 'Kosong'}
+                        {isOpened ? '✓ Dibuka' : matchedQ ? '★ Tersedia' : 'Kosong'}
                       </span>
 
+                      {/* Poin Hint */}
                       {!isOpened && matchedQ && (
-                        <span className="text-[9px] font-bold text-indigo-300/80 uppercase tracking-wider">
+                        <span className={`${isUltraDense ? 'text-[7px] sm:text-[8px]' : 'text-[9px]'} font-bold text-indigo-300/80 uppercase tracking-wider`}>
                           +{matchedQ.points || 100} Poin
                         </span>
                       )}
@@ -834,16 +843,17 @@ export default function OperatorProjectorPage() {
                 })}
               </div>
 
+              {/* LIVE TEAMS BAR BAWAH */}
               {teams.length > 0 && (
-                <div className="w-full border-t border-slate-800/80 pt-2 flex flex-wrap items-center justify-center gap-2 sm:gap-3 shrink-0">
+                <div className="w-full border-t border-slate-800/80 pt-1.5 flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 shrink-0">
                   {teams.map((t) => (
                     <div
                       key={t.id}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-2 shadow-sm"
+                      className="px-2.5 py-1 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center gap-1.5 shadow-sm"
                     >
-                      <span className="w-2.5 h-2.5 rounded-full shadow" style={{ backgroundColor: t.color }} />
-                      <span className="text-xs font-black text-white">{t.name}:</span>
-                      <span className="text-xs font-black font-mono text-amber-400">{t.score} PTS</span>
+                      <span className="w-2 h-2 rounded-full shadow" style={{ backgroundColor: t.color }} />
+                      <span className="text-[11px] font-black text-white">{t.name}:</span>
+                      <span className="text-[11px] font-black font-mono text-amber-400">{t.score} PTS</span>
                     </div>
                   ))}
                 </div>
