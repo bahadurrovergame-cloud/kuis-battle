@@ -7,6 +7,7 @@ import {
   GameSession,
   Question,
   Team,
+  SessionQuestion,
   parseQuestionMeta,
   parseSessionMeta,
   buildSessionTitleWithBoxes,
@@ -111,10 +112,9 @@ export default function OperatorControlPage() {
     }
   }, [session?.status]);
 
-  // Load initial data dengan dukungan Multi-Room
+  // Load initial data dengan dukungan Paket Soal per Room
   const loadData = useCallback(async () => {
     try {
-      // Ambil seluruh daftar ruangan untuk switcher
       const { data: allSessions } = await supabase
         .from('game_sessions')
         .select('id, room_code, title')
@@ -138,7 +138,6 @@ export default function OperatorControlPage() {
 
       let { data: sessionData } = await sessionQuery.single();
 
-      // Fallback jika room_code target belum ada
       if (!sessionData && targetRoom) {
         const { data: fallbackData } = await supabase
           .from('game_sessions')
@@ -161,29 +160,66 @@ export default function OperatorControlPage() {
           setSelectedCategoryFilter(activeCategoryId);
         }
 
-        // Load opened boxes from localStorage
-        try {
-          const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
-          if (saved) setOpenedBoxIds(JSON.parse(saved));
-        } catch {}
+        // 1. Ambil Soal khusus paket room ini dari session_questions
+        const targetRound = sessionData.active_round || 'Babak 1';
+        const { data: sqData } = await supabase
+          .from('session_questions')
+          .select('*, question:questions(*)')
+          .eq('session_id', sessionData.id)
+          .eq('round_name', targetRound)
+          .order('box_number', { ascending: true, nullsFirst: false });
 
-        // Fetch questions
-        const { data: qList } = await supabase
-          .from('questions')
-          .select('*')
-          .order('created_at', { ascending: true });
-        if (qList) {
-          const parsed = qList.map(parseQuestionMeta);
-          setQuestionsList(parsed);
+        let parsedQs: Question[] = [];
+        if (sqData && sqData.length > 0) {
+          // Sinkronkan opened boxes dari database
+          const openedFromDb = sqData.filter((s) => s.is_opened).map((s) => s.question_id);
+          setOpenedBoxIds((prev) => Array.from(new Set([...prev, ...openedFromDb])));
 
-          // Current question
-          if (sessionData.current_question_id) {
-            const foundQ = parsed.find((q) => q.id === sessionData.current_question_id);
-            if (foundQ) setCurrentQuestion(foundQ);
-          } else {
-            setCurrentQuestion(null);
+          parsedQs = sqData
+            .filter((s) => s.question)
+            .map((s) => ({
+              ...parseQuestionMeta(s.question!),
+              box_number: s.box_number ?? null,
+              is_opened: s.is_opened,
+            }));
+          setQuestionsList(parsedQs);
+        } else {
+          // Fallback jika belum ada soal yang dimasukkan ke babak ini: ambil dari tabel questions
+          const { data: qList } = await supabase
+            .from('questions')
+            .select('*')
+            .order('created_at', { ascending: true });
+          if (qList) {
+            parsedQs = qList.map(parseQuestionMeta);
+            setQuestionsList(parsedQs);
           }
         }
+
+        // Set Current question jika ada
+        if (sessionData.current_question_id) {
+          const foundQ = parsedQs.find((q) => q.id === sessionData.current_question_id);
+          if (foundQ) {
+            setCurrentQuestion(foundQ);
+          } else {
+            const { data: singleQ } = await supabase
+              .from('questions')
+              .select('*')
+              .eq('id', sessionData.current_question_id)
+              .single();
+            if (singleQ) setCurrentQuestion(parseQuestionMeta(singleQ));
+          }
+        } else {
+          setCurrentQuestion(null);
+        }
+
+        // Load opened boxes dari localStorage
+        try {
+          const saved = localStorage.getItem(`opened_boxes_${sessionData.id}`);
+          if (saved) {
+            const parsedSaved = JSON.parse(saved);
+            setOpenedBoxIds((prev) => Array.from(new Set([...prev, ...parsedSaved])));
+          }
+        } catch {}
 
         // Teams
         const { data: teamsData } = await supabase
@@ -208,7 +244,6 @@ export default function OperatorControlPage() {
   useEffect(() => {
     loadData();
 
-    // Auto-polling 2.5 detik sebagai jaring pengaman sinkronisasi
     const interval = setInterval(() => {
       loadData();
     }, 2500);
@@ -236,7 +271,6 @@ export default function OperatorControlPage() {
               setSelectedCategoryFilter(activeCategoryId);
             }
 
-            // Selaraskan currentQuestion di panel control dengan database
             if (updated.current_question_id) {
               const { data: qData } = await supabase
                 .from('questions')
@@ -252,6 +286,13 @@ export default function OperatorControlPage() {
       )
       .on(
         'postgres_changes',
+        { event: '*', schema: 'public', table: 'session_questions', filter: `session_id=eq.${session.id}` },
+        () => {
+          loadData();
+        }
+      )
+      .on(
+        'postgres_changes',
         { event: '*', schema: 'public', table: 'teams', filter: `session_id=eq.${session.id}` },
         async () => {
           const { data: updatedTeams } = await supabase
@@ -260,28 +301,6 @@ export default function OperatorControlPage() {
             .eq('session_id', session.id)
             .order('score', { ascending: false });
           if (updatedTeams) setTeams(updatedTeams);
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'questions' },
-        async () => {
-          const { data: qList } = await supabase
-            .from('questions')
-            .select('*')
-            .order('created_at', { ascending: true });
-          if (qList) setQuestionsList(qList.map(parseQuestionMeta));
-        }
-      )
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'categories' },
-        async () => {
-          const { data: catData } = await supabase
-            .from('categories')
-            .select('*')
-            .order('name', { ascending: true });
-          if (catData) setCategories(catData);
         }
       )
       .on('broadcast', { event: 'reset_boxes' }, () => {
@@ -297,9 +316,9 @@ export default function OperatorControlPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [session?.id]);
+  }, [session?.id, loadData]);
 
-  // SYNCHRONIZED COUNTDOWN TIMER (Presisi tinggi berbasis Server Timestamp)
+  // Countdown timer
   useEffect(() => {
     if (!session?.is_timer_running || !session?.updated_at) {
       if (session) {
@@ -333,7 +352,7 @@ export default function OperatorControlPage() {
     return () => clearInterval(timerInterval);
   }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
 
-  // Handle timer toggle (Play/Pause)
+  // Toggle Timer
   const toggleTimer = async () => {
     if (!session) return;
     const nextState = !session.is_timer_running;
@@ -357,7 +376,7 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Reset timer to current question duration
+  // Reset Timer
   const resetTimer = async () => {
     if (!session || !currentQuestion) return;
     const dur = currentQuestion.timer_duration || 30;
@@ -381,7 +400,7 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Quick preset duration: [15s], [20s], [30s], [45s], [60s]
+  // Set Preset Duration
   const handleSetDuration = async (seconds: number) => {
     if (!session) return;
     const nowIso = new Date().toISOString();
@@ -404,7 +423,7 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Ubah Tampilan Layar Proyektor ('welcome' | 'type_select' | 'category_select' | 'box_select' | 'question_active')
+  // Ubah Tampilan Layar Proyektor
   const handleSetProjectorView = async (
     view: 'welcome' | 'type_select' | 'category_select' | 'box_select' | 'question_active',
     specificType?: 'pilihan_ganda' | 'benar_salah' | 'essay',
@@ -459,8 +478,6 @@ export default function OperatorControlPage() {
         .eq('id', session.id);
     } else if (view === 'category_select') {
       setCurrentQuestion(null);
-
-      // 'category_pilihan_ganda' (22 char) melebihi VARCHAR(20) di DB. Gunakan 'category_select' yang aman & didukung proyektor.
       const targetStatus = typeToUse === 'pilihan_ganda' ? 'category_select' : `category_${typeToUse}`;
 
       setSession({
@@ -483,7 +500,6 @@ export default function OperatorControlPage() {
         })
         .eq('id', session.id);
 
-      // Jaring pengaman: fallback ke 'category_select' jika target status kustom ditolak constraint DB
       if (error && targetStatus !== 'category_select') {
         await supabase
           .from('game_sessions')
@@ -572,7 +588,7 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Select Question & Auto-Start Timer
+  // Select Question & Auto-Start Timer & Update status di Database
   const handleSelectQuestion = async (q: Question, autoStartTimer = false) => {
     if (!session) return;
     setLoadingAction(true);
@@ -591,7 +607,7 @@ export default function OperatorControlPage() {
       updated_at: nowIso,
     });
 
-    // Tandai kotak sebagai sudah dibuka
+    // Tandai kotak lokal & storage
     setOpenedBoxIds((prev) => {
       if (prev.includes(q.id)) return prev;
       const next = [...prev, q.id];
@@ -600,6 +616,13 @@ export default function OperatorControlPage() {
       } catch {}
       return next;
     });
+
+    // Tandai kotak di tabel session_questions agar admin langsung tahu statusnya "Sudah Selesai"
+    await supabase
+      .from('session_questions')
+      .update({ is_opened: true })
+      .eq('session_id', session.id)
+      .eq('question_id', q.id);
 
     await supabase
       .from('game_sessions')
@@ -616,7 +639,7 @@ export default function OperatorControlPage() {
     setLoadingAction(false);
   };
 
-  // Reset status kotak yang sudah dibuka
+  // Reset status kotak yang sudah dibuka (Lokal & Database)
   const handleResetBoxes = async () => {
     if (!session) return;
     const confirm = window.confirm('Buka ulang semua kotak (reset status kotak yang sudah dibuka)?');
@@ -627,6 +650,13 @@ export default function OperatorControlPage() {
       localStorage.removeItem(`opened_boxes_${session.id}`);
     } catch {}
 
+    // Reset di tabel database session_questions
+    await supabase
+      .from('session_questions')
+      .update({ is_opened: false })
+      .eq('session_id', session.id)
+      .eq('round_name', session.active_round || 'Babak 1');
+
     // Broadcast ke proyektor
     const channelName = `room_sync_${session.id}`;
     await supabase.channel(channelName).send({
@@ -636,10 +666,10 @@ export default function OperatorControlPage() {
     });
   };
 
-  // Hitung jumlah kotak dan judul bersih dari metadata sesi
+  // Metadata Sesi
   const { cleanTitle, boxCount } = parseSessionMeta(session);
 
-  // Ubah jumlah kotak Blink Box (Custom) langsung dari kontrol operator
+  // Ubah jumlah kotak Blink Box
   const handleUpdateBoxCount = async (newCount: number) => {
     if (!session || newCount < 1) return;
     try {
@@ -653,7 +683,6 @@ export default function OperatorControlPage() {
 
       setSession((prev) => (prev ? { ...prev, title: updatedTitle, blink_box_count: newCount } : prev));
 
-      // Broadcast sinkronisasi ke proyektor
       supabase.channel(`room_sync_${session.id}`).send({
         type: 'broadcast',
         event: 'box_count_sync',
@@ -664,7 +693,7 @@ export default function OperatorControlPage() {
     }
   };
 
-  // Ubah filter kategori dan sinkronkan ke metadata judul sesi proyektor
+  // Ubah filter kategori
   const handleSelectCategoryFilter = async (catId: string) => {
     setSelectedCategoryFilter(catId);
     if (!session) return;
@@ -680,7 +709,7 @@ export default function OperatorControlPage() {
     }
   };
 
-  // Filter pertanyaan sesuai jenis permainan dan kategori yang dipilih
+  // Filter pertanyaan sesuai tipe permainan & kategori
   const filteredQuestions = questionsList.filter((q) => {
     const matchType = q.type === selectedGameType;
     const matchCat = selectedCategoryFilter === 'all' || q.category_id === selectedCategoryFilter;
@@ -694,10 +723,10 @@ export default function OperatorControlPage() {
     handleSelectQuestion(filteredQuestions[nextIndex], false);
   };
 
-  // Finish Match (Trigger victory podium)
+  // Finish Match
   const handleFinishMatch = async () => {
     if (!session) return;
-    const confirmed = window.confirm('Apakah Anda yakin ingin menyelesaikan pertandingan & menampilkan Podium Juara di Proyektor?');
+    const confirmed = window.confirm('Selesaikan pertandingan & tampilkan Podium Juara di Proyektor?');
     if (!confirmed) return;
 
     const nowIso = new Date().toISOString();
@@ -709,7 +738,7 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
   };
 
-  // Quick Score Adjustment
+  // Skor
   const handleAdjustScore = async (teamId: string, delta: number) => {
     const team = teams.find((t) => t.id === teamId);
     if (!team) return;
@@ -729,7 +758,6 @@ export default function OperatorControlPage() {
       .eq('id', teamId);
   };
 
-  // Custom Score Add
   const handleCustomScore = async (teamId: string) => {
     const rawVal = customScores[teamId];
     if (!rawVal) return;
@@ -760,7 +788,7 @@ export default function OperatorControlPage() {
       .eq('id', teamId);
   };
 
-  // Handle Team Modals (Add / Edit / Delete)
+  // Team Modals
   const handleOpenAddTeam = () => {
     setEditingTeam(null);
     setTeamFormName('');
@@ -824,13 +852,11 @@ export default function OperatorControlPage() {
     setIsTeamModalOpen(false);
   };
 
-  // SHORTCUT KEYBOARD: SPACEBAR untuk Pause / Resume Timer seketika
+  // Keyboard shortcut Spacebar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
-        return;
-      }
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
 
       if (e.code === 'Space') {
         e.preventDefault();
@@ -855,7 +881,6 @@ export default function OperatorControlPage() {
     );
   }
 
-  // Teks label status layar proyektor
   let projectorStatusLabel = '4. Papan Kotak Blink Box';
   if (session?.status === 'waiting') {
     projectorStatusLabel = '1. Sambutan Arena (Opening)';
@@ -873,6 +898,8 @@ export default function OperatorControlPage() {
     projectorStatusLabel = '4. Papan Kotak (Pilihan Ganda)';
   }
 
+  const activeRoundName = session?.active_round || 'Babak 1';
+
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col p-4 sm:p-6">
       {/* HEADER CONTROL BAR */}
@@ -882,8 +909,11 @@ export default function OperatorControlPage() {
             <Tv className="w-5 h-5" />
           </div>
           <div>
-            <h1 className="text-lg font-black tracking-wide text-white uppercase">
-              Control Panggung Operator
+            <h1 className="text-lg font-black tracking-wide text-white uppercase flex items-center gap-2">
+              <span>Control Panggung Operator</span>
+              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                {activeRoundName}
+              </span>
             </h1>
             <div className="flex items-center gap-2 mt-0.5">
               {availableRooms.length > 1 ? (
@@ -901,7 +931,6 @@ export default function OperatorControlPage() {
                       }
                     }}
                     className="bg-transparent font-mono font-black text-xs text-amber-400 focus:outline-none cursor-pointer"
-                    title="Ganti Ruangan Panggung yang Dikontrol"
                   >
                     {availableRooms.map((r) => (
                       <option key={r.id} value={r.room_code} className="bg-slate-900 text-white">
@@ -962,7 +991,7 @@ export default function OperatorControlPage() {
         </div>
       </header>
 
-      {/* KONTROL STATUS TAMPILAN PROYEKTOR OLEH OPERATOR */}
+      {/* KONTROL STATUS TAMPILAN PROYEKTOR */}
       <div className="my-3 bg-slate-900/90 border border-purple-500/30 rounded-2xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-lg">
         <div className="flex items-center gap-2">
           <Tv className="w-4 h-4 text-purple-400" />
@@ -975,7 +1004,6 @@ export default function OperatorControlPage() {
         </div>
 
         <div className="flex items-center gap-1.5 flex-wrap">
-          {/* Tombol 1: Sambutan Arena */}
           <button
             onClick={() => handleSetProjectorView('welcome')}
             className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
@@ -988,7 +1016,6 @@ export default function OperatorControlPage() {
             <span>1. Sambutan</span>
           </button>
 
-          {/* Tombol 2: Format Tantangan */}
           <button
             onClick={() => handleSetProjectorView('type_select')}
             className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
@@ -1001,7 +1028,6 @@ export default function OperatorControlPage() {
             <span>2. Jenis Soal</span>
           </button>
 
-          {/* Tombol 3: Pilih Kategori */}
           <button
             onClick={() => handleSetProjectorView('category_select')}
             className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
@@ -1014,12 +1040,12 @@ export default function OperatorControlPage() {
             <span>3. Kategori</span>
           </button>
 
-          {/* Tombol 4: Papan Kotak */}
           <button
             onClick={() => handleSetProjectorView('box_select')}
             className={`px-2.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
               !['waiting', 'type_select'].includes(session?.status || '') &&
               !session?.status?.startsWith('category_') &&
+              session?.status !== 'category_select' &&
               !session?.current_question_id
                 ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/30 border border-indigo-400'
                 : 'bg-slate-800 text-slate-300 hover:text-white border border-slate-700'
@@ -1029,7 +1055,6 @@ export default function OperatorControlPage() {
             <span>4. Papan Kotak</span>
           </button>
 
-          {/* Tombol 5: Soal Aktif */}
           {currentQuestion && (
             <button
               onClick={() => handleSetProjectorView('question_active')}
@@ -1059,11 +1084,11 @@ export default function OperatorControlPage() {
         </span>
       </div>
 
-      {/* MAIN CONTROL ARENA: 2-COLUMN */}
+      {/* MAIN CONTROL ARENA */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
-        {/* KOLOM KIRI (7/12): SOAL AKTIF & KONTROL TIMER & NAVIGASI */}
+        {/* KOLOM KIRI (7/12) */}
         <section className="lg:col-span-7 space-y-6 flex flex-col justify-between">
-          {/* TAMPILAN 1: JIKA PROYEKTOR SEDANG MENAMPILKAN SAMBUTAN ARENA */}
+          {/* TAMPILAN 1: SAMBUTAN */}
           {session?.status === 'waiting' && !session?.current_question_id && (
             <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center flex flex-col items-center justify-center space-y-3">
               <div className="w-14 h-14 rounded-2xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 mb-1">
@@ -1076,7 +1101,7 @@ export default function OperatorControlPage() {
                 Layar Proyektor Menampilkan Sambutan Panggung
               </h2>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Layar proyektor saat ini menyambut hadirin. Klik tombol di bawah untuk membuka pilihan Jenis Permainan atau langsung ke Papan Kotak!
+                Babak aktif saat ini adalah <strong>{activeRoundName}</strong>. Klik tombol di bawah untuk membuka pilihan Jenis Permainan atau langsung ke Papan Kotak!
               </p>
               <div className="flex items-center gap-3 pt-2">
                 <button
@@ -1097,7 +1122,7 @@ export default function OperatorControlPage() {
             </div>
           )}
 
-          {/* TAMPILAN 2: JIKA PROYEKTOR SEDANG MENAMPILKAN PILIHAN FORMAT / JENIS PERMAINAN */}
+          {/* TAMPILAN 2: PILIHAN FORMAT */}
           {session?.status === 'type_select' && !session?.current_question_id && (
             <div className="bg-slate-900/90 border border-purple-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center space-y-4">
               <div className="w-14 h-14 rounded-2xl bg-purple-600/20 border border-purple-500/40 flex items-center justify-center text-purple-400 mx-auto">
@@ -1111,7 +1136,7 @@ export default function OperatorControlPage() {
                   Pilih Format Tantangan untuk Panggung
                 </h2>
                 <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                  Proyektor saat ini menampilkan 3 format tantangan kuis. Klik salah satu jenis permainan di bawah untuk lanjut memilih kategori di proyektor!
+                  Proyektor saat ini menampilkan 3 format tantangan kuis. Klik salah satu jenis permainan untuk lanjut ke pemilihan kategori!
                 </p>
               </div>
 
@@ -1149,7 +1174,7 @@ export default function OperatorControlPage() {
             </div>
           )}
 
-          {/* TAMPILAN 2.5: JIKA PROYEKTOR SEDANG MENAMPILKAN PILIHAN KATEGORI */}
+          {/* TAMPILAN 2.5: PILIHAN KATEGORI */}
           {(session?.status?.startsWith('category_') || session?.status === 'category_select') && !session?.current_question_id && (
             <div className="bg-slate-900/90 border border-pink-500/30 rounded-2xl p-6 sm:p-8 shadow-xl backdrop-blur-md text-center space-y-4">
               <div className="w-14 h-14 rounded-2xl bg-pink-600/20 border border-pink-500/40 flex items-center justify-center text-pink-400 mx-auto">
@@ -1163,7 +1188,7 @@ export default function OperatorControlPage() {
                   Pilih Kategori Tantangan untuk Panggung
                 </h2>
                 <p className="text-xs text-slate-400 max-w-md mx-auto mt-1">
-                  Proyektor saat ini menampilkan pilihan kategori. Klik salah satu kategori di bawah untuk langsung membuka papan kotak soal kategori tersebut di layar panggung!
+                  Proyektor saat ini menampilkan pilihan kategori babak {activeRoundName}. Klik salah satu kategori untuk membuka kotak soal kategori tersebut!
                 </p>
               </div>
 
@@ -1211,7 +1236,7 @@ export default function OperatorControlPage() {
             </div>
           )}
 
-          {/* TAMPILAN 3: JIKA PROYEKTOR SEDANG MENAMPILKAN PAPAN KOTAK */}
+          {/* TAMPILAN 3: PAPAN KOTAK */}
           {!['waiting', 'type_select'].includes(session?.status || '') &&
             !session?.status?.startsWith('category_') &&
             session?.status !== 'category_select' &&
@@ -1221,13 +1246,13 @@ export default function OperatorControlPage() {
                 <LayoutGrid className="w-7 h-7" />
               </div>
               <span className="text-[11px] font-black uppercase tracking-widest text-indigo-400 bg-indigo-500/10 px-3 py-1 rounded-full border border-indigo-500/20">
-                Papan Kotak: {selectedGameType.replace('_', ' ').toUpperCase()}
+                {activeRoundName}: {selectedGameType.replace('_', ' ').toUpperCase()}
               </span>
               <h2 className="text-lg sm:text-xl font-black text-white uppercase">
                 Layar Proyektor Menampilkan Papan Kotak
               </h2>
               <p className="text-xs text-slate-400 max-w-md mx-auto">
-                Peserta di panggung sedang melihat kotak di proyektor. Klik salah satu nomor kotak di bawah untuk langsung membuka soalnya di proyektor!
+                Peserta sedang melihat kotak di proyektor. Klik salah satu nomor kotak di bawah untuk langsung membuka soalnya di panggung!
               </p>
               <div className="flex items-center gap-2 flex-wrap justify-center pt-1">
                 <button
@@ -1248,7 +1273,7 @@ export default function OperatorControlPage() {
             </div>
           )}
 
-          {/* TAMPILAN 4: KOTAK SOAL AKTIF & KUNCI CONTEKAN OPERATOR */}
+          {/* TAMPILAN 4: SOAL AKTIF & KUNCI CONTEKAN */}
           {session?.current_question_id && (
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
               <div className="flex items-center justify-between mb-3">
@@ -1271,7 +1296,6 @@ export default function OperatorControlPage() {
                   <span className="text-xs text-slate-400 font-semibold">
                     Bobot: +{currentQuestion?.points || 100} Poin
                   </span>
-                  {/* Live Realtime Timer Badge */}
                   <span
                     className={`px-3 py-1 rounded-full text-xs font-black font-mono tracking-wider flex items-center gap-1 border ${
                       remainingTime <= 5 && session?.is_timer_running
@@ -1290,7 +1314,7 @@ export default function OperatorControlPage() {
                 {currentQuestion?.question_text || 'Pilih soal dari daftar di bawah'}
               </h2>
 
-              {/* Kotak Contekan Kunci Jawaban Operator */}
+              {/* Contekan Operator */}
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-800">
                 <div className="flex items-center justify-between mb-1">
                   <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400">
@@ -1318,7 +1342,7 @@ export default function OperatorControlPage() {
             </div>
           )}
 
-          {/* PRESET DURASI CEPAT TIMER (Hanya jika ada soal aktif) */}
+          {/* PRESET DURASI CEPAT & TOMBOL AKSI TIMER */}
           {session?.current_question_id && (
             <>
               <div className="flex items-center gap-2 bg-slate-900/60 border border-slate-800 p-2.5 rounded-xl">
@@ -1342,9 +1366,7 @@ export default function OperatorControlPage() {
                 </div>
               </div>
 
-              {/* ACTION BUTTONS: TIMER, BUKA KUNCI, KEMBALI KE KOTAK, SOAL BERIKUTNYA */}
               <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
-                {/* Play / Pause Timer */}
                 <button
                   onClick={toggleTimer}
                   className={`p-3.5 rounded-2xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg ${
@@ -1359,7 +1381,6 @@ export default function OperatorControlPage() {
                   </span>
                 </button>
 
-                {/* Reset Timer */}
                 <button
                   onClick={resetTimer}
                   className="p-3.5 rounded-2xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-bold flex flex-col items-center justify-center gap-1 transition-all"
@@ -1368,7 +1389,6 @@ export default function OperatorControlPage() {
                   <span className="text-[11px] uppercase tracking-wider">Reset Timer</span>
                 </button>
 
-                {/* Buka / Tutup Kunci Jawaban */}
                 <button
                   onClick={toggleRevealAnswer}
                   className={`p-3.5 rounded-2xl font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg ${
@@ -1383,17 +1403,14 @@ export default function OperatorControlPage() {
                   </span>
                 </button>
 
-                {/* Kembali ke Papan Kotak */}
                 <button
                   onClick={() => handleSetProjectorView('box_select')}
                   className="p-3.5 rounded-2xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold flex flex-col items-center justify-center gap-1 transition-all shadow-lg shadow-indigo-600/20"
-                  title="Tutup soal ini & kembali ke tampilan kotak panggung"
                 >
                   <LayoutGrid className="w-5 h-5" />
                   <span className="text-[11px] uppercase tracking-wider">Papan Kotak</span>
                 </button>
 
-                {/* Soal Berikutnya */}
                 <button
                   onClick={handleNextQuestion}
                   disabled={loadingAction}
@@ -1406,16 +1423,15 @@ export default function OperatorControlPage() {
             </>
           )}
 
-          {/* SELEKTOR KOTAK BLINK BOX INTERAKTIF OPERATOR */}
+          {/* SELEKTOR KOTAK BLINK BOX OPERATOR */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-md">
             <div className="flex flex-wrap items-center justify-between mb-3 gap-3">
               <div className="flex flex-wrap items-center gap-2">
                 <LayoutGrid className="w-4 h-4 text-blue-400" />
                 <span className="text-xs font-black uppercase tracking-wider text-white">
-                  Pilih Kotak Blink Box ({boxCount} Kotak):
+                  Pilih Kotak {activeRoundName} ({boxCount} Kotak):
                 </span>
 
-                {/* Quick Presets & Custom Changer */}
                 <div className="flex items-center gap-1 bg-slate-950 border border-slate-800 rounded-xl p-1">
                   {[6, 9, 12].map((cnt) => (
                     <button
@@ -1442,13 +1458,7 @@ export default function OperatorControlPage() {
                         const val = Number(e.target.value);
                         if (val > 0 && val !== boxCount) handleUpdateBoxCount(val);
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          const val = Number((e.target as HTMLInputElement).value);
-                          if (val > 0 && val !== boxCount) handleUpdateBoxCount(val);
-                        }
-                      }}
-                      className="w-10 bg-slate-900 border border-slate-700 rounded text-center text-[10px] font-mono font-bold text-white py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400"
+                      className="w-10 bg-slate-900 border border-slate-700 rounded text-center text-[10px] font-mono font-bold text-white py-0.5 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -1465,22 +1475,20 @@ export default function OperatorControlPage() {
                 <button
                   onClick={() => handleSetProjectorView('category_select')}
                   className="text-[10px] text-pink-400 hover:text-white px-2 py-0.5 rounded bg-pink-950/60 hover:bg-pink-900/60 border border-pink-700/60 transition-all flex items-center gap-1"
-                  title="Tampilkan pilihan kategori di proyektor"
                 >
                   <Tag className="w-2.5 h-2.5" />
-                  <span>Pilih Kategori di Proyektor</span>
+                  <span>Pilih Kategori</span>
                 </button>
                 <button
                   onClick={() => handleSetProjectorView('type_select')}
                   className="text-[10px] text-indigo-400 hover:text-white px-2 py-0.5 rounded bg-indigo-950/60 hover:bg-indigo-900/60 border border-indigo-700/60 transition-all"
-                  title="Tampilkan 3 jenis permainan di proyektor"
                 >
-                  🎮 Pilih Jenis di Proyektor
+                  🎮 Pilih Jenis
                 </button>
               </div>
             </div>
 
-            {/* TAB FILTER JENIS PERMAINAN / BABAK */}
+            {/* TAB JENIS PERMAINAN */}
             <div className="flex items-center gap-1.5 mb-3 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               {[
                 { type: 'pilihan_ganda', label: 'Pilihan Ganda', icon: BookOpen },
@@ -1547,6 +1555,7 @@ export default function OperatorControlPage() {
               </div>
             )}
 
+            {/* GRID KOTAK */}
             <div
               className={`grid gap-2.5 ${
                 boxCount <= 4
@@ -1606,10 +1615,10 @@ export default function OperatorControlPage() {
             </div>
           </div>
 
-          {/* LIST PEMILIHAN SOAL CEPAT */}
+          {/* LIST BANK SOAL CEPAT BABAK */}
           <div className="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 flex-1">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-400 block mb-2">
-              Daftar Bank Soal ({selectedGameType.replace('_', ' ').toUpperCase()}) - {filteredQuestions.length} Soal
+              Daftar Soal {activeRoundName} ({selectedGameType.replace('_', ' ').toUpperCase()}) - {filteredQuestions.length} Soal
             </span>
             <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
               {filteredQuestions.map((q, idx) => {
@@ -1627,7 +1636,7 @@ export default function OperatorControlPage() {
                   >
                     <div className="flex items-center gap-2 truncate pr-2 min-w-0">
                       <span className="truncate">
-                        #{idx + 1}. {q.question_text}
+                        #{q.box_number || idx + 1}. {q.question_text}
                       </span>
                       {cat && (
                         <span className="shrink-0 text-[9px] font-semibold text-pink-300 bg-pink-500/20 px-1.5 py-0.5 rounded border border-pink-500/30">
@@ -1645,7 +1654,7 @@ export default function OperatorControlPage() {
           </div>
         </section>
 
-        {/* KOLOM KANAN (5/12): KONTROL SKOR CEPAT PER REGU */}
+        {/* KOLOM KANAN (5/12): KONTROL SKOR */}
         <section className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl flex flex-col h-fit">
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
             <div className="flex items-center gap-2">
@@ -1658,18 +1667,14 @@ export default function OperatorControlPage() {
               <button
                 onClick={handleOpenAddTeam}
                 className="flex items-center gap-1 px-2.5 py-1 bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 border border-blue-500/30 rounded-lg text-xs font-bold transition-all"
-                title="Tambah Regu Baru"
               >
                 <UserPlus className="w-3.5 h-3.5" />
                 <span>+ Regu</span>
               </button>
-              <span className="text-xs text-slate-500 font-mono">
-                {teams.length} Regu
-              </span>
+              <span className="text-xs text-slate-500 font-mono">{teams.length} Regu</span>
             </div>
           </div>
 
-          {/* List Tim dengan Kontrol Skor Cepat */}
           <div className="space-y-3 overflow-y-auto max-h-[480px] pr-1">
             {teams.length === 0 ? (
               <div className="text-center py-10 text-slate-500 text-xs">
@@ -1688,29 +1693,20 @@ export default function OperatorControlPage() {
                   key={t.id}
                   className="p-3 sm:p-3.5 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5 shadow-sm"
                 >
-                  {/* Header Tim & Skor Saat Ini */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <span
-                        className="w-3 h-3 rounded-full shrink-0 shadow"
-                        style={{ backgroundColor: t.color }}
-                      />
-                      <span className="font-extrabold text-white text-xs sm:text-sm">
-                        {t.name}
-                      </span>
-                      {/* Tombol Edit & Hapus Regu */}
+                      <span className="w-3 h-3 rounded-full shrink-0 shadow" style={{ backgroundColor: t.color }} />
+                      <span className="font-extrabold text-white text-xs sm:text-sm">{t.name}</span>
                       <div className="flex items-center gap-0.5 ml-1">
                         <button
                           onClick={() => handleOpenEditTeam(t)}
-                          className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition-colors"
-                          title="Edit Nama / Warna / Skor Regu"
+                          className="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800"
                         >
                           <Edit2 className="w-3 h-3" />
                         </button>
                         <button
                           onClick={() => handleDeleteTeam(t.id)}
-                          className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800 transition-colors"
-                          title="Hapus Regu"
+                          className="p-1 text-slate-400 hover:text-rose-400 rounded hover:bg-slate-800"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -1725,7 +1721,6 @@ export default function OperatorControlPage() {
                     </span>
                   </div>
 
-                  {/* Tombol Cepat: +100, +50, -50, -100 */}
                   <div className="grid grid-cols-4 gap-1 sm:gap-1.5">
                     <button
                       onClick={() => handleAdjustScore(t.id, 100)}
@@ -1753,7 +1748,6 @@ export default function OperatorControlPage() {
                     </button>
                   </div>
 
-                  {/* Input Custom Nilai Tambah / Kurang Skor */}
                   <div className="flex items-center gap-1.5 pt-1 border-t border-slate-900">
                     <span className="text-[10px] text-slate-500 font-semibold uppercase tracking-wider shrink-0">
                       Nilai Kustom:
@@ -1762,32 +1756,19 @@ export default function OperatorControlPage() {
                       type="number"
                       placeholder="Contoh: 15 / -20"
                       value={customScores[t.id] ?? ''}
-                      onChange={(e) =>
-                        setCustomScores({ ...customScores, [t.id]: e.target.value })
-                      }
+                      onChange={(e) => setCustomScores({ ...customScores, [t.id]: e.target.value })}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          handleCustomScore(t.id);
-                        }
+                        if (e.key === 'Enter') handleCustomScore(t.id);
                       }}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-600 font-mono focus:outline-none focus:border-blue-500"
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-2 py-1 text-xs text-white placeholder-slate-600 font-mono focus:outline-none"
                     />
                     <button
                       onClick={() => handleCustomScore(t.id)}
                       className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all shrink-0 flex items-center gap-1 ${
-                        appliedTeamId === t.id
-                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/40 scale-105'
-                          : 'bg-blue-600 hover:bg-blue-500 text-white'
+                        appliedTeamId === t.id ? 'bg-emerald-600 text-white scale-105' : 'bg-blue-600 hover:bg-blue-500 text-white'
                       }`}
                     >
-                      {appliedTeamId === t.id ? (
-                        <>
-                          <Check className="w-3.5 h-3.5" />
-                          <span>Berhasil!</span>
-                        </>
-                      ) : (
-                        <span>Terapkan</span>
-                      )}
+                      {appliedTeamId === t.id ? 'Berhasil!' : 'Terapkan'}
                     </button>
                   </div>
                 </div>
@@ -1795,7 +1776,6 @@ export default function OperatorControlPage() {
             )}
           </div>
 
-          {/* FINISH MATCH TRIGGER PODIUM */}
           <div className="pt-4 mt-auto border-t border-slate-800">
             <button
               onClick={handleFinishMatch}
@@ -1808,43 +1788,30 @@ export default function OperatorControlPage() {
         </section>
       </div>
 
-      {/* MODAL TAMBAH / EDIT REGU */}
+      {/* MODAL REGU */}
       {isTeamModalOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 max-w-sm w-full relative shadow-2xl">
-            <button
-              onClick={() => setIsTeamModalOpen(false)}
-              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg"
-            >
+            <button onClick={() => setIsTeamModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-white">
               <X className="w-5 h-5" />
             </button>
-
             <h3 className="text-base font-black text-white uppercase mb-1">
               {editingTeam ? 'Edit Data Regu' : 'Daftarkan Regu Baru'}
             </h3>
-            <p className="text-xs text-slate-400 mb-4">
-              Konfigurasi nama, warna identitas, dan skor awal regu
-            </p>
-
-            <form onSubmit={handleSaveTeam} className="space-y-4">
+            <form onSubmit={handleSaveTeam} className="space-y-4 pt-3">
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Nama Regu:
-                </label>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">Nama Regu:</label>
                 <input
                   type="text"
                   required
-                  placeholder="Contoh: Regu A / Garuda"
                   value={teamFormName}
                   onChange={(e) => setTeamFormName(e.target.value)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white"
                 />
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Warna Identitas:
-                </label>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">Warna Identitas:</label>
                 <div className="flex items-center gap-2">
                   <input
                     type="color"
@@ -1852,21 +1819,17 @@ export default function OperatorControlPage() {
                     onChange={(e) => setTeamFormColor(e.target.value)}
                     className="w-10 h-10 rounded-xl bg-transparent cursor-pointer border-0"
                   />
-                  <span className="text-xs font-mono text-slate-400 uppercase">
-                    {teamFormColor}
-                  </span>
+                  <span className="text-xs font-mono text-slate-400 uppercase">{teamFormColor}</span>
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                  Skor Awal (Poin):
-                </label>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">Skor Awal (Poin):</label>
                 <input
                   type="number"
                   value={teamFormScore}
                   onChange={(e) => setTeamFormScore(Number(e.target.value))}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-blue-500"
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-sm text-white font-mono"
                 />
               </div>
 
@@ -1880,7 +1843,7 @@ export default function OperatorControlPage() {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold shadow-md shadow-blue-600/30"
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold"
                 >
                   Simpan Regu
                 </button>
@@ -1891,4 +1854,4 @@ export default function OperatorControlPage() {
       )}
     </main>
   );
-            }
+}
