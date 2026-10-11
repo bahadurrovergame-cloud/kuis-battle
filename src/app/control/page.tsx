@@ -56,6 +56,9 @@ export default function OperatorControlPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [loadingAction, setLoadingAction] = useState(false);
 
+  // Status feedback penilaian cepat
+  const [awardedStatus, setAwardedStatus] = useState<string | null>(null);
+
   // Modal Verifikasi PIN Admin untuk membuka Bank Soal
   const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
   const [adminPin, setAdminPin] = useState('');
@@ -437,6 +440,7 @@ export default function OperatorControlPage() {
 
     if (view === 'welcome') {
       setCurrentQuestion(null);
+      setAwardedStatus(null);
       setSession({
         ...session,
         status: 'waiting',
@@ -458,6 +462,7 @@ export default function OperatorControlPage() {
         .eq('id', session.id);
     } else if (view === 'type_select') {
       setCurrentQuestion(null);
+      setAwardedStatus(null);
       setSession({
         ...session,
         status: 'type_select',
@@ -479,6 +484,7 @@ export default function OperatorControlPage() {
         .eq('id', session.id);
     } else if (view === 'category_select') {
       setCurrentQuestion(null);
+      setAwardedStatus(null);
       const targetStatus = typeToUse === 'pilihan_ganda' ? 'category_select' : `category_${typeToUse}`;
 
       setSession({
@@ -517,6 +523,7 @@ export default function OperatorControlPage() {
       }
     } else if (view === 'box_select') {
       setCurrentQuestion(null);
+      setAwardedStatus(null);
       const newStatus = `box_${typeToUse}`;
       const catToUse = specificCategory !== undefined ? specificCategory : selectedCategoryFilter;
       if (specificCategory !== undefined) setSelectedCategoryFilter(specificCategory);
@@ -594,6 +601,7 @@ export default function OperatorControlPage() {
     if (!session) return;
     setLoadingAction(true);
     setCurrentQuestion(q);
+    setAwardedStatus(null);
     const dur = q.timer_duration || 30;
     const nowIso = new Date().toISOString();
 
@@ -636,6 +644,56 @@ export default function OperatorControlPage() {
       .eq('id', session.id);
 
     setLoadingAction(false);
+  };
+
+  // PENILAIAN CEPAT OTOMATIS: 1 KLIK KE REGU ATAU TIDAK TERJAWAB
+  const handleAwardPoints = async (targetTeamId: string | null) => {
+    if (!session || !currentQuestion) return;
+    setLoadingAction(true);
+    const pointsValue = currentQuestion.points || 100;
+    const nowIso = new Date().toISOString();
+
+    try {
+      if (targetTeamId) {
+        // Regu berhasil menjawab: tambah poin, bunyi sfx, stop timer, buka kunci
+        sounds.playScoreUp();
+        const targetTeam = teams.find((t) => t.id === targetTeamId);
+        if (targetTeam) {
+          const newScore = targetTeam.score + pointsValue;
+          setTeams((prev) => prev.map((t) => (t.id === targetTeamId ? { ...t, score: newScore } : t)));
+          await supabase.from('teams').update({ score: newScore }).eq('id', targetTeamId);
+          setAwardedStatus(`✓ +${pointsValue} PTS untuk ${targetTeam.name}`);
+        }
+      } else {
+        // Tidak terjawab / hangus: tidak ada poin yang bertambah
+        setAwardedStatus('✕ Soal Tidak Terjawab (Hangus)');
+      }
+
+      // Hentikan timer dan buka kunci jawaban secara otomatis di panggung
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              is_timer_running: false,
+              is_answer_revealed: true,
+              updated_at: nowIso,
+            }
+          : null
+      );
+
+      await supabase
+        .from('game_sessions')
+        .update({
+          is_timer_running: false,
+          is_answer_revealed: true,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id);
+    } catch (err) {
+      console.error('Error awarding points:', err);
+    } finally {
+      setLoadingAction(false);
+    }
   };
 
   // Reset status kotak yang sudah dibuka (Lokal & Database)
@@ -1321,7 +1379,7 @@ export default function OperatorControlPage() {
             </div>
           )}
 
-          {/* TAMPILAN 4: SOAL AKTIF & KUNCI CONTEKAN */}
+          {/* TAMPILAN 4: SOAL AKTIF & KUNCI CONTEKAN & KEPUTUSAN PENILAIAN CEPAT */}
           {session?.current_question_id && (
             <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl backdrop-blur-md">
               <div className="flex items-center justify-between mb-3">
@@ -1386,6 +1444,53 @@ export default function OperatorControlPage() {
                     Penjelasan: {currentQuestion.explanation}
                   </p>
                 )}
+
+                {/* BARIS PENILAIAN CEPAT 1 KLIK */}
+                <div className="mt-3.5 pt-3 border-t border-slate-800/80">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] font-extrabold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                      <span>Keputusan Cepat (+{currentQuestion?.points || 100} PTS):</span>
+                    </span>
+                    {awardedStatus && (
+                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800 px-2 py-0.5 rounded-full animate-pulse">
+                        {awardedStatus}
+                      </span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Tombol Tidak Terjawab */}
+                    <button
+                      type="button"
+                      onClick={() => handleAwardPoints(null)}
+                      disabled={loadingAction}
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-rose-500/50 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+                      title="Soal tidak terjawab: kunci langsung dibuka tanpa menambah poin regu"
+                    >
+                      <X className="w-3.5 h-3.5 text-rose-400" />
+                      <span>✕ Tidak Terjawab</span>
+                    </button>
+
+                    {/* Tombol Tambah Poin Per Regu */}
+                    {teams.map((t) => (
+                      <button
+                        key={t.id}
+                        type="button"
+                        onClick={() => handleAwardPoints(t.id)}
+                        disabled={loadingAction}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/60 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
+                        title={`Berikan +${currentQuestion?.points || 100} poin ke ${t.name}`}
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow" style={{ backgroundColor: t.color }} />
+                        <span className="truncate max-w-[100px]">{t.name}</span>
+                        <span className="text-emerald-400 font-mono text-[11px] font-black">
+                          +{currentQuestion?.points || 100}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </div>
             </div>
           )}
@@ -1702,7 +1807,7 @@ export default function OperatorControlPage() {
           </div>
         </section>
 
-        {/* KOLOM KANAN (5/12): KONTROL SKOR */}
+        {/* KOLOM KANAN (5/12): KONTROL SKOR MANUAL & REGU (TETAP AMAN 100%) */}
         <section className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl flex flex-col h-fit">
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
             <div className="flex items-center gap-2">
