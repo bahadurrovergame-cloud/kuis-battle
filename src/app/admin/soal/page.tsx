@@ -17,6 +17,8 @@ import {
   Plus,
   Trash2,
   Edit,
+  Upload,
+  Download,
   CheckCircle2,
   AlertCircle,
   Tv,
@@ -60,6 +62,7 @@ export default function AdminDashboardPage() {
 
   // Ref penanda inisialisasi babak
   const isInitialLoadedRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Event Settings State (Judul Acara)
   const [eventTitle, setEventTitle] = useState('Kuis Battle Panggung');
@@ -136,7 +139,7 @@ export default function AdminDashboardPage() {
   const [teamFormMemberCount, setTeamFormMemberCount] = useState<number>(3);
   const [teamFormMembers, setTeamFormMembers] = useState('');
 
-  // KEAMANAN KETAT: Hanya peran 'admin' yang diizinkan mengakses halaman ini
+  // KEAMANAN KETAT: Hanya peran 'admin' yang diizinkan mengakses
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
 
   useEffect(() => {
@@ -436,6 +439,112 @@ export default function AdminDashboardPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // EXPORT JSON SOAL MASTER
+  const handleExportJSON = () => {
+    try {
+      const dataToExport = filteredQuestions.map((q) => ({
+        type: q.type,
+        question_text: q.question_text,
+        options: q.options || [],
+        correct_answer: q.correct_answer,
+        explanation: q.explanation || '',
+        timer_duration: q.timer_duration || 30,
+        points: q.points || 100,
+        category_id: q.category_id || null,
+        category_name: categories.find((c) => c.id === q.category_id)?.name || null,
+      }));
+
+      const blob = new Blob([JSON.stringify(dataToExport, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bank-soal-kuis-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatusMsg({ text: `Berhasil mengekspor ${dataToExport.length} soal ke format JSON!`, type: 'success' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setStatusMsg({ text: `Gagal mengekspor JSON: ${msg}`, type: 'error' });
+    }
+  };
+
+  // IMPORT JSON SOAL MASTER
+  const handleImportJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const content = event.target?.result as string;
+        const parsed = JSON.parse(content);
+
+        if (!Array.isArray(parsed)) {
+          throw new Error('Format JSON harus berupa Array / daftar soal ([{...}])');
+        }
+
+        if (parsed.length === 0) {
+          throw new Error('File JSON tidak berisi data soal.');
+        }
+
+        const validQuestions = [];
+        for (const item of parsed) {
+          if (!item.question_text || item.correct_answer === undefined || item.correct_answer === null) {
+            continue;
+          }
+
+          let catId = item.category_id || null;
+          if (!catId && item.category_name) {
+            const matchCat = categories.find(
+              (c) => c.name.toLowerCase() === String(item.category_name).toLowerCase()
+            );
+            if (matchCat) catId = matchCat.id;
+          }
+
+          const validTypes: QuestionType[] = ['pilihan_ganda', 'benar_salah', 'essay'];
+          const qType: QuestionType = validTypes.includes(item.type) ? item.type : 'pilihan_ganda';
+
+          validQuestions.push({
+            category_id: catId,
+            type: qType,
+            question_text: String(item.question_text).trim(),
+            options: Array.isArray(item.options) ? item.options : [],
+            correct_answer: String(item.correct_answer).trim(),
+            explanation: item.explanation ? String(item.explanation).trim() : null,
+            timer_duration: Number(item.timer_duration) || 30,
+            points: Number(item.points) || 100,
+          });
+        }
+
+        if (validQuestions.length === 0) {
+          throw new Error('Tidak ada data soal yang valid dalam file JSON.');
+        }
+
+        setLoading(true);
+        const { error } = await supabase.from('questions').insert(validQuestions);
+        if (error) throw error;
+
+        setStatusMsg({
+          text: `Berhasil mengimpor ${validQuestions.length} soal baru ke Bank Soal Master!`,
+          type: 'success',
+        });
+        loadData();
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setStatusMsg({ text: `Gagal mengimpor file JSON: ${msg}`, type: 'error' });
+      } finally {
+        setLoading(false);
+        if (fileInputRef.current) {
+          fileInputRef.current.value = '';
+        }
+      }
+    };
+
+    reader.readAsText(file);
   };
 
   // Master Bank Soal Handlers
@@ -744,6 +853,15 @@ export default function AdminDashboardPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-slate-100 flex flex-col p-4 sm:p-6">
+      {/* Hidden input untuk upload file JSON */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept=".json"
+        onChange={handleImportJSON}
+        className="hidden"
+      />
+
       {/* HEADER BAR */}
       <header className="flex flex-wrap items-center justify-between pb-4 border-b border-slate-800 gap-4">
         <div className="flex items-center gap-3">
@@ -1154,7 +1272,7 @@ export default function AdminDashboardPage() {
         </div>
       )}
 
-      {/* TAB 2: BANK SOAL MASTER */}
+      {/* TAB 2: BANK SOAL MASTER (DENGAN TOMBOL IMPORT & EXPORT JSON) */}
       {activeTab === 'soal' && (
         <div className="space-y-4 flex-1 flex flex-col">
           {/* JUDUL ACARA BAR */}
@@ -1181,7 +1299,7 @@ export default function AdminDashboardPage() {
             </button>
           </div>
 
-          {/* SUB-TABS TIPE SOAL */}
+          {/* SUB-TABS TIPE SOAL & ACTION BUTTONS */}
           <div className="bg-slate-900/80 border border-slate-800 p-3 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-md">
             <div className="flex items-center gap-1.5 overflow-x-auto">
               <button
@@ -1222,14 +1340,37 @@ export default function AdminDashboardPage() {
               </button>
             </div>
 
-            <button
-              type="button"
-              onClick={() => handleOpenAddSoal()}
-              className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
-            >
-              <Plus className="w-4 h-4" />
-              <span>+ Buat Soal Master Baru</span>
-            </button>
+            {/* ACTION BUTTONS: IMPORT, EXPORT, BUAT SOAL */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all shadow-sm"
+                title="Impor soal secara massal dari file JSON"
+              >
+                <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Import JSON</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleExportJSON}
+                className="flex items-center gap-1.5 px-3 py-2 bg-slate-950 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all shadow-sm"
+                title="Ekspor seluruh atau filter soal ke file JSON"
+              >
+                <Download className="w-3.5 h-3.5 text-blue-400" />
+                <span>Export JSON</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleOpenAddSoal()}
+                className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
+              >
+                <Plus className="w-4 h-4" />
+                <span>+ Buat Soal Master Baru</span>
+              </button>
+            </div>
           </div>
 
           {/* FILTER BANK SOAL */}
