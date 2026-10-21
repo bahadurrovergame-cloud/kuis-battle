@@ -56,16 +56,16 @@ export default function QuestionDisplay({ question, isAnswerRevealed, categoryNa
             return (
               <div
                 key={opt.key}
-                className={`flex items-center gap-4 p-5 lg:p-6 rounded-2xl border-2 transition-all duration-500 ${
+                className={`question-opt-item flex items-center gap-4 p-5 lg:p-6 rounded-2xl border-2 transition-all duration-500 ${
                   showAsCorrect
-                    ? 'bg-emerald-950/90 border-emerald-400 text-white shadow-lg shadow-emerald-500/30 scale-[1.02]'
+                    ? 'question-opt-correct bg-emerald-950/90 border-emerald-400 text-white shadow-lg shadow-emerald-500/30 scale-[1.02]'
                     : isAnswerRevealed
-                    ? 'bg-slate-900/40 border-slate-800 text-slate-500 opacity-60'
-                    : 'bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-700'
+                    ? 'question-opt-dimmed bg-slate-900/40 border-slate-800 text-slate-500 opacity-60'
+                    : 'question-opt-normal bg-slate-900/80 border-slate-800 text-slate-200 hover:border-slate-700'
                 }`}
               >
                 <div
-                  className={`w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl shrink-0 transition-colors ${
+                  className={`question-opt-key w-12 h-12 rounded-xl flex items-center justify-center font-black text-xl shrink-0 transition-colors ${
                     showAsCorrect
                       ? 'bg-emerald-500 text-slate-950 shadow-md'
                       : 'bg-slate-800 text-slate-300'
@@ -73,7 +73,7 @@ export default function QuestionDisplay({ question, isAnswerRevealed, categoryNa
                 >
                   {opt.key}
                 </div>
-                <div className="text-lg lg:text-xl font-bold flex-1">
+                <div className="question-opt-text text-lg lg:text-xl font-bold flex-1">
                   {opt.text}
                 </div>
                 {showAsCorrect && (
@@ -94,12 +94,12 @@ export default function QuestionDisplay({ question, isAnswerRevealed, categoryNa
             const showAsCorrect = isAnswerRevealed && isCorrect;
             return (
               <div
-                className={`flex flex-col items-center justify-center p-8 rounded-3xl border-2 transition-all duration-500 ${
+                className={`bs-opt-item flex flex-col items-center justify-center p-8 rounded-3xl border-2 transition-all duration-500 ${
                   showAsCorrect
-                    ? 'bg-emerald-950/90 border-emerald-400 shadow-xl shadow-emerald-500/30 scale-[1.03]'
+                    ? 'bs-opt-correct-green bg-emerald-950/90 border-emerald-400 shadow-xl shadow-emerald-500/30 scale-[1.03]'
                     : isAnswerRevealed
                     ? 'bg-slate-900/40 border-slate-800 opacity-50'
-                    : 'bg-slate-900/80 border-slate-800'
+                    : 'bs-opt-normal bg-slate-900/80 border-slate-800'
                 }`}
               >
                 <CheckCircle2 className={`w-16 h-16 mb-3 ${showAsCorrect ? 'text-emerald-400' : 'text-slate-400'}`} />
@@ -119,12 +119,12 @@ export default function QuestionDisplay({ question, isAnswerRevealed, categoryNa
             const showAsCorrect = isAnswerRevealed && isCorrect;
             return (
               <div
-                className={`flex flex-col items-center justify-center p-8 rounded-3xl border-2 transition-all duration-500 ${
+                className={`bs-opt-item flex flex-col items-center justify-center p-8 rounded-3xl border-2 transition-all duration-500 ${
                   showAsCorrect
-                    ? 'bg-rose-950/90 border-rose-400 shadow-xl shadow-rose-500/30 scale-[1.03]'
+                    ? 'bs-opt-correct-red bg-rose-950/90 border-rose-400 shadow-xl shadow-rose-500/30 scale-[1.03]'
                     : isAnswerRevealed
                     ? 'bg-slate-900/40 border-slate-800 opacity-50'
-                    : 'bg-slate-900/80 border-slate-800'
+                    : 'bs-opt-normal bg-slate-900/80 border-slate-800'
                 }`}
               >
                 <XCircle className={`w-16 h-16 mb-3 ${showAsCorrect ? 'text-rose-400' : 'text-slate-400'}`} />

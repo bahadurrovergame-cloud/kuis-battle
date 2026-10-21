@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { supabase } from '@/lib/supabase';
 
 export async function GET() {
-  const { data, error } = await supabase
+  const { error } = await supabase
     .from('categories')
     .select('id')
     .limit(1);

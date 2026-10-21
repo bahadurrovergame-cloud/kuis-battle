@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { supabase, Team, GameSession } from '@/lib/supabase';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { supabase, Team, GameSession, parseSessionMeta, applyThemeToDom } from '@/lib/supabase';
 import { useWakeLock } from '@/hooks/useWakeLock';
 import { 
   Trophy, 
@@ -13,7 +13,6 @@ import {
   Sparkles, 
   ArrowRight,
   TrendingUp,
-  RefreshCw,
   Maximize,
   Minimize
 } from 'lucide-react';
@@ -58,26 +57,8 @@ export default function PesertaPage() {
     return () => document.removeEventListener('fullscreenchange', handleFsChange);
   }, []);
 
-  // Auto-restore session from localStorage on mount & deteksi parameter ?room= di URL
-  useEffect(() => {
-    const urlRoom =
-      typeof window !== 'undefined'
-        ? new URLSearchParams(window.location.search).get('room')?.toUpperCase().trim() || null
-        : null;
-    const savedRoom = localStorage.getItem('peserta_room');
-    const savedTeamId = localStorage.getItem('peserta_team_id');
-
-    if (urlRoom) {
-      setRoomCode(urlRoom);
-      fetchRoomTeams(urlRoom);
-    } else if (savedRoom && savedTeamId) {
-      setRoomCode(savedRoom);
-      restoreTeam(savedRoom, savedTeamId);
-    }
-  }, []);
-
   // Fetch teams when room code is typed
-  const fetchRoomTeams = async (code: string) => {
+  const fetchRoomTeams = useCallback(async (code: string) => {
     if (!code) return;
     try {
       const { data: sessionData } = await supabase
@@ -88,6 +69,8 @@ export default function PesertaPage() {
 
       if (sessionData) {
         setSession(sessionData);
+        const { theme } = parseSessionMeta(sessionData);
+        applyThemeToDom(theme);
         const { data: teamsData } = await supabase
           .from('teams')
           .select('*')
@@ -100,13 +83,84 @@ export default function PesertaPage() {
     } catch {
       // Quiet fail on typing
     }
-  };
+  }, []);
+
+  const restoreTeam = useCallback(async (room: string, teamId: string) => {
+    try {
+      const { data: sessionData } = await supabase
+        .from('game_sessions')
+        .select('*')
+        .eq('room_code', room.toUpperCase().trim())
+        .single();
+
+      if (!sessionData) return;
+      setSession(sessionData);
+      const { theme } = parseSessionMeta(sessionData);
+      applyThemeToDom(theme);
+
+      const { data: teamData } = await supabase
+        .from('teams')
+        .select('*')
+        .eq('id', teamId)
+        .single();
+
+      if (teamData) {
+        setCurrentTeam(teamData);
+        prevScoreRef.current = teamData.score;
+        setJoined(true);
+      }
+    } catch {
+      localStorage.removeItem('peserta_team_id');
+    }
+  }, []);
+
+  // Auto-restore session from localStorage on mount & deteksi parameter ?room= di URL
+  useEffect(() => {
+    let ignore = false;
+    const urlRoom =
+      typeof window !== 'undefined'
+        ? new URLSearchParams(window.location.search).get('room')?.toUpperCase().trim() || null
+        : null;
+    const savedRoom = typeof window !== 'undefined' ? localStorage.getItem('peserta_room') : null;
+    const savedTeamId = typeof window !== 'undefined' ? localStorage.getItem('peserta_team_id') : null;
+
+    const targetRoom = urlRoom || savedRoom;
+    if (targetRoom) {
+      queueMicrotask(() => {
+        setRoomCode(targetRoom);
+      });
+    }
+
+    const run = async () => {
+      if (!ignore) {
+        if (urlRoom) {
+          await fetchRoomTeams(urlRoom);
+        } else if (savedRoom && savedTeamId) {
+          await restoreTeam(savedRoom, savedTeamId);
+        }
+      }
+    };
+    run();
+
+    return () => {
+      ignore = true;
+    };
+  }, [fetchRoomTeams, restoreTeam]);
 
   useEffect(() => {
+    let ignore = false;
     if (!joined && roomCode.length >= 4) {
-      fetchRoomTeams(roomCode);
+      const run = async () => {
+        if (!ignore) {
+          await fetchRoomTeams(roomCode);
+        }
+      };
+      run();
     }
-  }, [roomCode, joined]);
+    return () => {
+      ignore = true;
+    };
+  }, [roomCode, joined, fetchRoomTeams]);
 
   // Realtime subscription for available teams in Join screen
   useEffect(() => {
@@ -132,33 +186,6 @@ export default function PesertaPage() {
       supabase.removeChannel(channel);
     };
   }, [joined, session?.id]);
-
-  const restoreTeam = async (room: string, teamId: string) => {
-    try {
-      const { data: sessionData } = await supabase
-        .from('game_sessions')
-        .select('*')
-        .eq('room_code', room.toUpperCase().trim())
-        .single();
-
-      if (!sessionData) return;
-      setSession(sessionData);
-
-      const { data: teamData } = await supabase
-        .from('teams')
-        .select('*')
-        .eq('id', teamId)
-        .single();
-
-      if (teamData) {
-        setCurrentTeam(teamData);
-        prevScoreRef.current = teamData.score;
-        setJoined(true);
-      }
-    } catch {
-      localStorage.removeItem('peserta_team_id');
-    }
-  };
 
   // Join or Create team
   const handleJoin = async (e: React.FormEvent) => {
@@ -236,10 +263,13 @@ export default function PesertaPage() {
   };
 
   // Realtime subscription for team updates and ranks
-  useEffect(() => {
-    if (!joined || !currentTeam || !session) return;
+  const currentTeamId = currentTeam?.id;
+  const currentSessionId = session?.id;
 
-    const channelName = `team_live_${currentTeam.id}_${Date.now()}`;
+  useEffect(() => {
+    if (!joined || !currentTeamId || !currentSessionId) return;
+
+    const channelName = `team_live_${currentTeamId}_${Date.now()}`;
     const channel = supabase
       .channel(channelName)
       .on(
@@ -253,7 +283,7 @@ export default function PesertaPage() {
           const updatedRow = payload.new as Team;
 
           // If the update is specifically for our team, immediately update score & trigger flash
-          if (updatedRow && updatedRow.id === currentTeam.id) {
+          if (updatedRow && updatedRow.id === currentTeamId) {
             if (prevScoreRef.current !== null && updatedRow.score !== prevScoreRef.current) {
               if (updatedRow.score > prevScoreRef.current) {
                 setScoreFlash('increase');
@@ -270,14 +300,31 @@ export default function PesertaPage() {
           const { data: allTeams } = await supabase
             .from('teams')
             .select('*')
-            .eq('session_id', session.id)
+            .eq('session_id', currentSessionId)
             .order('score', { ascending: false });
 
           if (allTeams) {
-            const myIndex = allTeams.findIndex((t) => t.id === currentTeam.id);
+            const myIndex = allTeams.findIndex((t) => t.id === currentTeamId);
             if (myIndex !== -1) {
               setCurrentTeam((prev) => (prev ? { ...prev, rank: myIndex + 1 } : null));
             }
+          }
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'game_sessions',
+          filter: `id=eq.${currentSessionId}`,
+        },
+        (payload) => {
+          const s = payload.new as GameSession;
+          if (s) {
+            setSession(s);
+            const { theme } = parseSessionMeta(s);
+            applyThemeToDom(theme);
           }
         }
       )
@@ -288,7 +335,7 @@ export default function PesertaPage() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [joined, currentTeam?.id, session?.id]);
+  }, [joined, currentTeamId, currentSessionId]);
 
   const handleLeave = () => {
     localStorage.removeItem('peserta_room');

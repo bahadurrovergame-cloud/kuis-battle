@@ -2,11 +2,13 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { supabase, GameSession, Question, Team, parseQuestionMeta, parseSessionMeta } from '@/lib/supabase';
+import { supabase, GameSession, Question, Team, parseQuestionMeta, parseSessionMeta, applyThemeToDom, QuizStateUpdatePayload } from '@/lib/supabase';
+import ThemeSelector from '@/components/ThemeSelector';
 import CircularTimer from '@/components/CircularTimer';
 import QuestionDisplay from '@/components/QuestionDisplay';
 import Leaderboard from '@/components/Leaderboard';
 import VictoryPodium from '@/components/VictoryPodium';
+import ScoreToast, { ScoreEventPayload } from '@/components/ScoreToast';
 import { sounds } from '@/lib/sound';
 import { 
   Tv, 
@@ -34,9 +36,11 @@ export default function OperatorProjectorPage() {
   const [categories, setCategories] = useState<{ id: string; name: string; description?: string | null }[]>([]);
   const [teams, setTeams] = useState<Team[]>([]);
   const [isConnected, setIsConnected] = useState(false);
-  const [joinUrl, setJoinUrl] = useState('');
   const [showQrModal, setShowQrModal] = useState(false);
   const [audioUnlocked, setAudioUnlocked] = useState(false);
+
+  // Score animation event dari broadcast operator
+  const [scoreEvent, setScoreEvent] = useState<ScoreEventPayload | null>(null);
 
   // Header Collapse state
   const [isHeaderCollapsed, setIsHeaderCollapsed] = useState(false);
@@ -83,16 +87,20 @@ export default function OperatorProjectorPage() {
     };
   }, []);
 
-  // Set Join URL from browser origin & active room_code
+  // Join URL derived from browser origin & active room_code
+  const [origin, setOrigin] = useState('');
+
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const rCode = session?.room_code;
-      const url = rCode
-        ? `${window.location.origin}/peserta?room=${encodeURIComponent(rCode)}`
-        : `${window.location.origin}/peserta`;
-      setJoinUrl(url);
-    }
-  }, [session?.room_code]);
+    queueMicrotask(() => {
+      setOrigin(window.location.origin);
+    });
+  }, []);
+
+  const joinUrl = origin
+    ? session?.room_code
+      ? `${origin}/peserta?room=${encodeURIComponent(session.room_code)}`
+      : `${origin}/peserta`
+    : '';
 
   // Fetch initial data dengan dukungan Paket Soal per Room
   const fetchInitialData = useCallback(async () => {
@@ -128,6 +136,9 @@ export default function OperatorProjectorPage() {
         setSession(sessionData);
         setRemainingTime(sessionData.timer_remaining);
 
+        const { theme } = parseSessionMeta(sessionData);
+        applyThemeToDom(theme);
+
         if (typeof window !== 'undefined') {
           localStorage.setItem('active_room_code', sessionData.room_code);
         }
@@ -156,7 +167,8 @@ export default function OperatorProjectorPage() {
           const { data: qDataList } = await supabase
             .from('questions')
             .select('*')
-            .order('created_at', { ascending: true });
+            .order('created_at', { ascending: true })
+            .limit(50);
           if (qDataList) setQuestionsList(qDataList.map(parseQuestionMeta));
         }
 
@@ -184,19 +196,32 @@ export default function OperatorProjectorPage() {
   }, []);
 
   useEffect(() => {
-    fetchInitialData();
+    let ignore = false;
+    const run = async () => {
+      if (!ignore) {
+        await fetchInitialData();
+      }
+    };
+    run();
+    return () => {
+      ignore = true;
+    };
   }, [fetchInitialData]);
 
   // Sync openedBoxIds whenever a question is activated
   useEffect(() => {
     if (!session?.id || !session?.current_question_id) return;
-    setOpenedBoxIds((prev) => {
-      if (prev.includes(session.current_question_id!)) return prev;
-      const next = [...prev, session.current_question_id!];
-      try {
-        localStorage.setItem(`opened_boxes_${session.id}`, JSON.stringify(next));
-      } catch {}
-      return next;
+    const qId = session.current_question_id;
+    const sId = session.id;
+    queueMicrotask(() => {
+      setOpenedBoxIds((prev) => {
+        if (prev.includes(qId)) return prev;
+        const next = [...prev, qId];
+        try {
+          localStorage.setItem(`opened_boxes_${sId}`, JSON.stringify(next));
+        } catch {}
+        return next;
+      });
     });
   }, [session?.id, session?.current_question_id]);
 
@@ -230,6 +255,9 @@ export default function OperatorProjectorPage() {
               sounds.playCorrect();
             }
             prevRevealedRef.current = newSession.is_answer_revealed;
+
+            const { theme } = parseSessionMeta(newSession);
+            applyThemeToDom(theme);
 
             if (newSession.active_round !== session.active_round) {
               fetchInitialData();
@@ -277,6 +305,67 @@ export default function OperatorProjectorPage() {
       .on('broadcast', { event: 'box_count_sync' }, () => {
         fetchInitialData();
       })
+      // 🎬 Listener animasi skor dari operator
+      .on('broadcast', { event: 'score_event' }, (payload) => {
+        const data = payload.payload as ScoreEventPayload;
+        if (data) {
+          setScoreEvent(data);
+        }
+      })
+      // ⚡ Listener sinkronisasi state instan (Zero Delay via Supabase Broadcast)
+      .on('broadcast', { event: 'quiz_state_update' }, (payload) => {
+        const data = payload.payload as QuizStateUpdatePayload;
+        if (!data) return;
+
+        // 1. Sinkronisasi Session (status tampilan, timer, reveal jawaban, dsb)
+        const sessionUp = data.sessionUpdate;
+        if (sessionUp) {
+          setSession((prev) => {
+            if (!prev) return null;
+            const nextSession = { ...prev, ...sessionUp };
+
+            if (sessionUp.is_answer_revealed && !prevRevealedRef.current) {
+              sounds.playCorrect();
+            }
+            if (sessionUp.is_answer_revealed !== undefined) {
+              prevRevealedRef.current = sessionUp.is_answer_revealed;
+            }
+
+            const { theme } = parseSessionMeta(nextSession);
+            if (theme) applyThemeToDom(theme);
+
+            return nextSession;
+          });
+        }
+
+        // 2. Pertanyaan aktif
+        if (data.currentQuestion !== undefined) {
+          if (data.currentQuestion) {
+            const parsedQ = data.currentQuestion;
+            setQuestionsList((prev) => {
+              const exists = prev.some((q) => q.id === parsedQ.id);
+              if (!exists) return [parsedQ, ...prev];
+              return prev.map((q) => (q.id === parsedQ.id ? parsedQ : q));
+            });
+          }
+        }
+
+        // 3. Waktu tersisa timer
+        if (data.remainingTime !== undefined) {
+          setRemainingTime(data.remainingTime);
+          prevRemainingRef.current = data.remainingTime;
+        }
+
+        // 4. Regu & Skor
+        if (data.teams) {
+          setTeams(data.teams);
+        }
+
+        // 5. Kotak yang dibuka
+        if (data.openedBoxIds) {
+          setOpenedBoxIds(data.openedBoxIds);
+        }
+      })
       .subscribe((status) => {
         setIsConnected(status === 'SUBSCRIBED');
       });
@@ -313,6 +402,8 @@ export default function OperatorProjectorPage() {
             if (latestSession.active_round !== session.active_round) {
               fetchInitialData();
             }
+            const { theme } = parseSessionMeta(latestSession);
+            applyThemeToDom(theme);
             setSession(latestSession);
           }
         }
@@ -337,8 +428,10 @@ export default function OperatorProjectorPage() {
   useEffect(() => {
     if (!session?.is_timer_running || !session?.updated_at) {
       if (session) {
-        setRemainingTime(session.timer_remaining);
-        prevRemainingRef.current = session.timer_remaining;
+        queueMicrotask(() => {
+          setRemainingTime(session.timer_remaining);
+          prevRemainingRef.current = session.timer_remaining;
+        });
       }
       return;
     }
@@ -365,7 +458,7 @@ export default function OperatorProjectorPage() {
     const timerInterval = setInterval(calcTime, 250);
 
     return () => clearInterval(timerInterval);
-  }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
+  }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining, session]);
 
   const currentQuestion = session?.current_question_id
     ? questionsList.find((q) => q.id === session.current_question_id) || null
@@ -440,6 +533,10 @@ export default function OperatorProjectorPage() {
       <div className="absolute top-0 left-1/4 w-96 h-96 bg-blue-600/10 rounded-full blur-3xl pointer-events-none" />
       <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-purple-600/10 rounded-full blur-3xl pointer-events-none" />
 
+      {/* 🎬 ANIMASI SKOR — muncul otomatis saat operator beri nilai */}
+      <ScoreToast event={scoreEvent} onDone={() => setScoreEvent(null)} />
+
+
       {/* FLOATING RESTORE HEADER BUTTON */}
       {isHeaderCollapsed && (
         <div className="fixed top-3 right-4 z-50 flex items-center gap-2 animate-in fade-in">
@@ -491,6 +588,8 @@ export default function OperatorProjectorPage() {
               </button>
             )}
 
+            <ThemeSelector session={session} variant="compact" />
+
             <button
               onClick={() => setShowQrModal(true)}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 text-xs font-semibold hover:border-slate-700 transition-all"
@@ -538,7 +637,7 @@ export default function OperatorProjectorPage() {
       >
         <button
           onClick={() => setIsLeaderboardOpen(!isLeaderboardOpen)}
-          className="flex items-center gap-2.5 px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-2xl shadow-amber-500/40 border border-amber-300/60 backdrop-blur-md transition-all transform hover:scale-105 active:scale-95"
+          className="floating-leaderboard-btn flex items-center gap-2.5 px-5 py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-2xl shadow-amber-500/40 border border-amber-300/60 backdrop-blur-md transition-all transform hover:scale-105 active:scale-95"
         >
           <Trophy className="w-5 h-5 text-slate-950" />
           <span>{isLeaderboardOpen ? 'Tutup Papan Skor' : 'Buka Papan Skor'}</span>
@@ -706,7 +805,7 @@ export default function OperatorProjectorPage() {
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 sm:gap-4 w-full pt-1 max-h-[62vh] overflow-y-auto pr-1 pb-2">
-              <div className="p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/90 border-2 border-indigo-500/50 shadow-xl flex flex-col justify-between text-left transition-all hover:border-indigo-400">
+              <div className="stage-cat-all-card p-4 sm:p-5 rounded-2xl bg-gradient-to-br from-indigo-950/90 via-slate-900 to-purple-950/90 border-2 border-indigo-500/50 shadow-xl flex flex-col justify-between text-left transition-all hover:border-indigo-400">
                 <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-xl bg-indigo-600/30 border border-indigo-500/40 flex items-center justify-center text-indigo-400 mb-2 sm:mb-3 shadow-md shrink-0">
                   <LayoutGrid className="w-5 h-5 sm:w-6 sm:h-6" />
                 </div>
@@ -794,11 +893,11 @@ export default function OperatorProjectorPage() {
                           : totalBoxes > 9
                           ? 'h-20 sm:h-24 md:h-28'
                           : 'h-24 sm:h-28 md:h-32'
-                      } rounded-xl sm:rounded-2xl font-black flex flex-col items-center justify-center gap-0.5 sm:gap-1 transition-all duration-300 relative overflow-hidden select-none border-2 shadow-xl ${
+                      } stage-box-card rounded-xl sm:rounded-2xl font-black flex flex-col items-center justify-center gap-0.5 sm:gap-1 transition-all duration-300 relative overflow-hidden select-none border-2 shadow-xl ${
                         isOpened
-                          ? 'bg-slate-950/60 border-slate-800/80 text-slate-600 opacity-40 scale-95'
+                          ? 'stage-box-card-opened bg-slate-950/60 border-slate-800/80 text-slate-600 opacity-40 scale-95'
                           : matchedQ
-                          ? 'bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 border-indigo-500/70 text-white shadow-indigo-600/30'
+                          ? 'stage-box-card-available bg-gradient-to-br from-indigo-950 via-slate-900 to-purple-950 border-indigo-500/70 text-white shadow-indigo-600/30'
                           : 'bg-slate-950/40 border-slate-800 text-slate-700'
                       }`}
                     >
@@ -807,13 +906,13 @@ export default function OperatorProjectorPage() {
                       )}
 
                       {/* Nomor Kotak */}
-                      <span className={`${isUltraDense ? 'text-xl sm:text-2xl md:text-3xl' : 'text-3xl sm:text-4xl'} font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300`}>
+                      <span className={`stage-box-number ${isUltraDense ? 'text-xl sm:text-2xl md:text-3xl' : 'text-3xl sm:text-4xl'} font-black font-mono tracking-wider drop-shadow-md text-transparent bg-clip-text bg-gradient-to-b from-white to-slate-300`}>
                         #{boxNum}
                       </span>
 
                       {/* Tag Kategori */}
                       {boxCatName && (
-                        <span className={`${isUltraDense ? 'text-[7px] sm:text-[8px] px-1 py-0' : 'text-[9px] px-2 py-0.5'} text-pink-300 font-bold uppercase tracking-wider truncate max-w-[85px] sm:max-w-[110px] rounded-full bg-pink-950/70 border border-pink-700/50 flex items-center gap-1 shadow-sm`}>
+                        <span className={`stage-box-category ${isUltraDense ? 'text-[7px] sm:text-[8px] px-1 py-0' : 'text-[9px] px-2 py-0.5'} text-pink-300 font-bold uppercase tracking-wider truncate max-w-[85px] sm:max-w-[110px] rounded-full bg-pink-950/70 border border-pink-700/50 flex items-center gap-1 shadow-sm`}>
                           <Tag className="w-2 h-2 text-pink-400 shrink-0" />
                           <span className="truncate">{boxCatName}</span>
                         </span>
@@ -821,7 +920,7 @@ export default function OperatorProjectorPage() {
 
                       {/* Status Kotak */}
                       <span
-                        className={`${isUltraDense ? 'text-[8px] sm:text-[9px] px-1.5 py-0' : 'text-[10px] sm:text-[11px] px-2.5 py-0.5'} uppercase tracking-widest font-black rounded-full border ${
+                        className={`stage-box-status ${isUltraDense ? 'text-[8px] sm:text-[9px] px-1.5 py-0' : 'text-[10px] sm:text-[11px] px-2.5 py-0.5'} uppercase tracking-widest font-black rounded-full border ${
                           isOpened
                             ? 'bg-slate-800/60 border-slate-700 text-slate-500'
                             : matchedQ
@@ -834,7 +933,7 @@ export default function OperatorProjectorPage() {
 
                       {/* Poin Hint */}
                       {!isOpened && matchedQ && (
-                        <span className={`${isUltraDense ? 'text-[7px] sm:text-[8px]' : 'text-[9px]'} font-bold text-indigo-300/80 uppercase tracking-wider`}>
+                        <span className={`stage-box-points ${isUltraDense ? 'text-[7px] sm:text-[8px]' : 'text-[9px]'} font-bold text-indigo-300/80 uppercase tracking-wider`}>
                           +{matchedQ.points || 100} Poin
                         </span>
                       )}

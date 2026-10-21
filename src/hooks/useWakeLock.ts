@@ -7,6 +7,14 @@ export function useWakeLock() {
   const [isLocked, setIsLocked] = useState(false);
   const sentinelRef = useRef<WakeLockSentinel | null>(null);
 
+  useEffect(() => {
+    if (typeof window !== 'undefined' && 'wakeLock' in navigator) {
+      queueMicrotask(() => {
+        setIsSupported(true);
+      });
+    }
+  }, []);
+
   const requestWakeLock = useCallback(async () => {
     if (typeof window === 'undefined' || !('wakeLock' in navigator)) {
       return false;
@@ -39,9 +47,14 @@ export function useWakeLock() {
   }, []);
 
   useEffect(() => {
+    let ignore = false;
     if (typeof window !== 'undefined' && 'wakeLock' in navigator) {
-      setIsSupported(true);
-      requestWakeLock();
+      const init = async () => {
+        if (!ignore) {
+          await requestWakeLock();
+        }
+      };
+      init();
 
       const handleVisibilityChange = () => {
         if (document.visibilityState === 'visible') {
@@ -51,6 +64,7 @@ export function useWakeLock() {
 
       document.addEventListener('visibilitychange', handleVisibilityChange);
       return () => {
+        ignore = true;
         document.removeEventListener('visibilitychange', handleVisibilityChange);
         releaseWakeLock();
       };

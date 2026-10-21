@@ -8,7 +8,9 @@ import {
   Team,
   parseSessionMeta,
   buildSessionTitleWithBoxes,
+  applyThemeToDom,
 } from '@/lib/supabase';
+import ThemeSelector from '@/components/ThemeSelector';
 import {
   Tv,
   MonitorPlay,
@@ -21,7 +23,6 @@ import {
   WifiOff,
   Sparkles,
   Trophy,
-  ShieldCheck,
   RotateCcw,
   Plus,
   Layers,
@@ -44,6 +45,12 @@ export default function AdminHubPage() {
     null
   );
 
+  useEffect(() => {
+    queueMicrotask(() => {
+      setBaseUrl(window.location.origin);
+    });
+  }, []);
+
   // Modal Buat Ruangan Baru
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [newRoomCode, setNewRoomCode] = useState('');
@@ -51,13 +58,6 @@ export default function AdminHubPage() {
   const [newRoomBoxCount, setNewRoomBoxCount] = useState<number>(10);
   const [autoCreateTeams, setAutoCreateTeams] = useState<boolean>(true);
   const [isCreatingRoom, setIsCreatingRoom] = useState(false);
-
-  // Deteksi baseUrl dari browser saat ini
-  useEffect(() => {
-    if (typeof window !== 'undefined') {
-      setBaseUrl(window.location.origin);
-    }
-  }, []);
 
   // Fetch seluruh sesi ruangan & tim
   const fetchData = useCallback(async () => {
@@ -91,6 +91,8 @@ export default function AdminHubPage() {
 
         setSession(currentActive);
         setSelectedRoomCode(currentActive.room_code);
+        const { theme } = parseSessionMeta(currentActive);
+        applyThemeToDom(theme);
 
         // Ambil tim khusus untuk ruangan aktif
         const activeRoomTeams = (allTeamsData || []).filter(
@@ -104,7 +106,16 @@ export default function AdminHubPage() {
   }, []);
 
   useEffect(() => {
-    fetchData();
+    let ignore = false;
+    const run = async () => {
+      if (!ignore) {
+        await fetchData();
+      }
+    };
+    run();
+    return () => {
+      ignore = true;
+    };
   }, [fetchData]);
 
   // Realtime subscription untuk sesi ruangan yang sedang aktif
@@ -120,6 +131,8 @@ export default function AdminHubPage() {
           const updated = payload.new as GameSession;
           if (updated) {
             setSession(updated);
+            const { theme } = parseSessionMeta(updated);
+            applyThemeToDom(theme);
             setAllSessions((prev) =>
               prev.map((item) => (item.id === updated.id ? updated : item))
             );
@@ -354,6 +367,8 @@ export default function AdminHubPage() {
 
         {/* Room Info & Quick Nav */}
         <div className="flex items-center gap-3">
+          <ThemeSelector session={session} />
+
           <div className="bg-slate-900 border border-slate-800 px-4 py-2 rounded-2xl text-center">
             <span className="block text-[10px] text-slate-400 font-bold uppercase tracking-widest">
               Ruangan Dipilih

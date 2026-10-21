@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   supabase,
+  GameSession,
   Question,
   QuestionType,
   Team,
@@ -11,8 +12,10 @@ import {
   parseQuestionMeta,
   parseSessionMeta,
   buildSessionTitleWithBoxes,
-  buildExplanationWithMeta
+  buildExplanationWithMeta,
+  applyThemeToDom
 } from '@/lib/supabase';
+import ThemeSelector from '@/components/ThemeSelector';
 import {
   BookOpen,
   Plus,
@@ -38,8 +41,10 @@ import {
   RotateCcw,
   Layers,
   Sparkles,
-  CheckSquare
+  CheckSquare,
+  Loader2
 } from 'lucide-react';
+import { GeneratedQuestion } from '@/lib/gemini';
 
 interface Category {
   id: string;
@@ -55,6 +60,7 @@ export default function AdminDashboardPage() {
   const [activeTab, setActiveTab] = useState<'babak' | 'soal' | 'kategori' | 'regu'>('babak');
 
   // Shared session & Multi-room
+  const [session, setSession] = useState<GameSession | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [currentRoomCode, setCurrentRoomCode] = useState<string>('KUIS88');
   const [availableRooms, setAvailableRooms] = useState<{ id: string; room_code: string; title: string }[]>([]);
@@ -71,6 +77,12 @@ export default function AdminDashboardPage() {
 
   // Babak / Round Management States (Dukungan Custom Babak)
   const [activeRound, setActiveRound] = useState<string>('Babak 1');
+  const activeRoundRef = useRef<string>(activeRound);
+
+  useEffect(() => {
+    activeRoundRef.current = activeRound;
+  }, [activeRound]);
+
   const [customRounds, setCustomRounds] = useState<string[]>(['Babak 1', 'Babak 2', 'Final']);
   const [isNewRoundModalOpen, setIsNewRoundModalOpen] = useState(false);
   const [newRoundInput, setNewRoundInput] = useState('');
@@ -85,12 +97,13 @@ export default function AdminDashboardPage() {
   // Master Soal States
   const [categories, setCategories] = useState<Category[]>([]);
   const [questions, setQuestions] = useState<Question[]>([]);
+  const [totalQuestionsCount, setTotalQuestionsCount] = useState<number>(0);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedTypeTab, setSelectedTypeTab] = useState<'all' | 'pilihan_ganda' | 'benar_salah' | 'essay'>('all');
   const [searchQuery, setSearchQuery] = useState('');
   const [packageFilter, setPackageFilter] = useState('all');
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [pageSize, setPageSize] = useState<number>(10);
+  const [pageSize] = useState<number>(10);
   const [loading, setLoading] = useState(false);
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
@@ -100,8 +113,10 @@ export default function AdminDashboardPage() {
   const [bulkPackage, setBulkPackage] = useState<string>('');
 
   useEffect(() => {
-    setCurrentPage(1);
-    setSelectedQuestionIds([]);
+    queueMicrotask(() => {
+      setCurrentPage(1);
+      setSelectedQuestionIds([]);
+    });
   }, [selectedCategory, selectedTypeTab, searchQuery, packageFilter, pageSize]);
 
   // Category Management States
@@ -110,6 +125,22 @@ export default function AdminDashboardPage() {
   const [catFormName, setCatFormName] = useState('');
   const [catFormDesc, setCatFormDesc] = useState('');
   const [savingCat, setSavingCat] = useState(false);
+
+  // AI Question Generator States
+  const [isAiGenModalOpen, setIsAiGenModalOpen] = useState(false);
+  const [aiTopic, setAiTopic] = useState('');
+  const [aiDifficulty, setAiDifficulty] = useState<'mudah' | 'sedang' | 'sulit' | 'campuran'>('sedang');
+  const [aiQuestionType, setAiQuestionType] = useState<'pilihan_ganda' | 'benar_salah' | 'essay' | 'campuran'>('pilihan_ganda');
+  const [aiAvoidDuplicates, setAiAvoidDuplicates] = useState<boolean>(true);
+  const [aiCount, setAiCount] = useState<number>(3);
+  const [aiCategory, setAiCategory] = useState<string>('');
+  const [aiPackage, setAiPackage] = useState<string>('Paket AI Gemini');
+  const [aiPoints, setAiPoints] = useState<number>(100);
+  const [aiTimer, setAiTimer] = useState<number>(30);
+  const [isAiGenerating, setIsAiGenerating] = useState(false);
+  const [isAiSaving, setIsAiSaving] = useState(false);
+  const [aiGeneratedQuestions, setAiGeneratedQuestions] = useState<GeneratedQuestion[]>([]);
+  const [aiGenError, setAiGenError] = useState<string>('');
 
   // Modal Soal State (Dukungan Custom Package)
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -159,7 +190,9 @@ export default function AdminDashboardPage() {
     if (role !== 'admin') {
       router.push('/login');
     } else {
-      setIsAuthorized(true);
+      queueMicrotask(() => {
+        setIsAuthorized(true);
+      });
     }
   }, [router]);
 
@@ -221,9 +254,13 @@ export default function AdminDashboardPage() {
       }
 
       if (sData) {
+        setSession(sData);
         setSessionId(sData.id);
         setCurrentRoomCode(sData.room_code);
         setActiveQuestionId(sData.current_question_id || null);
+
+        const { cleanTitle, boxCount, theme } = parseSessionMeta(sData);
+        applyThemeToDom(theme);
 
         if (!isInitialLoadedRef.current) {
           if (sData.active_round) {
@@ -240,7 +277,6 @@ export default function AdminDashboardPage() {
           } catch {}
         }
 
-        const { cleanTitle, boxCount } = parseSessionMeta(sData);
         setEventTitle(cleanTitle);
         setRoundBoxCount(boxCount || 12);
 
@@ -250,39 +286,101 @@ export default function AdminDashboardPage() {
           .select('round_name')
           .eq('session_id', sData.id);
 
-        const existingRoundNames = existingRoundsData ? existingRoundsData.map((r: any) => r.round_name) : [];
+        const existingRoundNames = existingRoundsData ? existingRoundsData.map((r: { round_name: string }) => r.round_name) : [];
         setCustomRounds((prev) => {
           const merged = Array.from(new Set([...prev, ...existingRoundNames, sData.active_round || 'Babak 1'].filter(Boolean)));
           return merged;
         });
 
-        const currentActive = isInitialLoadedRef.current ? activeRound : (sData.active_round || 'Babak 1');
+        const currentActive = isInitialLoadedRef.current ? activeRoundRef.current : (sData.active_round || 'Babak 1');
         loadRoundQuestions(currentActive, sData.id);
       }
 
-      const { data: cats } = await supabase.from('categories').select('*').order('name');
-      if (cats) setCategories(cats);
+      // 1. Ambil kategori & regu secara paralel & langsung pasang ke state tanpa saling menunggu
+      const catsPromise = supabase
+        .from('categories')
+        .select('*')
+        .order('name')
+        .then(({ data, error }) => {
+          if (!error && data) setCategories(data);
+        });
 
-      const { data: qs } = await supabase.from('questions').select('*').order('created_at', { ascending: false });
-      if (qs) setQuestions(qs.map(parseQuestionMeta));
+      const teamsPromise = sData
+        ? supabase
+            .from('teams')
+            .select('*')
+            .eq('session_id', sData.id)
+            .order('score', { ascending: false })
+            .then(({ data, error }) => {
+              if (!error && data) setTeams(data);
+            })
+        : Promise.resolve();
 
-      if (sData) {
-        const { data: tData } = await supabase
-          .from('teams')
-          .select('*')
-          .eq('session_id', sData.id)
-          .order('score', { ascending: false });
-        if (tData) setTeams(tData);
-      }
+      // 2. Hitung jumlah total seluruh soal secara instan (~200ms)
+      const countPromise = supabase
+        .from('questions')
+        .select('*', { count: 'exact', head: true })
+        .then(({ count }) => {
+          if (typeof count === 'number') setTotalQuestionsCount(count);
+        });
+
+      // 3. Muat batch 300 soal pertama secara cepat (~1-2 detik) alih-alih mengunduh ribuan sekaligus
+      const qsPromise = supabase
+        .from('questions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(300)
+        .then(({ data, error }) => {
+          if (error) {
+            console.error('Gagal fetch questions:', error);
+            setStatusMsg({ text: `Gagal memuat bank soal: ${error.message}`, type: 'error' });
+          } else if (data) {
+            setQuestions(data.map(parseQuestionMeta));
+
+            // Jika total soal lebih dari 300, unduh sisanya di latar belakang (background) tanpa mengunci layar
+            supabase
+              .from('questions')
+              .select('*', { count: 'exact', head: true })
+              .then(({ count }) => {
+                if (count && count > 300) {
+                  supabase
+                    .from('questions')
+                    .select('*')
+                    .order('created_at', { ascending: false })
+                    .range(300, Math.min(count, 3000))
+                    .then(({ data: restData }) => {
+                      if (restData && restData.length > 0) {
+                        setQuestions((prev) => {
+                          const existingIds = new Set(prev.map((q) => q.id));
+                          const newItems = restData.filter((q) => !existingIds.has(q.id)).map(parseQuestionMeta);
+                          return [...prev, ...newItems];
+                        });
+                      }
+                    });
+                }
+              });
+          }
+        });
+
+      await Promise.all([catsPromise, teamsPromise, countPromise, qsPromise]);
     } catch {
       setStatusMsg({ text: 'Gagal memuat data', type: 'error' });
     } finally {
       setLoading(false);
     }
-  }, [activeRound, loadRoundQuestions]);
+  }, [loadRoundQuestions]);
 
   useEffect(() => {
-    loadData();
+    let ignore = false;
+    const run = async () => {
+      if (!ignore) {
+        await loadData();
+      }
+    };
+    run();
+    return () => {
+      ignore = true;
+    };
   }, [loadData]);
 
   const handleSelectRoundTab = (targetRoundName: string) => {
@@ -328,7 +426,7 @@ export default function AdminDashboardPage() {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${sessionId}` },
-        (payload: any) => {
+        (payload: { new: { current_question_id?: string | null } }) => {
           if (payload.new) {
             setActiveQuestionId(payload.new.current_question_id || null);
           }
@@ -768,6 +866,83 @@ export default function AdminDashboardPage() {
     }
   };
 
+  const handleGenerateAiQuestions = async () => {
+    if (!aiTopic.trim()) {
+      setAiGenError('Topik soal wajib diisi!');
+      return;
+    }
+    setAiGenError('');
+    setIsAiGenerating(true);
+    try {
+      const res = await fetch('/api/ai/generate-soal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          topic: aiTopic.trim(),
+          difficulty: aiDifficulty,
+          count: aiCount,
+          categoryId: aiCategory || null,
+          packageName: aiPackage.trim() || 'Umum / Bebas',
+          points: aiPoints,
+          timerDuration: aiTimer,
+          questionType: aiQuestionType,
+          existingQuestions: aiAvoidDuplicates
+            ? questions
+                .filter((q) => !aiCategory || q.category_id === aiCategory)
+                .map((q) => q.question_text)
+                .slice(0, 20)
+            : [],
+        }),
+      });
+
+      const data = await res.json();
+      if (!data.success) {
+        throw new Error(data.message || 'Gagal menghasilkan soal dari AI.');
+      }
+      setAiGeneratedQuestions(data.questions || []);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiGenError(`Gagal membuat soal: ${msg}`);
+    } finally {
+      setIsAiGenerating(false);
+    }
+  };
+
+  const handleSaveAiQuestionsToDb = async () => {
+    if (aiGeneratedQuestions.length === 0) return;
+    setIsAiSaving(true);
+    setAiGenError('');
+    try {
+      const payloads = aiGeneratedQuestions.map((q) => ({
+        category_id: aiCategory || null,
+        type: (q.type || aiQuestionType === 'campuran' ? q.type || 'pilihan_ganda' : aiQuestionType) as QuestionType,
+        question_text: q.question_text,
+        options: q.options || [],
+        correct_answer: q.correct_answer,
+        explanation: buildExplanationWithMeta(q.explanation, null, aiPackage || 'Umum / Bebas'),
+        timer_duration: q.timer_duration || 30,
+        points: q.points || 100,
+      }));
+
+      const { error } = await supabase.from('questions').insert(payloads);
+      if (error) throw error;
+
+      setStatusMsg({
+        text: `Berhasil menambahkan ${payloads.length} soal AI ke Bank Soal!`,
+        type: 'success',
+      });
+      setIsAiGenModalOpen(false);
+      setAiGeneratedQuestions([]);
+      setAiTopic('');
+      loadData();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setAiGenError(`Gagal menyimpan ke database: ${msg}`);
+    } finally {
+      setIsAiSaving(false);
+    }
+  };
+
   const resetFormSoal = (defaultType: QuestionType = 'pilihan_ganda') => {
     setEditingId(null);
     let defaultAns = 'A';
@@ -1071,7 +1246,7 @@ export default function AdminDashboardPage() {
                       if (newRoom && newRoom !== currentRoomCode) {
                         if (typeof window !== 'undefined') {
                           localStorage.setItem('active_room_code', newRoom);
-                          window.location.href = `/admin/soal?room=${encodeURIComponent(newRoom)}`;
+                          router.push(`/admin/soal?room=${encodeURIComponent(newRoom)}`);
                         }
                       }
                     }}
@@ -1095,6 +1270,8 @@ export default function AdminDashboardPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <ThemeSelector session={session} />
+
           <a
             href={`/control?room=${encodeURIComponent(currentRoomCode)}`}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 border border-slate-700 hover:border-blue-500 text-xs font-semibold rounded-xl text-slate-300 transition-all"
@@ -1168,7 +1345,9 @@ export default function AdminDashboardPage() {
           }`}
         >
           <BookOpen className="w-4 h-4" />
-          <span>Bank Soal Master ({questions.length})</span>
+          <span>
+            Bank Soal Master {loading && questions.length === 0 && !totalQuestionsCount ? '(Memuat...)' : `(${totalQuestionsCount || questions.length})`}
+          </span>
         </button>
 
         <button
@@ -1566,6 +1745,19 @@ export default function AdminDashboardPage() {
 
               <button
                 type="button"
+                onClick={() => {
+                  setAiGenError('');
+                  setIsAiGenModalOpen(true);
+                }}
+                className="flex items-center gap-1.5 px-3.5 py-2 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white rounded-xl text-xs font-black transition-all shadow-lg shadow-indigo-600/30"
+                title="Buat soal otomatis dengan AI Google Gemini"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                <span>Auto-Generate Soal AI</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => handleOpenAddSoal()}
                 className="flex items-center gap-1.5 px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-purple-600/30"
               >
@@ -1575,7 +1767,7 @@ export default function AdminDashboardPage() {
             </div>
           </div>
 
-          {/* FILTER BANK SOAL (LENGKAP: SEARCH, KATEGORI, DAN CUSTOM PAKET) */}
+          {/* FILTER BANK SOAL (LENGKAP: SEARCH, JENIS SOAL, KATEGORI, DAN CUSTOM PAKET) */}
           <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/60 border border-slate-800 p-3 rounded-2xl">
             <div className="flex flex-wrap items-center gap-3 flex-1">
               <div className="relative min-w-[200px] flex-1 max-w-xs">
@@ -1587,6 +1779,54 @@ export default function AdminDashboardPage() {
                   placeholder="Cari pertanyaan / kunci..."
                   className="w-full bg-slate-950 border border-slate-700 rounded-xl pl-8 pr-3 py-1.5 text-xs text-white focus:outline-none"
                 />
+              </div>
+
+              {/* FILTER JENIS SOAL (PILIHAN GANDA, BENAR/SALAH, ESSAY) */}
+              <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-700/80">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTypeTab('all')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    selectedTypeTab === 'all'
+                      ? 'bg-purple-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Semua Jenis
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTypeTab('pilihan_ganda')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    selectedTypeTab === 'pilihan_ganda'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Pilihan Ganda
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTypeTab('benar_salah')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    selectedTypeTab === 'benar_salah'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Benar / Salah
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedTypeTab('essay')}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all ${
+                    selectedTypeTab === 'essay'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  Essay / Rebutan
+                </button>
               </div>
 
               <div className="flex items-center gap-1.5">
@@ -2485,6 +2725,359 @@ export default function AdminDashboardPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL AUTO-GENERATE SOAL AI (GOOGLE GEMINI SDK) */}
+      {isAiGenModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 max-w-3xl w-full max-h-[90vh] overflow-y-auto shadow-2xl relative">
+            <button
+              type="button"
+              onClick={() => setIsAiGenModalOpen(false)}
+              className="absolute top-6 right-6 text-slate-400 hover:text-white p-1 rounded-lg bg-slate-800/50 hover:bg-slate-800 transition-all"
+            >
+              <X className="w-5 h-5" />
+            </button>
+
+            {/* Modal Header */}
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-blue-600 to-purple-600 flex items-center justify-center text-white shadow-lg shadow-purple-600/30">
+                <Sparkles className="w-6 h-6 animate-pulse" />
+              </div>
+              <div>
+                <h3 className="text-xl font-black text-white uppercase tracking-tight flex items-center gap-2">
+                  <span>Auto-Generate Soal AI</span>
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 border border-blue-500/30 font-mono">
+                    Gemini SDK
+                  </span>
+                </h3>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Generator soal pilihan ganda, benar/salah, atau essay otomatis dengan pembahasan.
+                </p>
+              </div>
+            </div>
+
+            {/* Form Input Generator */}
+            <div className="space-y-4 bg-slate-950/60 border border-slate-800 p-5 rounded-2xl">
+              <div>
+                <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                  Topik atau Materi Soal <span className="text-rose-400">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={aiTopic}
+                  onChange={(e) => setAiTopic(e.target.value)}
+                  placeholder="Contoh: Sejarah Awal Islam, Tata Surya, Kemerdekaan RI, dsb."
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-purple-500 font-medium"
+                />
+              </div>
+
+              {/* BARIS JENIS SOAL & FILTER DUPLIKASI */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Jenis Soal
+                  </label>
+                  <select
+                    value={aiQuestionType}
+                    onChange={(e) =>
+                      setAiQuestionType(
+                        e.target.value as 'pilihan_ganda' | 'benar_salah' | 'essay' | 'campuran'
+                      )
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500 font-medium"
+                  >
+                    <option value="pilihan_ganda">Pilihan Ganda (4 Opsi: A, B, C, D)</option>
+                    <option value="benar_salah">Benar / Salah (2 Opsi)</option>
+                    <option value="essay">Essay / Rebutan / Lisan</option>
+                    <option value="campuran">Campuran (Kombinasi Variatif)</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col justify-end">
+                  <label className="flex items-center gap-2.5 p-2 bg-slate-900 border border-slate-700/80 rounded-xl cursor-pointer hover:bg-slate-800/60 transition-all">
+                    <input
+                      type="checkbox"
+                      checked={aiAvoidDuplicates}
+                      onChange={(e) => setAiAvoidDuplicates(e.target.checked)}
+                      className="w-4 h-4 rounded text-purple-600 focus:ring-purple-500 accent-purple-600"
+                    />
+                    <div className="text-[11px] text-slate-300">
+                      <span className="font-bold text-white block">Cegah Duplikasi</span>
+                      <span className="text-slate-400">Filter agar tidak menduplikasi soal yang sudah ada</span>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Tingkat Kesulitan
+                  </label>
+                  <select
+                    value={aiDifficulty}
+                    onChange={(e) =>
+                      setAiDifficulty(e.target.value as 'mudah' | 'sedang' | 'sulit' | 'campuran')
+                    }
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="mudah">Mudah (Tingkat Pemula / Dasar)</option>
+                    <option value="sedang">Sedang (Standar Cerdas Cermat)</option>
+                    <option value="sulit">Sulit (Menantang / Analitis)</option>
+                    <option value="campuran">Campuran (Variasi Tingkat)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Jumlah Soal: <span className="text-purple-400 font-mono font-bold">{aiCount}</span> butir
+                  </label>
+                  <input
+                    type="range"
+                    min={1}
+                    max={10}
+                    value={aiCount}
+                    onChange={(e) => setAiCount(Number(e.target.value))}
+                    className="w-full accent-purple-500 cursor-pointer"
+                  />
+                  <div className="flex justify-between text-[10px] text-slate-500 font-mono mt-1">
+                    <span>1</span>
+                    <span>3</span>
+                    <span>5</span>
+                    <span>10</span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Target Kategori
+                  </label>
+                  <select
+                    value={aiCategory}
+                    onChange={(e) => setAiCategory(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  >
+                    <option value="">-- Tanpa Kategori / Umum --</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Label Paket Soal
+                  </label>
+                  <input
+                    type="text"
+                    value={aiPackage}
+                    onChange={(e) => setAiPackage(e.target.value)}
+                    placeholder="Contoh: Paket AI Gemini"
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Nilai Poin
+                  </label>
+                  <input
+                    type="number"
+                    value={aiPoints}
+                    onChange={(e) => setAiPoints(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
+                    Durasi Timer (Detik)
+                  </label>
+                  <input
+                    type="number"
+                    value={aiTimer}
+                    onChange={(e) => setAiTimer(Number(e.target.value))}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
+                  />
+                </div>
+              </div>
+
+              {aiGenError && (
+                <div className="p-3 rounded-xl bg-rose-950/60 border border-rose-800 text-xs text-rose-300 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{aiGenError}</span>
+                </div>
+              )}
+
+              <button
+                type="button"
+                onClick={handleGenerateAiQuestions}
+                disabled={isAiGenerating || !aiTopic.trim()}
+                className="w-full py-3 bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 disabled:opacity-50 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-lg shadow-indigo-600/30 flex items-center justify-center gap-2"
+              >
+                {isAiGenerating ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin text-white" />
+                    <span>Gemini AI Sedang Merumuskan Soal...</span>
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 text-amber-300" />
+                    <span>Generate {aiCount} Soal dengan AI Gemini</span>
+                  </>
+                )}
+              </button>
+            </div>
+
+            {/* PREVIEW HASIL SOAL AI */}
+            {aiGeneratedQuestions.length > 0 && (
+              <div className="mt-6 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <span>Hasil Review Soal ({aiGeneratedQuestions.length} Butir):</span>
+                  </h4>
+                  <span className="text-[10px] text-slate-400 font-mono">
+                    Format JSON Valid
+                  </span>
+                </div>
+
+                <div className="space-y-3 max-h-[340px] overflow-y-auto pr-1">
+                  {aiGeneratedQuestions.map((q, qIdx) => (
+                    <div
+                      key={qIdx}
+                      className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl space-y-2.5 text-xs"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <span className="px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 font-black text-[10px]">
+                            Soal #{qIdx + 1}
+                          </span>
+                          <span
+                            className={`px-2 py-0.5 rounded text-[10px] font-bold ${
+                              q.type === 'benar_salah'
+                                ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                : q.type === 'essay'
+                                ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                : 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                            }`}
+                          >
+                            {q.type === 'benar_salah'
+                              ? 'Benar / Salah'
+                              : q.type === 'essay'
+                              ? 'Essay / Rebutan'
+                              : 'Pilihan Ganda'}
+                          </span>
+                        </div>
+                        <span className="text-[10px] font-bold text-slate-400">
+                          +{q.points} Poin &bull; {q.timer_duration}s
+                        </span>
+                      </div>
+
+                      <p className="font-bold text-white text-sm leading-snug">
+                        {q.question_text}
+                      </p>
+
+                      {q.type === 'essay' || !q.options || q.options.length === 0 ? (
+                        <div className="p-2.5 rounded-xl border bg-amber-950/30 border-amber-500/30 text-amber-200 text-xs">
+                          <span className="font-bold text-amber-400 block mb-0.5">Kunci Jawaban Rujukan Juri:</span>
+                          <span>{q.correct_answer}</span>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                          {q.options.map((opt) => {
+                            const isCorrect =
+                              q.type === 'benar_salah'
+                                ? String(opt.key).toLowerCase() === String(q.correct_answer).toLowerCase()
+                                : opt.key === q.correct_answer;
+                            return (
+                              <div
+                                key={opt.key}
+                                className={`p-2 rounded-xl border flex items-center gap-2 text-xs ${
+                                  isCorrect
+                                    ? 'bg-emerald-950/60 border-emerald-500/60 text-emerald-200 font-bold'
+                                    : 'bg-slate-900 border-slate-800 text-slate-300'
+                                }`}
+                              >
+                                <span
+                                  className={`w-5 h-5 rounded-md flex items-center justify-center text-[10px] font-black shrink-0 ${
+                                    isCorrect ? 'bg-emerald-500 text-slate-950' : 'bg-slate-800 text-slate-400'
+                                  }`}
+                                >
+                                  {q.type === 'benar_salah' ? (opt.key === 'true' ? '✓' : '✗') : opt.key}
+                                </span>
+                                <span className="truncate">{opt.text}</span>
+                                {isCorrect && (
+                                  <span className="ml-auto text-[9px] uppercase px-1.5 py-0.5 rounded bg-emerald-500/30 text-emerald-300">
+                                    Kunci
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {q.explanation && (
+                        <div className="p-2.5 bg-blue-950/30 border border-blue-500/20 rounded-xl text-[11px] text-blue-200 italic">
+                          <span className="font-bold not-italic text-blue-400">Pembahasan: </span>
+                          {q.explanation}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+
+                {/* Tombol Simpan ke Supabase */}
+                <div className="flex flex-wrap items-center justify-end gap-3 pt-4 border-t border-slate-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const jsonBlob = new Blob([JSON.stringify(aiGeneratedQuestions, null, 2)], {
+                        type: 'application/json',
+                      });
+                      const url = URL.createObjectURL(jsonBlob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `soal-ai-${aiTopic.toLowerCase().replace(/\s+/g, '-')}.json`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                    className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download JSON</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleSaveAiQuestionsToDb}
+                    disabled={isAiSaving}
+                    className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-black uppercase tracking-wider transition-all shadow-lg shadow-emerald-600/30 flex items-center gap-2"
+                  >
+                    {isAiSaving ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        <span>Menyimpan ke Supabase...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Save className="w-3.5 h-3.5" />
+                        <span>Simpan {aiGeneratedQuestions.length} Soal ke Bank Soal</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}

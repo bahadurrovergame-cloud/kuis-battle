@@ -1,0 +1,1446 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <title>Dokumentasi Arsitektur, Alur Sistem & Pemetaan File - Kuis Battle Panggung</title>
+  <style>
+    @page {
+      size: A4;
+      margin: 12mm 14mm 14mm 14mm;
+      @bottom-right {
+        content: counter(page);
+        font-size: 8pt;
+        color: #64748b;
+      }
+    }
+    
+    * {
+      box-sizing: border-box;
+      -webkit-print-color-adjust: exact !important;
+      print-color-adjust: exact !important;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+      color: #0f172a;
+      line-height: 1.45;
+      font-size: 9.5pt;
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+
+    .page-break {
+      page-break-before: always;
+    }
+
+    /* Cover Page */
+    .cover-container {
+      height: 98vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      padding: 30px 20px;
+      border: 2px solid #1e3a8a;
+      border-radius: 16px;
+      background: linear-gradient(145deg, #0f172a 0%, #1e293b 40%, #1e3a8a 100%);
+      color: #ffffff;
+    }
+
+    .cover-header {
+      border-bottom: 2px solid rgba(255, 255, 255, 0.2);
+      padding-bottom: 20px;
+    }
+
+    .cover-badge {
+      display: inline-block;
+      background: rgba(59, 130, 246, 0.3);
+      border: 1px solid #60a5fa;
+      color: #93c5fd;
+      padding: 6px 16px;
+      border-radius: 999px;
+      font-size: 9pt;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      margin-bottom: 14px;
+    }
+
+    .cover-title {
+      font-size: 28pt;
+      font-weight: 900;
+      line-height: 1.15;
+      letter-spacing: -0.5px;
+      margin: 0 0 10px 0;
+      text-transform: uppercase;
+      color: #ffffff;
+    }
+
+    .cover-subtitle {
+      font-size: 13pt;
+      color: #93c5fd;
+      font-weight: 500;
+      line-height: 1.4;
+      margin: 0;
+    }
+
+    .cover-body {
+      background: rgba(15, 23, 42, 0.7);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 12px;
+      padding: 20px;
+      backdrop-filter: blur(10px);
+    }
+
+    .cover-feature-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 10px;
+    }
+
+    .cover-feature-item {
+      background: rgba(255, 255, 255, 0.05);
+      border-left: 3px solid #38bdf8;
+      padding: 10px 12px;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .cover-feature-item strong {
+      display: block;
+      color: #f8fafc;
+      font-size: 9.5pt;
+      margin-bottom: 3px;
+    }
+
+    .cover-feature-item span {
+      font-size: 8.5pt;
+      color: #cbd5e1;
+    }
+
+    .cover-footer {
+      border-top: 1px solid rgba(255, 255, 255, 0.2);
+      padding-top: 15px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      font-size: 8.5pt;
+      color: #94a3b8;
+    }
+
+    .cover-footer strong {
+      color: #f1f5f9;
+    }
+
+    /* Headings */
+    h1 {
+      color: #0f172a;
+      font-size: 17pt;
+      font-weight: 800;
+      border-bottom: 2.5px solid #2563eb;
+      padding-bottom: 5px;
+      margin-top: 22px;
+      margin-bottom: 12px;
+      letter-spacing: -0.3px;
+      text-transform: uppercase;
+    }
+
+    h2 {
+      color: #1e3a8a;
+      font-size: 13pt;
+      font-weight: 800;
+      margin-top: 16px;
+      margin-bottom: 8px;
+      border-left: 4px solid #3b82f6;
+      padding-left: 8px;
+    }
+
+    h3 {
+      color: #0369a1;
+      font-size: 10.5pt;
+      font-weight: 700;
+      margin-top: 12px;
+      margin-bottom: 4px;
+    }
+
+    p {
+      margin: 0 0 8px 0;
+      color: #334155;
+    }
+
+    /* Cards & Containers */
+    .card {
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+    }
+
+    .card-accent {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-left: 4px solid #16a34a;
+    }
+
+    .card-blue {
+      background: #eff6ff;
+      border: 1px solid #bfdbfe;
+      border-left: 4px solid #2563eb;
+    }
+
+    .card-purple {
+      background: #faf5ff;
+      border: 1px solid #e9d5ff;
+      border-left: 4px solid #9333ea;
+    }
+
+    .card-amber {
+      background: #fffbeb;
+      border: 1px solid #fde68a;
+      border-left: 4px solid #d97706;
+    }
+
+    /* Badges */
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 7.5pt;
+      font-weight: 700;
+      font-family: Consolas, 'Courier New', monospace;
+      margin-right: 4px;
+      margin-bottom: 2px;
+    }
+
+    .badge-blue { background: #dbeafe; color: #1e40af; border: 1px solid #bfdbfe; }
+    .badge-green { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
+    .badge-purple { background: #f3e8ff; color: #6b21a8; border: 1px solid #e9d5ff; }
+    .badge-amber { background: #fef3c7; color: #92400e; border: 1px solid #fde68a; }
+    .badge-rose { background: #ffe4e6; color: #9f1239; border: 1px solid #fecdd3; }
+    .badge-slate { background: #f1f5f9; color: #334155; border: 1px solid #cbd5e1; }
+
+    /* Tables */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px 0;
+      font-size: 8.5pt;
+    }
+
+    table th, table td {
+      border: 1px solid #cbd5e1;
+      padding: 6px 9px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    table th {
+      background: #f1f5f9;
+      color: #0f172a;
+      font-weight: 800;
+      font-size: 8.5pt;
+    }
+
+    table tbody tr:nth-child(even) {
+      background: #f8fafc;
+    }
+
+    /* Code Blocks */
+    code {
+      font-family: Consolas, 'Courier New', monospace;
+      background: #f1f5f9;
+      color: #0f172a;
+      padding: 1px 4px;
+      border-radius: 3px;
+      font-size: 8.5pt;
+    }
+
+    pre {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-family: Consolas, 'Courier New', monospace;
+      font-size: 8pt;
+      line-height: 1.4;
+      overflow-x: auto;
+      margin: 8px 0 12px 0;
+      border: 1px solid #1e293b;
+    }
+
+    /* Flow Diagrams */
+    .flow-step-box {
+      display: flex;
+      align-items: flex-start;
+      margin-bottom: 8px;
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      padding: 8px 10px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+
+    .flow-step-num {
+      width: 24px;
+      height: 24px;
+      background: #2563eb;
+      color: #ffffff;
+      font-weight: 800;
+      font-size: 9pt;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-right: 10px;
+      flex-shrink: 0;
+    }
+
+    .flow-step-content {
+      flex: 1;
+    }
+
+    .flow-step-title {
+      font-weight: 700;
+      color: #0f172a;
+      font-size: 9pt;
+      margin-bottom: 2px;
+    }
+
+    .flow-step-desc {
+      font-size: 8pt;
+      color: #475569;
+      line-height: 1.35;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .grid-3 {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+    }
+
+    ul, ol {
+      margin: 4px 0 10px 18px;
+      padding: 0;
+      font-size: 8.5pt;
+      color: #334155;
+    }
+
+    li {
+      margin-bottom: 3px;
+    }
+
+    .header-tag {
+      font-size: 7.5pt;
+      text-transform: uppercase;
+      font-weight: 800;
+      letter-spacing: 1px;
+      color: #64748b;
+      margin-bottom: 2px;
+    }
+
+    .footer-doc {
+      margin-top: 25px;
+      border-top: 1px solid #e2e8f0;
+      padding-top: 8px;
+      font-size: 7.5pt;
+      color: #94a3b8;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 1: COVER EKSEKUTIF -->
+  <!-- ==================================================================== -->
+  <div class="cover-container">
+    <div class="cover-header">
+      <div class="cover-badge">Dokumen Teknis & Spesifikasi Sistem</div>
+      <h1 class="cover-title">KUIS BATTLE PANGGUNG</h1>
+      <p class="cover-subtitle">Buku Panduan Arsitektur Sistem, Alur Pertandingan Real-time, Skema Database & Pemetaan Ketergantungan File (File Dependency Graph)</p>
+    </div>
+
+    <div class="cover-body">
+      <div style="font-weight: 800; font-size: 11pt; color: #38bdf8; margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px;">
+        Intisari Spesifikasi Teknis Proyek (Gemini AI Ready)
+      </div>
+      <p style="color: #cbd5e1; font-size: 9pt; margin-bottom: 14px;">
+        Dokumen ini disusun khusus secara komprehensif, terstruktur, dan mendalam untuk memberikan konteks menyeluruh tentang aplikasi <strong>Kuis Battle Panggung</strong> kepada pengguna dan AI (Google Gemini). Menjabarkan filosofi 1 operator panggung, interaksi WebSocket real-time Supabase, model AI Gemini, arsitektur multi-room, serta koneksi persis antar setiap file di dalam repositori.
+      </p>
+
+      <div class="cover-feature-grid">
+        <div class="cover-feature-item">
+          <strong>Next.js 16 (App Router) + React 19</strong>
+          <span>Arsitektur modern Server & Client Component, route handlers API, Tailwind CSS v4.</span>
+        </div>
+        <div class="cover-feature-item">
+          <strong>Supabase PostgreSQL Realtime</strong>
+          <span>Sinkronisasi state sub-detik melalui WebSocket (Postgres changes & Broadcast channels).</span>
+        </div>
+        <div class="cover-feature-item">
+          <strong>Google Gemini AI SDK Integration</strong>
+          <span>Generator Soal Otomatis & AI Quiz Tutor/Assistant MC Streaming (Hint Bertahap & Ulasan Juri).</span>
+        </div>
+        <div class="cover-feature-item">
+          <strong>Arsitektur 1 Operator Panggung</strong>
+          <span>Kendali terpusat dengan shortcut spasi, audio synthesizer Web Audio API, layar HP pasif (Wake Lock).</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="cover-footer">
+      <div>
+        <strong>Aplikasi:</strong> Kuis Battle Panggung (Cerdas Cermat Realtime)<br>
+        <strong>Dibuat Untuk:</strong> Pasangan Pemrograman Gemini AI & Tim Pengembang Teknis<br>
+        <strong>Status:</strong> Siap Produksi (Vercel Deployable)
+      </div>
+      <div style="text-align: right;">
+        <strong>Versi Dokumen:</strong> 2.0 (Edisi Lengkap)<br>
+        <strong>Kategori:</strong> Arsitektur & File Connection Mapping
+      </div>
+    </div>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 2: DAFTAR ISI & RINGKASAN EKSEKUTIF -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 1 &bull; Ringkasan Sistem</div>
+  <h1>1. Ikhtisar & Filosofi Desain Sistem</h1>
+
+  <div class="card card-blue">
+    <p><strong>Kuis Battle Panggung</strong> adalah platform aplikasi cerdas cermat panggung interaktif real-time yang dirancang khusus untuk perlombaan tatap muka dengan <strong>1 orang operator teknis</strong>. Sistem ini mengeliminasi kerumitan operasional kuis konvensional dengan membagi peran ke dalam 3 jenis layar yang sinkron seketika:</p>
+  </div>
+
+  <div class="grid-3">
+    <div class="card" style="border-top: 3px solid #06b6d4;">
+      <h3 style="color: #0891b2; margin-top: 0;">1. Layar Proyektor (/operator)</h3>
+      <p style="font-size: 8pt; color: #475569;">
+        Dijalankan pada laptop panggung yang tersambung ke kabel HDMI proyektor/videotron & speaker panggung. Menyajikan visual utama, hitung mundur lingkaran SVG dinamis, suara detak (ticking SFX), papan kotak interaktif, dan podium juara.
+      </p>
+    </div>
+
+    <div class="card" style="border-top: 3px solid #2563eb;">
+      <h3 style="color: #2563eb; margin-top: 0;">2. Kontrol Operator (/control)</h3>
+      <p style="font-size: 8pt; color: #475569;">
+        Dijalankan oleh 1 operator teknis di meja kendali. Dilengkapi shortcut keyboard [SPASI] untuk jeda/lanjut timer mikrofon tanpa me-reset sisa waktu, tombol tambah/kurang skor cepat, pembuka kunci jawaban, serta asisten AI Tutor.
+      </p>
+    </div>
+
+    <div class="card" style="border-top: 3px solid #10b981;">
+      <h3 style="color: #10b981; margin-top: 0;">3. Meja HP Peserta (/peserta)</h3>
+      <p style="font-size: 8pt; color: #475569;">
+        Smartphone peserta yang ditaruh di meja masing-masing regu. Murni berfungsi sebagai <em>Personal Live Scoreboard</em> pasif. Dilengkapi <strong>Screen Wake Lock API</strong> agar layar tidak mati, tanpa tombol jawab (peserta menjawab lisan via mic).
+      </p>
+    </div>
+  </div>
+
+  <h2>Daftar Komponen Inti & Stack Teknologi</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 25%;">Komponen / Layer</th>
+        <th style="width: 35%;">Teknologi / Library</th>
+        <th style="width: 40%;">Peran & Fungsi Utama</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><strong>Frontend Framework</strong></td>
+        <td>Next.js 16.4.0 (Turbopack, App Router) + React 19.3.0</td>
+        <td>Rendering reaktif, Client Components dengan hooks realtime, Server API Routes.</td>
+      </tr>
+      <tr>
+        <td><strong>Styling & Desain</strong></td>
+        <td>Tailwind CSS v4 + Lucide React (Icons)</td>
+        <td>Tampilan futuristik dark mode high-contrast (Slate-950), responsif di layar proyektor hingga ponsel.</td>
+      </tr>
+      <tr>
+        <td><strong>Backend & Real-time</strong></td>
+        <td>Supabase PostgreSQL + WebSocket Realtime</td>
+        <td>Single Source of Truth (SSOT), disiarkan instan melalui saluran <code>postgres_changes</code> dan broadcast.</td>
+      </tr>
+      <tr>
+        <td><strong>Kecerdasan Buatan (AI)</strong></td>
+        <td>Google Gemini 3.5 Flash Lite + Vercel AI SDK Core & React</td>
+        <td>Generator bank soal otomatis berbasis topik & AI Tutor MC streaming (Hint bertahap & penjelasan edukatif).</td>
+      </tr>
+      <tr>
+        <td><strong>Audio Synthesizer</strong></td>
+        <td>Web Audio API Native (Zero External Asset)</td>
+        <td>Sintesis gelombang audio dinamis (Tick detak jam, Arpeggio nada skor, Buzzer habis waktu, Fanfare kemenangan).</td>
+      </tr>
+      <tr>
+        <td><strong>Hardware & PWA APIs</strong></td>
+        <td>Web Screen Wake Lock API + Fullscreen API</td>
+        <td>Menjaga layar smartphone peserta tetap menyala penuh tanpa tidur (sleep) sepanjang kompetisi.</td>
+      </tr>
+      <tr>
+        <td><strong>Perayaan & Visual</strong></td>
+        <td>Canvas-Confetti + Dynamic SVG Graphics</td>
+        <td>Animasi letusan kembang api kemenangan di podium juara dan lingkaran hitung mundur reaktif.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Prinsip Utama Arsitektur Single Source of Truth (SSOT)</h2>
+  <div class="card card-accent">
+    <p style="margin: 0; font-size: 8.5pt;">
+      Tidak ada kalkulasi skor atau timer yang disimpan terisolasi di sisi browser client. Seluruh waktu tersisa, status pertandingan (<code>waiting</code>, <code>type_select</code>, <code>category_select</code>, <code>box_active</code>, <code>finished</code>), skor regu, dan nomor soal aktif disimpan terpusat di tabel Supabase (<code>game_sessions</code> dan <code>teams</code>). Saat operator menekan tombol, perubahan state disebarkan dalam hitungan milidetik ke layar proyektor dan HP seluruh peserta.
+    </p>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 3: ALUR SISTEM END-TO-END (LIFECYCLE) -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 2 &bull; Diagram Alur Kerja</div>
+  <h1>2. Alur Kerja Sistem (End-to-End System Flow)</h1>
+
+  <h2>Diagram Fase Perlombaan (5 Stepper Panggung)</h2>
+  <div class="flow-step-box">
+    <div class="flow-step-num">1</div>
+    <div class="flow-step-content">
+      <div class="flow-step-title">Fase Persiapan & Pendaftaran Regu (Dashboard Hub '/')</div>
+      <div class="flow-step-desc">
+        Admin membuka dashboard pusat. Memilih atau membuat ruangan panggung (Multi-Room misal: <code>KUIS88</code>). Sistem meng-generate 3 QR Code khusus untuk proyektor, operator, dan HP peserta. Peserta memindai QR Meja & mendaftarkan nama regu beserta warnanya.
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-step-box">
+    <div class="flow-step-num">2</div>
+    <div class="flow-step-content">
+      <div class="flow-step-title">Fase Otentikasi Gatekeeper ('/login')</div>
+      <div class="flow-step-desc">
+        Operator atau Admin melakukan login PIN via <code>POST /api/verify-pin</code>. Role Operator (PIN 8888) diarahkan ke <code>/control</code>, sedangkan Admin Soal (PIN 123456) diarahkan ke <code>/admin/soal</code>. Token otorisasi disimpan aman di <code>sessionStorage</code>.
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-step-box">
+    <div class="flow-step-num">3</div>
+    <div class="flow-step-content">
+      <div class="flow-step-title">Fase Manajemen Konten & AI Generator ('/admin/soal')</div>
+      <div class="flow-step-desc">
+        Admin mengatur babak (Babak 1, Babak 2, Final), memilih jumlah kotak panggung, menginput soal manual atau men-generate puluhan soal instan melalui <strong>Google Gemini AI</strong> (<code>POST /api/ai/generate-soal</code>). Soal otomatis dipetakan ke kotak panggung (<code>session_questions</code>).
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-step-box">
+    <div class="flow-step-num">4</div>
+    <div class="flow-step-content">
+      <div class="flow-step-title">Fase Pertandingan Berjalan (Operator Control & Proyektor)</div>
+      <div class="flow-step-desc">
+        Operator mengontrol stepper 5 tahap panggung: <em>Sambutan &rarr; Pilih Format Tantangan &rarr; Pilih Kategori &rarr; Buka Nomor Kotak &rarr; Soal Aktif</em>.
+        Saat peserta menjawab di mik panggung, operator menekan [SPASI] untuk menjeda waktu. Begitu selesai, operator menekan tombol penilaian [+100], [-50], atau skor custom, lalu membuka kunci jawaban dengan efek chime visual & audio.
+      </div>
+    </div>
+  </div>
+
+  <div class="flow-step-box">
+    <div class="flow-step-num">5</div>
+    <div class="flow-step-content">
+      <div class="flow-step-title">Fase Evaluasi AI Tutor & Grand Final Podium</div>
+      <div class="flow-step-desc">
+        Operator dapat memicu <strong>AI Tutor</strong> (<code>POST /api/tutor</code>) untuk memberikan Hint Bertahap cerdas atau membacakan ulasan edukatif juri. Saat seluruh babak usai, status dialihkan ke <code>finished</code>, memicu <em>VictoryPodium</em> di layar proyektor dengan dentuman kembang api kaset canvas-confetti dan nada fanfare kemenangan.
+      </div>
+    </div>
+  </div>
+
+  <h2>Alur Komunikasi WebSocket & Realtime Supabase</h2>
+  <div class="card">
+    <pre>
+[ Operator Laptop /control ]
+       |
+       | 1. Update Database (misal: is_timer_running = true, score += 100)
+       v
+[ Supabase PostgreSQL ] --- (Trigger Replication Identity) ---> [ Supabase Realtime Engine ]
+                                                                       |
+       +---------------------------------------------------------------+
+       | (WebSocket Broadcast & postgres_changes Event)
+       v                                               v
+[ Layar Proyektor /operator ]               [ Smartphone Meja /peserta ]
+ - Audio tick berbunyi detik demi detik       - Layar HP menyala terus (Wake Lock)
+ - Timer SVG lingkaran berkurang              - Skor ter-update instan
+ - Animasi buka kotak aktif                   - Flash layar Hijau (naik) / Merah (turun)
+ - Pop-up kunci jawaban benar                 - Menampilkan peringkat langsung
+    </pre>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 4: STRUKTUR DIREKTORI & MODUL KODE -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 3 &bull; Struktur File Proyek</div>
+  <h1>3. Struktur Hirarki Direktori Proyek</h1>
+
+  <div class="card">
+    <pre style="margin: 0; font-size: 7.8pt;">
+kuis-battle/
+├── .env.local                    # Konfigurasi Environment (Supabase URL, Anon Key, Gemini API Key)
+├── package.json                  # Dependensi proyek (Next.js, React, Supabase, AI SDK, Howler, Puppeteer)
+├── supabase-schema.sql           # Skrip DDL PostgreSQL, RLS Policies, Realtime Publication, Seed Data
+├── generate-pdf.js               # Skrip Puppeteer generator dokumen PDF manual mockup panggung
+├── tsconfig.json                 # Konfigurasi TypeScript compiler & module path alias (@/* -> ./src/*)
+├── src/
+│   ├── app/                      # Next.js 16 App Router (Rute Layar & Endpoint Server)
+│   │   ├── layout.tsx            # Root layout HTML, font injection, viewport, metadata
+│   │   ├── globals.css           # Tailwind v4 theme engine (5 tema panggung via data-theme) & animasi glow
+│   │   ├── page.tsx              # RUTE '/' : Dashboard Hub Pusat & Pembuat Multi-Room
+│   │   ├── login/
+│   │   │   └── page.tsx          # RUTE '/login' : Gatekeeper login PIN (Operator vs Admin)
+│   │   ├── control/
+│   │   │   └── page.tsx          # RUTE '/control' : Pusat Kendali 1 Operator Panggung & Stepper Lomba
+│   │   ├── operator/
+│   │   │   └── page.tsx          # RUTE '/operator' : Tampilan Proyektor Panggung (Full HD / TV)
+│   │   ├── peserta/
+│   │   │   └── page.tsx          # RUTE '/peserta' : Tampilan Layar Smartphone Peserta Meja (Wake Lock)
+│   │   ├── admin/
+│   │   │   └── soal/
+│   │   │       └── page.tsx      # RUTE '/admin/soal' : Bank Soal, Babak, Kategori, Regu, Generator AI
+│   │   └── api/                  # Server Route Handlers (Backend Next.js)
+│   │       ├── ai/
+│   │       │   └── generate-soal/
+│   │       │       └── route.ts  # POST /api/ai/generate-soal : Generator Soal Otomatis via Gemini
+│   │       ├── tutor/
+│   │       │   └── route.ts      # POST /api/tutor : Streaming AI Tutor (Hint & Pembahasan Edukatif)
+│   │       ├── verify-pin/
+│   │       │   └── route.ts      # POST /api/verify-pin : Otentikasi PIN Operator & Admin
+│   │       └── Keep-alive/
+│   │           └── route.ts      # GET /api/Keep-alive : Pengecekan status konektivitas Supabase
+│   ├── components/               # Komponen Antarmuka Reusable (UI Widgets)
+│   │   ├── AiTutor.tsx           # Widget AI Tutor & Asisten MC (Streaming text hook @ai-sdk/react)
+│   │   ├── CircularTimer.tsx     # Komponen Countdown SVG Lingkaran dengan perubahan warna dinamis
+│   │   ├── Leaderboard.tsx       # Klasemen Klasik/Samping dengan Medali Emas, Perak, Perunggu
+│   │   ├── QuestionDisplay.tsx   # Renderer 3 Jenis Soal (Pilihan Ganda, Benar/Salah, Essay Juri)
+│   │   ├── ThemeInitializer.tsx  # Zero-flicker client bootstrapper tema dari localStorage ke DOM
+│   │   ├── ThemeSelector.tsx     # Selector tema visual (5 presets panggung) & realtime sync room
+│   │   └── VictoryPodium.tsx     # Layar Panggung Juara 3D dengan Fanfare & Canvas-Confetti
+│   ├── hooks/                    # Custom React Hooks
+│   │   └── useWakeLock.ts        # Hook Web Screen Wake Lock API (Cegah layar HP mati selama lomba)
+│   └── lib/                      # Core Modules, Clients, & Utilities
+│       ├── supabase.ts           # Supabase Client, TypeScript Interfaces, Parser Serialisasi Metadata
+│       ├── gemini.ts             # Integrasi Google Generative AI Provider, JSON Cleaner, AI Prompts
+│       ├── sound.ts              # Web Audio API Synthesizer (AudioContext Tick, Buzzer, Arpeggio, Fanfare)
+│       └── utils.ts              # Helper fungsi penggabungan kelas Tailwind (clsx & twMerge)
+    </pre>
+  </div>
+
+  <h2>Daftar Tabel & Relasi Data Supabase (PostgreSQL)</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width: 20%;">Nama Tabel</th>
+        <th style="width: 30%;">Kolom Kunci & Tipe</th>
+        <th style="width: 50%;">Fungsi & Realtime Streaming</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>categories</code></td>
+        <td><code>id (UUID PK), name, description</code></td>
+        <td>Katalog kategori lomba (Pengetahuan Umum, Sains, Sejarah, dsb.). Mendukung CRUD di tab Admin.</td>
+      </tr>
+      <tr>
+        <td><code>questions</code></td>
+        <td><code>id (UUID PK), category_id (FK), type, question_text, options (JSONB), correct_answer, explanation, timer_duration, points</code></td>
+        <td>Master bank soal. Mendukung 3 tipe: <code>pilihan_ganda</code>, <code>benar_salah</code>, dan <code>essay</code>. Metadata paket dan kotak disimpan via string serialisasi explanation.</td>
+      </tr>
+      <tr>
+        <td><code>game_sessions</code></td>
+        <td><code>id (UUID PK), room_code (Unique), title, status, active_round, current_question_id (FK), is_answer_revealed, timer_remaining, is_timer_running</code></td>
+        <td><strong>Jantung Utama Pertandingan.</strong> Mengontrol jalannya lomba, status panggung, dan waktu. Disiarkan real-time melalui <code>supabase_realtime</code>.</td>
+      </tr>
+      <tr>
+        <td><code>teams</code></td>
+        <td><code>id (UUID PK), session_id (FK), name, color, score, rank, members, member_count</code></td>
+        <td>Data regu peserta per ruangan. Skor disinkronisasi instan ke scoreboard proyektor dan HP peserta.</td>
+      </tr>
+      <tr>
+        <td><code>session_questions</code></td>
+        <td><code>id (UUID PK), session_id (FK), question_id (FK), round_name, box_number, is_opened</code></td>
+        <td>Pemetaan spesifik soal ke babak (Round) dan nomor slot kotak di atas panggung (1 s/d 30 kotak).</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 5: PEMETAAN FILE LENGKAP & KONEKSI KODE (BAGIAN 1) -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 4 &bull; Matriks Relasi File (File Connection Graph)</div>
+  <h1>4. Pemetaan File & Relasi Koneksi Antar File</h1>
+
+  <p>Bagian ini merinci <strong>setiap file di dalam proyek</strong>, apa fungsinya, dari mana file tersebut diimpor, file/library apa yang diimpornya, serta bagaimana aliran data dan interaksi logikanya berlangsung.</p>
+
+  <h2>1. Berkas Utama: Layar Aplikasi (Pages & Routes)</h2>
+
+  <!-- File 1: src/app/page.tsx -->
+  <div class="card" style="border-left: 4px solid #2563eb;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #1e40af; font-size: 10pt;">src/app/page.tsx (Admin Hub Pusat & Multi-Room)</strong>
+      <span class="badge badge-blue">Page (Client Component)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Halaman gerbang utama (Hub Navigasi). Menampilkan daftar ruangan panggung (Multi-Room), membuat ruangan baru, menghapus ruangan, dan men-generate 3 QR Code dinamis (Proyektor, Operator, Peserta).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>Next.js App Router saat pengguna mengakses root URL (<code>http://domain/</code>).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td>
+          <code>qrcode.react</code> (QRCodeSVG), <code>lucide-react</code> (Icons),<br>
+          <code>@/lib/supabase</code> (supabase, GameSession, Team, parseSessionMeta, buildSessionTitleWithBoxes).
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Tabel & Saluran Terhubung</td>
+        <td>
+          Tabel: <code>game_sessions</code>, <code>teams</code>.<br>
+          Saluran WebSocket: <code>admin_hub_channel_{session.id}</code> (Mendengarkan event insert/update pada game_sessions dan teams).
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Hubungan Alur Logika</td>
+        <td>
+          Menyimpan <code>active_room_code</code> ke <code>localStorage</code>. Meneruskan parameter query <code>?room=KODEROOM</code> ke link proyektor (<code>/operator?room=...</code>), operator (<code>/control?room=...</code>), dan peserta (<code>/peserta?room=...</code>).
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- File 2: src/app/login/page.tsx -->
+  <div class="card" style="border-left: 4px solid #9333ea;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #6b21a8; font-size: 10pt;">src/app/login/page.tsx (Gatekeeper Access PIN)</strong>
+      <span class="badge badge-purple">Page (Client Component)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Gerbang keamanan verifikasi PIN. Membatasi akses ke dasbor operator dan bank soal admin.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>Next.js Router pada rute <code>/login</code>, atau dialihkan otomatis oleh halaman proteksi.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td><code>next/navigation</code> (useRouter), <code>lucide-react</code> (KeyRound, ShieldCheck, MonitorPlay, BookOpen).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Endpoint Terhubung</td>
+        <td>Mengirim payload JSON <code>{ pin, role }</code> ke API <code>POST /api/verify-pin</code>.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Hubungan Alur Logika</td>
+        <td>
+          Jika valid, menyimpan <code>sessionStorage.setItem('auth_role', role)</code>.<br>
+          Jika role = <code>operator</code> &rarr; redirect ke <code>/control</code>.<br>
+          Jika role = <code>admin</code> &rarr; redirect ke <code>/admin/soal</code>.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- File 3: src/app/control/page.tsx -->
+  <div class="card" style="border-left: 4px solid #0284c7;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0369a1; font-size: 10pt;">src/app/control/page.tsx (Pusat Kendali 1 Operator)</strong>
+      <span class="badge badge-blue">Page (Client Component)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Pusat kendali operator panggung: Stepper 5 tahap lomba, shortcut keyboard [SPASI] (play/pause timer), tombol tambah/kurang skor cepat, input nilai kustom, buka kunci jawaban, ganti soal, CRUD regu, dan AI Tutor.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>Next.js Router pada rute <code>/control</code>.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td>
+          <code>@/lib/supabase</code> (supabase, GameSession, Question, Team, SessionQuestion, parseQuestionMeta, parseSessionMeta),<br>
+          <code>@/lib/sound</code> (sounds: playScoreUp, playScoreDown),<br>
+          <code>@/components/AiTutor</code> (Komponen asisten juri & hint AI),<br>
+          <code>lucide-react</code>, <code>next/navigation</code> (useRouter).
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Tabel & Saluran Terhubung</td>
+        <td>
+          Tabel: <code>game_sessions</code>, <code>questions</code>, <code>teams</code>, <code>categories</code>, <code>session_questions</code>.<br>
+          Saluran WebSocket: <code>room_sync_{session.id}</code>.<br>
+          Broadcast Event: Mengirim sinyal <code>reset_boxes</code> saat operator me-reset kotak babak.
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Hubungan Alur Logika</td>
+        <td>
+          Membaca parameter URL <code>?room=...</code> atau <code>localStorage.getItem('active_room_code')</code>. Memperbarui tabel <code>game_sessions</code> yang langsung memicu perubahan visual di layar proyektor (<code>/operator</code>) dan HP peserta (<code>/peserta</code>).
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 6: PEMETAAN FILE LENGKAP & KONEKSI KODE (BAGIAN 2) -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 4 &bull; Matriks Relasi File (Lanjutan)</div>
+  <h1>4. Pemetaan File & Relasi Koneksi Antar File (Lanjutan)</h1>
+
+  <!-- File 4: src/app/operator/page.tsx -->
+  <div class="card" style="border-left: 4px solid #06b6d4;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0891b2; font-size: 10pt;">src/app/operator/page.tsx (Layar Proyektor Panggung)</strong>
+      <span class="badge badge-green">Page (Client Component)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Tampilan utama panggung untuk penonton & peserta lomba. Render grid nomor kotak interaktif (hingga 30 kotak), timer lingkaran SVG, tampilan soal 3 format, audio SFX (detak jam, reveal chime, buzzer), papan klasemen drawer, dan layar podium juara.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>Next.js Router pada rute <code>/operator</code>.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td>
+          <code>@/lib/supabase</code> (supabase, GameSession, Question, Team, parseQuestionMeta, parseSessionMeta),<br>
+          <code>@/lib/sound</code> (sounds: playTick, playTimeUp, playCorrect),<br>
+          <code>@/components/CircularTimer</code> (Timer lingkaran SVG),<br>
+          <code>@/components/QuestionDisplay</code> (Tampilan butir soal aktif),<br>
+          <code>@/components/Leaderboard</code> (Papan klasemen floating drawer),<br>
+          <code>@/components/VictoryPodium</code> (Podium 3D perayaan juara),<br>
+          <code>qrcode.react</code> (QRCodeSVG untuk modal scan masuk peserta), <code>lucide-react</code>.
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Fitur Khusus</td>
+        <td>
+          - <strong>Shortcut Keyboard 'H':</strong> Membuka / menutup header panggung agar layar lebih lega.<br>
+          - <strong>Auto-Fade Floating Controls:</strong> Tombol klasemen otomatis memudar (opacity 20%) saat mouse tidak digerakkan selama 3 detik.
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Hubungan Alur Logika</td>
+        <td>
+          Mendengarkan event <code>room_sync_{session.id}</code> dari Supabase Realtime. Setiap kali operator di <code>/control</code> mengubah status atau membuka kotak, layar ini merespons tanpa jeda reload browser.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- File 5: src/app/peserta/page.tsx -->
+  <div class="card" style="border-left: 4px solid #10b981;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #059669; font-size: 10pt;">src/app/peserta/page.tsx (Meja Smartphone Peserta)</strong>
+      <span class="badge badge-green">Page (Client Component)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Personal Scoreboard di meja regu. Menampilkan skor raksasa, peringkat live regu, animasi kilatan layar (flash hijau/merah) saat skor berubah, dan tombol layar penuh (fullscreen).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>Next.js Router pada rute <code>/peserta</code> (dipindai via kamera HP peserta).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td>
+          <code>@/lib/supabase</code> (supabase, Team, GameSession),<br>
+          <code>@/hooks/useWakeLock</code> (useWakeLock: Menjaga layar HP menyala terus),<br>
+          <code>lucide-react</code> (Trophy, Wifi, WifiOff, Sun, Maximize, Minimize, Users, TrendingUp).
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Hubungan Alur Logika</td>
+        <td>
+          Mendukung auto-join dengan membaca query string <code>?room=KODEROOM</code>. Menyimpan <code>peserta_room</code> dan <code>peserta_team_id</code> ke <code>localStorage</code> sehingga jika browser HP peserta tak sengaja ter-refresh, sesi kembali secara otomatis tanpa perlu registrasi ulang.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- File 6: src/app/admin/soal/page.tsx -->
+  <div class="card" style="border-left: 4px solid #d97706;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #b45309; font-size: 10pt;">src/app/admin/soal/page.tsx (Admin Bank Soal, Babak & Regu)</strong>
+      <span class="badge badge-amber">Page (Client Component)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Panel manajemen komprehensif 4 tab: <strong>Tab Babak</strong> (pemetaan slot kotak ke session_questions), <strong>Tab Bank Soal</strong> (CRUD master soal, filter kategori, batch actions), <strong>Tab Kategori</strong> (manajemen topik), dan <strong>Tab Regu</strong> (edit nama regu, warna meja, dan anggota).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>Next.js Router pada rute <code>/admin/soal</code> (Dilindungi oleh login role 'admin').</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td>
+          <code>@/lib/supabase</code> (supabase, Question, QuestionType, Team, SessionQuestion, parseQuestionMeta, parseSessionMeta, buildSessionTitleWithBoxes, buildExplanationWithMeta),<br>
+          <code>@/lib/gemini</code> (GeneratedQuestion type interface),<br>
+          <code>lucide-react</code>, <code>next/navigation</code> (useRouter).
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Fitur Unggulan</td>
+        <td>
+          - <strong>Modal AI Question Generator:</strong> Memanggil endpoint <code>POST /api/ai/generate-soal</code> untuk men-generate soal kuis otomatis.<br>
+          - <strong>JSON Import & Export:</strong> Backup bank soal ke file <code>.json</code> dan import puluhan butir sekaligus.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 7: PEMETAAN FILE LENGKAP & KONEKSI KODE (BAGIAN 3) -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 4 &bull; Matriks Relasi File (API & Komponen)</div>
+  <h1>4. Pemetaan File & Relasi Koneksi Antar File (Lanjutan)</h1>
+
+  <h2>2. Berkas Backend Server (API Route Handlers)</h2>
+
+  <!-- API 1: src/app/api/ai/generate-soal/route.ts -->
+  <div class="card" style="border-left: 4px solid #10b981;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #047857; font-size: 10pt;">src/app/api/ai/generate-soal/route.ts (AI Soal Generator API)</strong>
+      <span class="badge badge-green">API Route (POST)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Menerima permintaan pembuatan soal kuis otomatis berbasis topik, tingkat kesulitan, jenis soal (pilihan ganda, benar/salah, essay), serta daftar pertanyaan yang sudah ada agar tidak terjadi duplikasi.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Dipanggil Oleh</td>
+        <td>Modal Generator AI pada halaman Admin Bank Soal (<code>src/app/admin/soal/page.tsx</code>).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td><code>next/server</code> (NextResponse), <code>@/lib/gemini</code> (generateQuizQuestions).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Payload Request & Output</td>
+        <td>
+          <strong>Input:</strong> <code>{ topic, difficulty, count, categoryId, packageName, points, timerDuration, questionType, existingQuestions }</code><br>
+          <strong>Output:</strong> <code>{ success: true, count, questions: [...] }</code>
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- API 2: src/app/api/tutor/route.ts -->
+  <div class="card" style="border-left: 4px solid #2563eb;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #1d4ed8; font-size: 10pt;">src/app/api/tutor/route.ts (AI Tutor Streaming API)</strong>
+      <span class="badge badge-blue">API Route (POST Streaming)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Menghasilkan streaming teks langsung (Server-Sent Event / Text Stream) untuk petunjuk bertahap (Hint Level 1 & Level 2) dan ulasan edukatif kunci jawaban yang dibacakan oleh MC/Juri.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Dipanggil Oleh</td>
+        <td>Komponen antarmuka AI Tutor (<code>src/components/AiTutor.tsx</code>) via hook <code>useCompletion</code> dari package <code>@ai-sdk/react</code>.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mengimpor (Dependencies)</td>
+        <td><code>@/lib/gemini</code> (streamAiTutor).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Payload Request & Output</td>
+        <td>
+          <strong>Input:</strong> <code>{ question, correctAnswer, userAnswer, mode: 'hint'|'explanation', step: 1|2, optionsText }</code><br>
+          <strong>Output:</strong> Direct text streaming response (<code>streamResult.toTextStreamResponse()</code>).
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- API 3: src/app/api/verify-pin/route.ts -->
+  <div class="card" style="border-left: 4px solid #7c3aed;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #6d28d9; font-size: 10pt;">src/app/api/verify-pin/route.ts (Verifikasi PIN Akses)</strong>
+      <span class="badge badge-purple">API Route (POST)</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Memvalidasi PIN pengguna di sisi server. Membaca environment variable <code>ADMIN_SECRET_PIN</code> (default: <code>123456</code>) dan <code>OPERATOR_SECRET_PIN</code> (default: <code>8888</code>).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Dipanggil Oleh</td>
+        <td>Halaman Login (<code>src/app/login/page.tsx</code>) dan modal verifikasi PIN admin di kontrol operator (<code>src/app/control/page.tsx</code>).</td>
+      </tr>
+    </table>
+  </div>
+
+  <h2>3. Berkas Komponen Antarmuka (Components UI)</h2>
+
+  <!-- Component 1: src/components/AiTutor.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/AiTutor.tsx (Widget AI Tutor & Asisten MC)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/control/page.tsx</code>.<br>
+      <strong>Dependencies:</strong> <code>@ai-sdk/react</code> (useCompletion), <code>lucide-react</code>.<br>
+      <strong>Fungsi:</strong> Menampilkan dua tab: <em>Hint Bertahap</em> (Hint #1 Konsep Berpikir & Hint #2 Ciri Khas Jawaban) yang menjamin 100% TIDAK membocorkan huruf kunci, serta <em>Ulasan Edukatif</em> untuk dibacakan setelah ronde selesai. Dilengkapi tombol salin teks ke clipboard.
+    </p>
+  </div>
+
+  <!-- Component 2: src/components/CircularTimer.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/CircularTimer.tsx (Timer Lingkaran SVG Dinamis)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/operator/page.tsx</code>.<br>
+      <strong>Fungsi:</strong> Menggambar countdown timer lingkaran berdiameter 160px dengan transisi <code>stroke-dashoffset</code> SVG. Otomatis berganti warna secara mulus: <strong>Hijau</strong> (&gt;10 detik), <strong>Kuning</strong> (6-10 detik), dan <strong>Merah Berkedip + Glow</strong> (1-5 detik kritis).
+    </p>
+  </div>
+
+  <!-- Component 3: src/components/QuestionDisplay.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/QuestionDisplay.tsx (Renderer 3 Tipe Soal)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/operator/page.tsx</code>.<br>
+      <strong>Dependencies:</strong> <code>@/lib/supabase</code> (Question), <code>lucide-react</code>.<br>
+      <strong>Fungsi:</strong> Me-render pertanyaan panggung secara adaptif sesuai jenisnya: Grid 2x2 opsi A-D untuk <em>Pilihan Ganda</em>, kartu kartu besar untuk <em>Benar/Salah</em>, dan box panduan juri untuk <em>Essay/Lisan</em>. Menyorot kunci jawaban yang benar dengan efek hijau membesar saat <code>isAnswerRevealed = true</code>.
+    </p>
+  </div>
+
+  <!-- Component 4: src/components/Leaderboard.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/Leaderboard.tsx (Papan Klasemen Samping)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/operator/page.tsx</code>.<br>
+      <strong>Fungsi:</strong> Mengurutkan regu secara descending berdasarkan perolehan skor. Menyematkan medali emas, perak, perunggu dengan styling kartu kontras tinggi.
+    </p>
+  </div>
+
+  <!-- Component 5: src/components/VictoryPodium.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/VictoryPodium.tsx (Podium Juara 3D & Kembang Api)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/operator/page.tsx</code>.<br>
+      <strong>Dependencies:</strong> <code>canvas-confetti</code>, <code>@/lib/sound</code> (playVictory), <code>lucide-react</code>.<br>
+      <strong>Fungsi:</strong> Muncul saat perlombaan selesai (<code>status = 'finished'</code>). Menampilkan pilar panggung juara 1 (Emas), juara 2 (Perak), dan juara 3 (Perunggu), membunyikan nada fanfare kemenangan, dan meluncurkan animasi kembang api partikel confetti selama 6 detik.
+    </p>
+  </div>
+
+  <!-- Component 6: src/components/ThemeSelector.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/ThemeSelector.tsx (Pemilih & Sinkronisasi Tema Panggung Realtime)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/admin/soal/page.tsx</code>, <code>src/app/control/page.tsx</code>, <code>src/app/operator/page.tsx</code>, <code>src/app/page.tsx</code>.<br>
+      <strong>Dependencies:</strong> <code>@/lib/supabase</code> (THEME_PRESETS, applyThemeToDom, buildSessionTitleWithMeta), <code>lucide-react</code>.<br>
+      <strong>Fungsi:</strong> Menyediakan visual selector dengan preview warna swatch untuk 5 tema panggung: <em>Midnight Slate</em> (default dark), <em>Auditorium Daylight</em> (high-contrast light mode untuk proyektor terang), <em>Royal Navy & Gold</em> (elegan resmi), <em>Cyberpunk Neon</em> (esports cerah), dan <em>Emerald Zamrud</em>. Mengubah atribut <code>data-theme</code> pada <code>&lt;html&gt;</code> secara instan, menyimpan di <code>localStorage</code>, dan menyinkronkan tag <code>[THEME:key]</code> ke <code>game_sessions.title</code> secara realtime via Supabase.
+    </p>
+  </div>
+
+  <!-- Component 7: src/components/ThemeInitializer.tsx -->
+  <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #0f172a; font-size: 9.5pt;">src/components/ThemeInitializer.tsx (Inisialisasi Tema Zero-Flicker)</strong>
+      <span class="badge badge-slate">Component</span>
+    </div>
+    <p style="font-size: 8pt; margin-bottom: 4px;">
+      <strong>Diimpor Oleh:</strong> <code>src/app/layout.tsx</code> (Root Layout).<br>
+      <strong>Dependencies:</strong> <code>@/lib/supabase</code> (applyThemeToDom).<br>
+      <strong>Fungsi:</strong> Komponen ringan client-side yang berjalan sebelum render penuh untuk membaca tema tersimpan di <code>localStorage.getItem('app_theme')</code> dan memasang atribut <code>data-theme</code> pada dokumen HTML demi mencegah layar berkedip (zero-flicker) saat navigasi antar halaman.
+    </p>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 8: PEMETAAN FILE LENGKAP & KONEKSI KODE (BAGIAN 4) -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 4 &bull; Matriks Relasi File (Lib & Hooks)</div>
+  <h1>4. Pemetaan File & Relasi Koneksi Antar File (Lanjutan)</h1>
+
+  <h2>4. Berkas Library, Core Engine & Custom Hooks</h2>
+
+  <!-- Lib 1: src/lib/supabase.ts -->
+  <div class="card" style="border-left: 4px solid #10b981;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #059669; font-size: 10pt;">src/lib/supabase.ts (Supabase Client, Types & Metadata Serializer)</strong>
+      <span class="badge badge-green">Core Library</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Inisialisasi klien Supabase, definisi seluruh interface tipe data TypeScript (<code>Question</code>, <code>GameSession</code>, <code>Team</code>, <code>SessionQuestion</code>), dan fungsi pembantu serialisasi metadata ruangan & kotak panggung.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td>
+          Hampir seluruh berkas proyek: <code>src/app/page.tsx</code>, <code>src/app/control/page.tsx</code>, <code>src/app/operator/page.tsx</code>, <code>src/app/peserta/page.tsx</code>, <code>src/app/admin/soal/page.tsx</code>, <code>src/components/QuestionDisplay.tsx</code>, <code>src/components/Leaderboard.tsx</code>, <code>src/components/VictoryPodium.tsx</code>, <code>src/app/api/Keep-alive/route.ts</code>.
+        </td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Fungsi Kunci</td>
+        <td>
+          - <code>parseQuestionMeta(q)</code>: Membaca tag <code>[BOX:x]</code> dan <code>[PAKET:y]</code> dari kolom penjelasan.<br>
+          - <code>buildExplanationWithMeta(...)</code>: Menyisipkan metadata kotak/paket ke dalam kolom penjelasan.<br>
+          - <code>parseSessionMeta(session)</code>: Mengekstrak jumlah kotak panggung <code>[BOXES:x]</code>, filter kategori <code>[CAT:y]</code>, dan tema panggung <code>[THEME:key]</code> dari judul room.<br>
+          - <code>buildSessionTitleWithMeta(...)</code>: Membungkus judul room dengan parameter kotak, kategori, dan tema.<br>
+          - <code>applyThemeToDom(themeKey)</code>: Mengaplikasikan tema aktif ke <code>document.documentElement</code> via atribut <code>data-theme</code> dan menyimpannya di <code>localStorage</code>.<br>
+          - <code>THEME_PRESETS</code>: Preset 5 tema panggung (Midnight Slate, Auditorium Daylight, Royal Navy & Gold, Cyberpunk Neon, Emerald Zamrud).
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Lib 2: src/lib/gemini.ts -->
+  <div class="card" style="border-left: 4px solid #2563eb;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #1e40af; font-size: 10pt;">src/lib/gemini.ts (Google Gemini Engine & Prompts)</strong>
+      <span class="badge badge-blue">AI Core Library</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Inisialisasi Google Generative AI Provider via <code>@ai-sdk/google</code>, konfigurasi model (default: <code>gemini-3.5-flash-lite</code>), prompt engineering ketat untuk generator soal dan AI tutor, serta parser pembersih JSON anti-rusak.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td><code>src/app/api/ai/generate-soal/route.ts</code>, <code>src/app/api/tutor/route.ts</code>, dan <code>src/app/admin/soal/page.tsx</code> (tipe GeneratedQuestion).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Fungsi Kunci</td>
+        <td>
+          - <code>getGeminiModel(customModel?)</code>: Mengambil API Key dari env dan me-return model instance.<br>
+          - <code>streamAiTutor(...)</code>: Mengembalikan <code>streamText</code> untuk petunjuk hint atau ulasan edukatif MC.<br>
+          - <code>generateQuizQuestions(...)</code>: Memanggil Gemini AI untuk memproduksi array soal kuis murni.<br>
+          - <code>cleanAndParseJson(raw)</code>: Membersihkan markdown code fences (```json) dan koma menggantung (trailing commas) agar <code>JSON.parse</code> tidak pernah error.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Lib 3: src/lib/sound.ts -->
+  <div class="card" style="border-left: 4px solid #e11d48;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #be123c; font-size: 10pt;">src/lib/sound.ts (Web Audio API Synthesizer)</strong>
+      <span class="badge badge-rose">Audio Core Library</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Menghasilkan seluruh efek suara panggung secara real-time langsung melalui browser AudioContext (tanpa memerlukan file MP3/WAV eksternal sehingga 100% bebas dari kendala file missing / 404).</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td><code>src/app/operator/page.tsx</code>, <code>src/app/control/page.tsx</code>, <code>src/components/VictoryPodium.tsx</code>.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Katalog Suara</td>
+        <td>
+          - <code>playTick(isUrgent)</code>: Detak jam 600Hz segitiga (normal) atau 950Hz kotak (urgent di &le; 5 detik).<br>
+          - <code>playTimeUp()</code>: Buzzer waktu habis gelombang sawtooth turun dari 220Hz ke 110Hz.<br>
+          - <code>playScoreUp()</code>: Nada semarak arpeggio akord C Mayor (C5 523Hz &rarr; E5 659Hz &rarr; G5 783Hz).<br>
+          - <code>playScoreDown()</code>: Nada turun dramatis sawtooth dari 330Hz ke 165Hz.<br>
+          - <code>playCorrect()</code>: Chime pembuka kunci jawaban akord 4 nada (C-E-G-C tinggi).<br>
+          - <code>playVictory()</code>: Fanfare kemenangan 4 tangga nada untuk podium grand final.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <!-- Hook 1: src/hooks/useWakeLock.ts -->
+  <div class="card" style="border-left: 4px solid #d97706;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+      <strong style="color: #b45309; font-size: 10pt;">src/hooks/useWakeLock.ts (Hook Web Screen Wake Lock)</strong>
+      <span class="badge badge-amber">Custom Hook</span>
+    </div>
+    <table style="margin: 4px 0;">
+      <tr>
+        <td style="width: 22%; font-weight: bold; background: #f8fafc;">Tanggung Jawab</td>
+        <td>Mengakses API <code>navigator.wakeLock</code> browser agar layar smartphone peserta tidak pernah sleep / mati selama pertandingan panggung berlangsung.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Diimpor Oleh</td>
+        <td><code>src/app/peserta/page.tsx</code>.</td>
+      </tr>
+      <tr>
+        <td style="font-weight: bold; background: #f8fafc;">Mekanisme Kerja</td>
+        <td>
+          Meminta sentinel wake lock saat peserta bergabung ke meja. Jika pengguna berpindah tab atau meminimalkan layar lalu kembali (event <code>visibilitychange</code>), hook secara otomatis mengaktifkan kembali wake lock.
+        </td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 9: SPESIFIKASI API, EVENT & PROTOKOL KOMUNIKASI -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 5 &bull; Protokol Data & API Endpoints</div>
+  <h1>5. Spesifikasi Lengkap API & Event Realtime</h1>
+
+  <h2>Daftar Endpoint REST API</h2>
+
+  <!-- API SPEC 1 -->
+  <div class="card card-blue">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <strong>1. POST /api/verify-pin</strong>
+      <span class="badge badge-blue">Auth Gatekeeper</span>
+    </div>
+    <p style="font-size: 8pt; margin: 4px 0;">Memvalidasi PIN akses operator (default: <code>8888</code>) atau admin (default: <code>123456</code>).</p>
+    <pre style="margin: 4px 0; font-size: 7.5pt;">
+// Request Body
+{
+  "pin": "8888",
+  "role": "operator" // atau "admin"
+}
+
+// Response Success (200 OK)
+{
+  "success": true,
+  "role": "operator"
+}
+
+// Response Failed (401 Unauthorized)
+{
+  "success": false,
+  "message": "PIN Salah!"
+}
+    </pre>
+  </div>
+
+  <!-- API SPEC 2 -->
+  <div class="card card-accent">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <strong>2. POST /api/ai/generate-soal</strong>
+      <span class="badge badge-green">AI Generator (Gemini 3.5 Flash Lite)</span>
+    </div>
+    <p style="font-size: 8pt; margin: 4px 0;">Menghasilkan butir soal kuis dalam format JSON murni terstruktur.</p>
+    <pre style="margin: 4px 0; font-size: 7.5pt;">
+// Request Body
+{
+  "topic": "Sejarah Kemerdekaan Indonesia",
+  "difficulty": "sedang", // "mudah" | "sedang" | "sulit" | "campuran"
+  "count": 5,
+  "questionType": "pilihan_ganda", // "pilihan_ganda" | "benar_salah" | "essay" | "campuran"
+  "categoryId": "33333333-3333-3333-3333-333333333333",
+  "packageName": "Babak Penyisihan A",
+  "points": 100,
+  "timerDuration": 30,
+  "existingQuestions": ["Siapa pembaca teks proklamasi?"]
+}
+
+// Response Success (200 OK)
+{
+  "success": true,
+  "topic": "Sejarah Kemerdekaan Indonesia",
+  "difficulty": "sedang",
+  "count": 5,
+  "questions": [
+    {
+      "type": "pilihan_ganda",
+      "question_text": "Di kota manakah teks proklamasi kemerdekaan Indonesia dibacakan pada 17 Agustus 1945?",
+      "options": [
+        { "key": "A", "text": "Jakarta" },
+        { "key": "B", "text": "Bandung" },
+        { "key": "C", "text": "Surabaya" },
+        { "key": "D", "text": "Yogyakarta" }
+      ],
+      "correct_answer": "A",
+      "explanation": "Teks proklamasi dibacakan di Jl. Pegangsaan Timur No. 56, Jakarta Pusat.",
+      "points": 100,
+      "timer_duration": 30,
+      "category_id": "33333333-3333-3333-3333-333333333333",
+      "package_name": "Babak Penyisihan A"
+    }
+  ]
+}
+    </pre>
+  </div>
+
+  <!-- API SPEC 3 -->
+  <div class="card card-purple">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <strong>3. POST /api/tutor</strong>
+      <span class="badge badge-purple">AI Streaming Tutor</span>
+    </div>
+    <p style="font-size: 8pt; margin: 4px 0;">Menghasilkan streaming petunjuk (Hint) tanpa bocor huruf atau ulasan edukatif juri.</p>
+    <pre style="margin: 4px 0; font-size: 7.5pt;">
+// Request Body
+{
+  "mode": "hint", // atau "explanation"
+  "question": "Planet terdekat dengan Matahari dalam tata surya adalah...",
+  "correctAnswer": "B (Merkurius)",
+  "step": 1, // 1 = Arah Berpikir / Konseptual, 2 = Ciri Khas / Karakteristik
+  "optionsText": "A. Venus
+B. Merkurius
+C. Mars
+D. Bumi"
+}
+
+// Response: Plain Text Stream (Chunked HTTP)
+"Pikirkan tentang benda langit dengan orbit lintasan paling dalam..."
+    </pre>
+  </div>
+
+  <h2>Daftar Kanal WebSocket & Event Supabase Realtime</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Nama Saluran (Channel)</th>
+        <th>Jenis Event</th>
+        <th>Target Pengirim & Penerima</th>
+        <th>Deskripsi Aksi Reaktif</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>room_sync_{sessionId}</code></td>
+        <td><code>postgres_changes</code> pada <code>game_sessions</code></td>
+        <td>Operator &rarr; Proyektor & Peserta</td>
+        <td>Menyinkronkan jeda/lanjut timer, buka kunci jawaban, status stepper panggung, dan perubahan nomor soal aktif.</td>
+      </tr>
+      <tr>
+        <td><code>room_sync_{sessionId}</code></td>
+        <td><code>postgres_changes</code> pada <code>teams</code></td>
+        <td>Operator &rarr; Proyektor & Peserta</td>
+        <td>Memperbarui skor dan peringkat regu secara instan saat operator memberi poin (+/-).</td>
+      </tr>
+      <tr>
+        <td><code>room_sync_{sessionId}</code></td>
+        <td><code>broadcast: reset_boxes</code></td>
+        <td>Operator &rarr; Proyektor</td>
+        <td>Mengosongkan daftar kotak yang telah dibuka (opened boxes) saat babak baru dimulai.</td>
+      </tr>
+      <tr>
+        <td><code>admin_hub_channel_{sessionId}</code></td>
+        <td><code>postgres_changes</code> pada <code>game_sessions</code> & <code>teams</code></td>
+        <td>Database &rarr; Dashboard Hub '/'</td>
+        <td>Memperbarui jumlah regu yang terdaftar dan skor terkini di halaman pemilihan ruangan.</td>
+      </tr>
+      <tr>
+        <td><code>available_teams_{sessionId}</code></td>
+        <td><code>postgres_changes</code> pada <code>teams</code></td>
+        <td>Database &rarr; Layar Join HP Peserta</td>
+        <td>Menampilkan daftar nama regu panggung yang dapat dipilih peserta saat pertama kali membuka web.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="page-break"></div>
+
+  <!-- ==================================================================== -->
+  <!-- HALAMAN 10: PANDUAN UNTUK GEMINI AI (PROMPTING & EXTENSION GUIDE) -->
+  <!-- ==================================================================== -->
+  <div class="header-tag">Bab 6 &bull; Konteks Khusus Gemini AI</div>
+  <h1>6. Ringkasan & Panduan Konteks untuk Gemini AI</h1>
+
+  <div class="card card-accent">
+    <p style="margin: 0; font-size: 8.5pt;">
+      <strong>Catatan untuk AI Model (Google Gemini):</strong> Bagian ini merangkum aturan arsitektur mutlak, konvensi kode, pola deserialisasi metadata, dan instruksi penambahan fitur baru agar Anda dapat memberikan saran perbaikan atau kode ekstensi yang 100% kompatibel dengan arsitektur saat ini tanpa merusak sinkronisasi real-time.
+    </p>
+  </div>
+
+  <h2>Aturan Desain & Konvensi Kode Mutlak</h2>
+  <ul>
+    <li>
+      <strong>Next.js 16 & React 19:</strong> Semua hook state client yang mendengarkan WebSocket Supabase atau Browser APIs (WakeLock, Fullscreen, Web Audio) HARUS memakai deklarasi <code>'use client';</code> di baris paling atas.
+    </li>
+    <li>
+      <strong>Zero External Audio File Dependency:</strong> DILARANG menambahkan referensi file statis audio <code>.mp3</code> atau <code>.wav</code> di folder public. Seluruh efek suara baru HARUS dibuat sebagai metode di kelas <code>SoundManager</code> (<code>src/lib/sound.ts</code>) menggunakan native <code>AudioContext</code> browser (OscillatorNode & GainNode).
+    </li>
+    <li>
+      <strong>Sistem Serialisasi Metadata String:</strong> Supabase PostgreSQL saat ini tidak memiliki kolom terpisah untuk kotak babak dan filter kategori di tabel <code>game_sessions</code>. Sebagai gantinya, metadata disimpan sebagai tag regex di dalam kolom string:
+      <ul>
+        <li>Di <code>game_sessions.title</code>: Menyimpan tag <code>[BOXES:12]</code> (jumlah kotak) dan <code>[CAT:uuid-kategori]</code> (filter kategori aktif). Selalu gunakan <code>parseSessionMeta()</code> dan <code>buildSessionTitleWithBoxes()</code> dari <code>@/lib/supabase</code>.</li>
+        <li>Di <code>questions.explanation</code>: Menyimpan tag <code>[BOX:1]</code> (nomor kotak) dan <code>[PAKET:Nama Paket]</code>. Selalu gunakan <code>parseQuestionMeta()</code> dan <code>buildExplanationWithMeta()</code> dari <code>@/lib/supabase</code>.</li>
+      </ul>
+    </li>
+    <li>
+      <strong>Prinsip Layar Peserta Tetap Pasif:</strong> Jangan pernah menambahkan tombol input jawaban (misal tombol pilihan A/B/C/D) di <code>src/app/peserta/page.tsx</code>. Peserta selalu berdiskusi fisik di panggung dan menjawab lisan di mikrofon panggung.
+    </li>
+    <li>
+      <strong>Timer Real-time yang Tangguh:</strong> Timer tidak menggunakan <code>setInterval</code> murni yang mudah drift saat tab tidak aktif. Perhitungan sisa detik timer dihitung berdasarkan selisih waktu <code>session.updated_at</code> dengan <code>Date.now()</code>.
+    </li>
+  </ul>
+
+  <h2>Panduan Menambah Fitur Baru yang Sering Diminta</h2>
+
+  <div class="card">
+    <h3 style="margin-top: 0; color: #1e40af;">Kasus 1: Menambah Format Soal Baru (Misal: Soal Tebak Gambar)</h3>
+    <ol style="font-size: 8pt; margin-bottom: 0;">
+      <li>Tambahkan nilai enum baru ke PostgreSQL: <code>ALTER TYPE question_type ADD VALUE 'tebak_gambar';</code> di Supabase SQL Editor.</li>
+      <li>Perbarui union type <code>QuestionType</code> di <code>src/lib/supabase.ts</code>.</li>
+      <li>Tambahkan kolom URL gambar (atau simpan format URL di <code>question_text</code>).</li>
+      <li>Buka <code>src/components/QuestionDisplay.tsx</code> dan buat blok rendering <code>question.type === 'tebak_gambar'</code>.</li>
+      <li>Buka <code>src/app/control/page.tsx</code> dan <code>src/app/operator/page.tsx</code> untuk menambahkan tab format soal baru tersebut.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0; color: #1e40af;">Kasus 2: Menambah Efek Suara Baru (Misal: Buzzer Rebutan Panggung)</h3>
+    <ol style="font-size: 8pt; margin-bottom: 0;">
+      <li>Buka berkas <code>src/lib/sound.ts</code>.</li>
+      <li>Tambahkan method baru, misalnya <code>playBuzzerRebutan()</code> dengan osilator frekuensi 150Hz gelombang sawtooth.</li>
+      <li>Panggil method tersebut di <code>src/app/control/page.tsx</code> saat tombol pemicu ditekan.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-top: 0; color: #1e40af;">Kasus 3: Menyesuaikan Model Gemini AI</h3>
+    <ol style="font-size: 8pt; margin-bottom: 0;">
+      <li>Buka berkas <code>src/lib/gemini.ts</code> pada fungsi <code>getGeminiModel</code>.</li>
+      <li>Model default saat ini adalah <code>gemini-3.5-flash-lite</code> (tercepat dan paling stabil di AI Studio). Anda dapat menggantinya via environment variable <code>GEMINI_MODEL=gemini-2.5-flash</code> di berkas <code>.env.local</code>.</li>
+    </ol>
+  </div>
+
+  <div class="footer-doc">
+    &copy; 2026 Kuis Battle Panggung &bull; Dokumen Referensi Resmi Arsitektur & Alur Sistem untuk Pasangan Pemrograman Gemini AI
+  </div>
+
+</body>
+</html>

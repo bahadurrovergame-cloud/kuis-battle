@@ -122,6 +122,39 @@ class SoundManager {
     }
   }
 
+  // Audio efek jawaban SALAH — bunyi "bzzzt" tegas memantul 2x
+  playWrong() {
+    try {
+      this.initCtx();
+      if (!this.audioCtx) return;
+      const now = this.audioCtx.currentTime;
+
+      // Dua dentuman sawtooth menurun tajam — seperti buzzer game show
+      [0, 0.22].forEach((offset) => {
+        if (!this.audioCtx) return;
+        const osc = this.audioCtx.createOscillator();
+        const gain = this.audioCtx.createGain();
+
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(280, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(100, now + offset + 0.18);
+
+        gain.gain.setValueAtTime(0.3, now + offset);
+        gain.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.18);
+
+        osc.connect(gain);
+        gain.connect(this.audioCtx.destination);
+
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.18);
+      });
+    } catch {
+      // Quiet fail
+    }
+  }
+
+
+
   // Correct answer / Reveal chime
   playCorrect() {
     try {

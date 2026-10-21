@@ -7,12 +7,14 @@ import {
   GameSession,
   Question,
   Team,
-  SessionQuestion,
   parseQuestionMeta,
   parseSessionMeta,
   buildSessionTitleWithBoxes,
-  buildSessionTitleWithMeta
+  buildSessionTitleWithMeta,
+  applyThemeToDom,
+  QuizStateUpdatePayload
 } from '@/lib/supabase';
+import ThemeSelector from '@/components/ThemeSelector';
 import {
   Play,
   Pause,
@@ -20,8 +22,6 @@ import {
   Eye,
   SkipForward,
   Trophy,
-  Plus,
-  Minus,
   Sparkles,
   Tv,
   BookOpen,
@@ -42,6 +42,7 @@ import {
   ShieldCheck
 } from 'lucide-react';
 import { sounds } from '@/lib/sound';
+import AiTutor from '@/components/AiTutor';
 
 export default function OperatorControlPage() {
   const router = useRouter();
@@ -58,6 +59,66 @@ export default function OperatorControlPage() {
 
   // Status feedback penilaian cepat
   const [awardedStatus, setAwardedStatus] = useState<string | null>(null);
+  const [lastAwardedTeamId, setLastAwardedTeamId] = useState<string | null>(null);
+
+  // Ref WebSocket Channel aktif untuk Zero-Delay Supabase Broadcast
+  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+
+  // Helper broadcast state ke channel room secara instan
+  const broadcastQuizState = useCallback(
+    (payload: QuizStateUpdatePayload) => {
+      if (!session?.id) return;
+      try {
+        const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+        ch.send({
+          type: 'broadcast',
+          event: 'quiz_state_update',
+          payload,
+        }).catch((err) => console.error('Failed to broadcast quiz state:', err));
+      } catch (err) {
+        console.error('Failed to broadcast quiz state:', err);
+      }
+    },
+    [session?.id]
+  );
+
+  // Mekanisme Lock & Debounce Optimistic UI (Cegah visual flickering / rubber-banding)
+  const isOptimisticUpdating = useRef<boolean>(false);
+  const optimisticLockCount = useRef<number>(0);
+  const optimisticTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const startOptimisticUpdate = () => {
+    isOptimisticUpdating.current = true;
+    optimisticLockCount.current += 1;
+    if (optimisticTimerRef.current) {
+      clearTimeout(optimisticTimerRef.current);
+      optimisticTimerRef.current = null;
+    }
+  };
+
+  const endOptimisticUpdate = () => {
+    optimisticLockCount.current = Math.max(0, optimisticLockCount.current - 1);
+    if (optimisticLockCount.current === 0) {
+      if (optimisticTimerRef.current) clearTimeout(optimisticTimerRef.current);
+      // Grace period 600ms agar WebSocket postgres_changes dari DB lama diabaikan
+      optimisticTimerRef.current = setTimeout(() => {
+        isOptimisticUpdating.current = false;
+        optimisticTimerRef.current = null;
+      }, 600);
+    }
+  };
+
+  // Helper eksekusi update database non-blocking di background
+  const runBackgroundUpdate = (queryPromise: PromiseLike<unknown>) => {
+    startOptimisticUpdate();
+    Promise.resolve(queryPromise)
+      .catch((err: unknown) => {
+        console.error('Background DB update error:', err);
+      })
+      .finally(() => {
+        endOptimisticUpdate();
+      });
+  };
 
   // Modal Verifikasi PIN Admin untuk membuka Bank Soal
   const [isAdminPinModalOpen, setIsAdminPinModalOpen] = useState(false);
@@ -90,41 +151,52 @@ export default function OperatorControlPage() {
   // Auth gate check
   const [isAuthorized, setIsAuthorized] = useState<boolean>(false);
 
+  // Metadata Sesi (Title & Box Count)
+  const { cleanTitle, boxCount } = parseSessionMeta(session);
+
   useEffect(() => {
     const role = sessionStorage.getItem('auth_role');
     if (!role) {
       router.push('/login');
     } else {
-      setIsAuthorized(true);
+      queueMicrotask(() => {
+        setIsAuthorized(true);
+      });
     }
   }, [router]);
 
   // Sync selectedGameType from database status
   useEffect(() => {
-    if (
-      session?.status === 'box_benar_salah' ||
-      session?.status === 'category_benar_salah' ||
-      session?.status?.includes('benar_salah')
-    ) {
-      setSelectedGameType('benar_salah');
-    } else if (
-      session?.status === 'box_essay' ||
-      session?.status === 'category_essay' ||
-      session?.status?.includes('essay')
-    ) {
-      setSelectedGameType('essay');
-    } else if (
-      session?.status === 'box_pilihan_ganda' ||
-      session?.status === 'category_pilihan_ganda' ||
-      session?.status === 'category_select' ||
-      session?.status?.includes('pilihan_ganda')
-    ) {
-      setSelectedGameType('pilihan_ganda');
-    }
+    queueMicrotask(() => {
+      if (
+        session?.status === 'box_benar_salah' ||
+        session?.status === 'category_benar_salah' ||
+        session?.status?.includes('benar_salah')
+      ) {
+        setSelectedGameType('benar_salah');
+      } else if (
+        session?.status === 'box_essay' ||
+        session?.status === 'category_essay' ||
+        session?.status?.includes('essay')
+      ) {
+        setSelectedGameType('essay');
+      } else if (
+        session?.status === 'box_pilihan_ganda' ||
+        session?.status === 'category_pilihan_ganda' ||
+        session?.status === 'category_select' ||
+        session?.status?.includes('pilihan_ganda')
+      ) {
+        setSelectedGameType('pilihan_ganda');
+      }
+    });
   }, [session?.status]);
 
   // Load initial data dengan dukungan Paket Soal per Room
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (force = false) => {
+    if (!force && isOptimisticUpdating.current) {
+      // Abaikan jika operator sedang aktif berinteraksi / navigasi step secara lokal
+      return;
+    }
     try {
       const { data: allSessions } = await supabase
         .from('game_sessions')
@@ -166,7 +238,8 @@ export default function OperatorControlPage() {
           localStorage.setItem('active_room_code', sessionData.room_code);
         }
 
-        const { activeCategoryId } = parseSessionMeta(sessionData);
+        const { activeCategoryId, theme } = parseSessionMeta(sessionData);
+        applyThemeToDom(theme);
         if (activeCategoryId) {
           setSelectedCategoryFilter(activeCategoryId);
         }
@@ -196,7 +269,8 @@ export default function OperatorControlPage() {
           const { data: qList } = await supabase
             .from('questions')
             .select('*')
-            .order('created_at', { ascending: true });
+            .order('created_at', { ascending: true })
+            .limit(50);
           if (qList) {
             parsedQs = qList.map(parseQuestionMeta);
             setQuestionsList(parsedQs);
@@ -246,31 +320,67 @@ export default function OperatorControlPage() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    let ignore = false;
+    const run = async () => {
+      if (!ignore) {
+        await loadData();
+      }
+    };
+    run();
 
-    const interval = setInterval(() => {
-      loadData();
-    }, 2500);
+    // Safety sync interval - hanya cek apakah session berubah alih-alih me-load seluruh tabel setiap 4 detik
+    const interval = setInterval(async () => {
+      if (!ignore && session?.id && !isOptimisticUpdating.current) {
+        try {
+          const { data: s } = await supabase
+            .from('game_sessions')
+            .select('id, status, is_timer_running, current_question_id, is_answer_revealed, timer_remaining, active_round')
+            .eq('id', session.id)
+            .single();
+          if (
+            s &&
+            !isOptimisticUpdating.current &&
+            (s.status !== session.status ||
+              s.current_question_id !== session.current_question_id ||
+              s.is_answer_revealed !== session.is_answer_revealed ||
+              s.is_timer_running !== session.is_timer_running ||
+              s.active_round !== session.active_round)
+          ) {
+            loadData();
+          }
+        } catch {}
+      }
+    }, 4000);
 
-    return () => clearInterval(interval);
-  }, [loadData]);
+    return () => {
+      ignore = true;
+      clearInterval(interval);
+    };
+  }, [loadData, session]);
 
   // Realtime subscription
   useEffect(() => {
     if (!session?.id) return;
 
     const channelName = `room_sync_${session.id}`;
-    const channel = supabase
-      .channel(channelName)
+    const channel = supabase.channel(channelName);
+    channelRef.current = channel;
+
+    channel
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'game_sessions', filter: `id=eq.${session.id}` },
         async (payload) => {
+          if (isOptimisticUpdating.current) {
+            // Abaikan payload basi saat operator sedang melakukan interaksi / navigasi lokal
+            return;
+          }
           const updated = payload.new as GameSession;
           if (updated) {
             setSession(updated);
 
-            const { activeCategoryId } = parseSessionMeta(updated);
+            const { activeCategoryId, theme } = parseSessionMeta(updated);
+            applyThemeToDom(theme);
             if (activeCategoryId) {
               setSelectedCategoryFilter(activeCategoryId);
             }
@@ -292,6 +402,9 @@ export default function OperatorControlPage() {
         'postgres_changes',
         { event: '*', schema: 'public', table: 'session_questions', filter: `session_id=eq.${session.id}` },
         () => {
+          if (isOptimisticUpdating.current) {
+            return;
+          }
           loadData();
         }
       )
@@ -318,6 +431,7 @@ export default function OperatorControlPage() {
       });
 
     return () => {
+      channelRef.current = null;
       supabase.removeChannel(channel);
     };
   }, [session?.id, loadData]);
@@ -326,8 +440,10 @@ export default function OperatorControlPage() {
   useEffect(() => {
     if (!session?.is_timer_running || !session?.updated_at) {
       if (session) {
-        setRemainingTime(session.timer_remaining);
-        prevRemainingRef.current = session.timer_remaining;
+        queueMicrotask(() => {
+          setRemainingTime(session.timer_remaining);
+          prevRemainingRef.current = session.timer_remaining;
+        });
       }
       return;
     }
@@ -354,86 +470,135 @@ export default function OperatorControlPage() {
     const timerInterval = setInterval(calcTime, 250);
 
     return () => clearInterval(timerInterval);
-  }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining]);
+  }, [session?.is_timer_running, session?.updated_at, session?.timer_remaining, session]);
 
-  // Toggle Timer
-  const toggleTimer = async () => {
+  // Toggle Timer (Zero Delay: Optimistic + Broadcast + Background DB)
+  const toggleTimer = () => {
     if (!session) return;
+    startOptimisticUpdate();
     const nextState = !session.is_timer_running;
     const nowIso = new Date().toISOString();
 
-    setSession({
+    const updatedSession: GameSession = {
       ...session,
       is_timer_running: nextState,
       timer_remaining: remainingTime,
       updated_at: nowIso,
-    });
+      status: nextState ? 'active' : 'paused',
+    };
 
-    await supabase
-      .from('game_sessions')
-      .update({
+    // 1. Optimistic UI update di operator (0ms)
+    setSession(updatedSession);
+
+    // 2. Broadcast instan ke layar proyektor panggung (sub-50ms)
+    broadcastQuizState({
+      sessionUpdate: {
         is_timer_running: nextState,
         timer_remaining: remainingTime,
         updated_at: nowIso,
         status: nextState ? 'active' : 'paused',
-      })
-      .eq('id', session.id);
+      },
+      remainingTime,
+      action: 'toggle_timer',
+    });
+
+    // 3. Database update di background (non-blocking)
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({
+          is_timer_running: nextState,
+          timer_remaining: remainingTime,
+          updated_at: nowIso,
+          status: nextState ? 'active' : 'paused',
+        })
+        .eq('id', session.id)
+    );
   };
 
-  // Reset Timer
-  const resetTimer = async () => {
+  // Reset Timer (Zero Delay)
+  const resetTimer = () => {
     if (!session || !currentQuestion) return;
+    startOptimisticUpdate();
     const dur = currentQuestion.timer_duration || 30;
     const nowIso = new Date().toISOString();
 
     setRemainingTime(dur);
-    setSession({
+    const updatedSession: GameSession = {
       ...session,
       timer_remaining: dur,
       is_timer_running: false,
       updated_at: nowIso,
-    });
+    };
+    setSession(updatedSession);
 
-    await supabase
-      .from('game_sessions')
-      .update({
+    broadcastQuizState({
+      sessionUpdate: {
         timer_remaining: dur,
         is_timer_running: false,
         updated_at: nowIso,
-      })
-      .eq('id', session.id);
+      },
+      remainingTime: dur,
+      action: 'reset_timer',
+    });
+
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({
+          timer_remaining: dur,
+          is_timer_running: false,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id)
+    );
   };
 
-  // Set Preset Duration
-  const handleSetDuration = async (seconds: number) => {
+  // Set Preset Duration (Zero Delay)
+  const handleSetDuration = (seconds: number) => {
     if (!session) return;
+    startOptimisticUpdate();
     const nowIso = new Date().toISOString();
 
     setRemainingTime(seconds);
-    setSession({
+    const updatedSession: GameSession = {
       ...session,
       timer_remaining: seconds,
       is_timer_running: false,
       updated_at: nowIso,
-    });
+    };
+    setSession(updatedSession);
 
-    await supabase
-      .from('game_sessions')
-      .update({
+    broadcastQuizState({
+      sessionUpdate: {
         timer_remaining: seconds,
         is_timer_running: false,
         updated_at: nowIso,
-      })
-      .eq('id', session.id);
+      },
+      remainingTime: seconds,
+      action: 'set_duration',
+    });
+
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({
+          timer_remaining: seconds,
+          is_timer_running: false,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id)
+    );
   };
 
-  // Ubah Tampilan Layar Proyektor
-  const handleSetProjectorView = async (
+  // Ubah Tampilan Layar Proyektor (Zero Delay: Optimistic + Instant Broadcast + Background DB)
+  const handleSetProjectorView = (
     view: 'welcome' | 'type_select' | 'category_select' | 'box_select' | 'question_active',
     specificType?: 'pilihan_ganda' | 'benar_salah' | 'essay',
     specificCategory?: string
   ) => {
     if (!session) return;
+    startOptimisticUpdate();
     const nowIso = new Date().toISOString();
     const typeToUse = specificType || selectedGameType;
     if (specificType) setSelectedGameType(specificType);
@@ -441,172 +606,231 @@ export default function OperatorControlPage() {
     if (view === 'welcome') {
       setCurrentQuestion(null);
       setAwardedStatus(null);
-      setSession({
+      setLastAwardedTeamId(null);
+      const updatedSession: GameSession = {
         ...session,
         status: 'waiting',
         current_question_id: null,
         is_timer_running: false,
         is_answer_revealed: false,
         updated_at: nowIso,
-      });
+      };
+      setSession(updatedSession);
 
-      await supabase
-        .from('game_sessions')
-        .update({
+      broadcastQuizState({
+        sessionUpdate: {
           status: 'waiting',
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
           updated_at: nowIso,
-        })
-        .eq('id', session.id);
+        },
+        currentQuestion: null,
+        action: 'set_view_welcome',
+      });
+
+      runBackgroundUpdate(
+        supabase
+          .from('game_sessions')
+          .update({
+            status: 'waiting',
+            current_question_id: null,
+            is_timer_running: false,
+            is_answer_revealed: false,
+            updated_at: nowIso,
+          })
+          .eq('id', session.id)
+      );
     } else if (view === 'type_select') {
       setCurrentQuestion(null);
       setAwardedStatus(null);
-      setSession({
+      setLastAwardedTeamId(null);
+      const updatedSession: GameSession = {
         ...session,
         status: 'type_select',
         current_question_id: null,
         is_timer_running: false,
         is_answer_revealed: false,
         updated_at: nowIso,
-      });
+      };
+      setSession(updatedSession);
 
-      await supabase
-        .from('game_sessions')
-        .update({
+      broadcastQuizState({
+        sessionUpdate: {
           status: 'type_select',
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
           updated_at: nowIso,
-        })
-        .eq('id', session.id);
-    } else if (view === 'category_select') {
-      setCurrentQuestion(null);
-      setAwardedStatus(null);
-      const targetStatus = typeToUse === 'pilihan_ganda' ? 'category_select' : `category_${typeToUse}`;
-
-      setSession({
-        ...session,
-        status: targetStatus as any,
-        current_question_id: null,
-        is_timer_running: false,
-        is_answer_revealed: false,
-        updated_at: nowIso,
+        },
+        currentQuestion: null,
+        action: 'set_view_type_select',
       });
 
-      const { error } = await supabase
-        .from('game_sessions')
-        .update({
-          status: targetStatus,
-          current_question_id: null,
-          is_timer_running: false,
-          is_answer_revealed: false,
-          updated_at: nowIso,
-        })
-        .eq('id', session.id);
-
-      if (error && targetStatus !== 'category_select') {
-        await supabase
+      runBackgroundUpdate(
+        supabase
           .from('game_sessions')
           .update({
-            status: 'category_select',
+            status: 'type_select',
             current_question_id: null,
             is_timer_running: false,
             is_answer_revealed: false,
             updated_at: nowIso,
           })
-          .eq('id', session.id);
+          .eq('id', session.id)
+      );
+    } else if (view === 'category_select') {
+      setCurrentQuestion(null);
+      setAwardedStatus(null);
+      setLastAwardedTeamId(null);
+      const targetStatus = typeToUse === 'pilihan_ganda' ? 'category_select' : `category_${typeToUse}`;
 
-        setSession((prev) => (prev ? { ...prev, status: 'category_select' as any } : null));
-      }
+      const updatedSession: GameSession = {
+        ...session,
+        status: targetStatus,
+        current_question_id: null,
+        is_timer_running: false,
+        is_answer_revealed: false,
+        updated_at: nowIso,
+      };
+      setSession(updatedSession);
+
+      broadcastQuizState({
+        sessionUpdate: {
+          status: targetStatus,
+          current_question_id: null,
+          is_timer_running: false,
+          is_answer_revealed: false,
+          updated_at: nowIso,
+        },
+        currentQuestion: null,
+        action: 'set_view_category_select',
+      });
+
+      runBackgroundUpdate(
+        supabase
+          .from('game_sessions')
+          .update({
+            status: targetStatus,
+            current_question_id: null,
+            is_timer_running: false,
+            is_answer_revealed: false,
+            updated_at: nowIso,
+          })
+          .eq('id', session.id)
+      );
     } else if (view === 'box_select') {
       setCurrentQuestion(null);
       setAwardedStatus(null);
+      setLastAwardedTeamId(null);
       const newStatus = `box_${typeToUse}`;
       const catToUse = specificCategory !== undefined ? specificCategory : selectedCategoryFilter;
       if (specificCategory !== undefined) setSelectedCategoryFilter(specificCategory);
 
       const updatedTitle = buildSessionTitleWithMeta(cleanTitle, boxCount, catToUse);
 
-      setSession({
+      const updatedSession: GameSession = {
         ...session,
         title: updatedTitle,
-        status: newStatus as any,
+        status: newStatus,
         current_question_id: null,
         is_timer_running: false,
         is_answer_revealed: false,
         updated_at: nowIso,
-      });
+      };
+      setSession(updatedSession);
 
-      const { error } = await supabase
-        .from('game_sessions')
-        .update({
+      broadcastQuizState({
+        sessionUpdate: {
           title: updatedTitle,
           status: newStatus,
           current_question_id: null,
           is_timer_running: false,
           is_answer_revealed: false,
           updated_at: nowIso,
-        })
-        .eq('id', session.id);
+        },
+        currentQuestion: null,
+        action: 'set_view_box_select',
+      });
 
-      if (error) {
-        await supabase
+      runBackgroundUpdate(
+        supabase
           .from('game_sessions')
           .update({
             title: updatedTitle,
-            status: 'box_select',
+            status: newStatus,
             current_question_id: null,
             is_timer_running: false,
             is_answer_revealed: false,
             updated_at: nowIso,
           })
-          .eq('id', session.id);
-      }
+          .eq('id', session.id)
+      );
     } else if (view === 'question_active' && currentQuestion) {
-      setSession({
+      const updatedSession: GameSession = {
         ...session,
         status: 'active',
         current_question_id: currentQuestion.id,
         updated_at: nowIso,
-      });
+      };
+      setSession(updatedSession);
 
-      await supabase
-        .from('game_sessions')
-        .update({
+      broadcastQuizState({
+        sessionUpdate: {
           status: 'active',
           current_question_id: currentQuestion.id,
           updated_at: nowIso,
-        })
-        .eq('id', session.id);
+        },
+        currentQuestion,
+        action: 'set_view_question_active',
+      });
+
+      runBackgroundUpdate(
+        supabase
+          .from('game_sessions')
+          .update({
+            status: 'active',
+            current_question_id: currentQuestion.id,
+            updated_at: nowIso,
+          })
+          .eq('id', session.id)
+      );
     }
   };
 
-  // Toggle reveal answer
-  const toggleRevealAnswer = async () => {
+  // Toggle reveal answer (Zero Delay: Optimistic + Broadcast + Background DB)
+  const toggleRevealAnswer = () => {
     if (!session) return;
+    startOptimisticUpdate();
     const nextState = !session.is_answer_revealed;
-    setSession({ ...session, is_answer_revealed: nextState });
+    const updatedSession = { ...session, is_answer_revealed: nextState };
+    setSession(updatedSession);
 
-    await supabase
-      .from('game_sessions')
-      .update({ is_answer_revealed: nextState })
-      .eq('id', session.id);
+    broadcastQuizState({
+      sessionUpdate: { is_answer_revealed: nextState },
+      action: 'toggle_reveal_answer',
+    });
+
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({ is_answer_revealed: nextState })
+        .eq('id', session.id)
+    );
   };
 
-  // Select Question & Auto-Start Timer & Update status di Database
-  const handleSelectQuestion = async (q: Question, autoStartTimer = false) => {
+  // Select Question (Zero Delay: Optimistic + Instant Broadcast + Background DB)
+  const handleSelectQuestion = (q: Question, autoStartTimer = false) => {
     if (!session) return;
-    setLoadingAction(true);
+    startOptimisticUpdate();
     setCurrentQuestion(q);
     setAwardedStatus(null);
+    setLastAwardedTeamId(null);
     const dur = q.timer_duration || 30;
     const nowIso = new Date().toISOString();
 
     setRemainingTime(dur);
-    setSession({
+    const updatedSession: GameSession = {
       ...session,
       status: 'active',
       current_question_id: q.id,
@@ -614,154 +838,269 @@ export default function OperatorControlPage() {
       timer_remaining: dur,
       is_timer_running: autoStartTimer,
       updated_at: nowIso,
-    });
+    };
+    setSession(updatedSession);
 
-    setOpenedBoxIds((prev) => {
-      if (prev.includes(q.id)) return prev;
-      const next = [...prev, q.id];
-      try {
-        localStorage.setItem(`opened_boxes_${session.id}`, JSON.stringify(next));
-      } catch {}
-      return next;
-    });
+    const nextOpened = openedBoxIds.includes(q.id) ? openedBoxIds : [...openedBoxIds, q.id];
+    setOpenedBoxIds(nextOpened);
+    try {
+      localStorage.setItem(`opened_boxes_${session.id}`, JSON.stringify(nextOpened));
+    } catch {}
 
-    await supabase
-      .from('session_questions')
-      .update({ is_opened: true })
-      .eq('session_id', session.id)
-      .eq('question_id', q.id);
-
-    await supabase
-      .from('game_sessions')
-      .update({
+    // Broadcast INSTAN ke proyektor
+    broadcastQuizState({
+      sessionUpdate: {
         status: 'active',
         current_question_id: q.id,
         is_answer_revealed: false,
         timer_remaining: dur,
         is_timer_running: autoStartTimer,
         updated_at: nowIso,
-      })
-      .eq('id', session.id);
+      },
+      currentQuestion: q,
+      remainingTime: dur,
+      openedBoxIds: nextOpened,
+      action: 'select_question',
+    });
 
-    setLoadingAction(false);
+    // Background DB update
+    runBackgroundUpdate(
+      supabase
+        .from('session_questions')
+        .update({ is_opened: true })
+        .eq('session_id', session.id)
+        .eq('question_id', q.id)
+    );
+
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({
+          status: 'active',
+          current_question_id: q.id,
+          is_answer_revealed: false,
+          timer_remaining: dur,
+          is_timer_running: autoStartTimer,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id)
+    );
   };
 
-  // PENILAIAN CEPAT OTOMATIS: 1 KLIK KE REGU ATAU TIDAK TERJAWAB
-  const handleAwardPoints = async (targetTeamId: string | null) => {
+  // PENILAIAN CEPAT OTOMATIS: 1 KLIK KE REGU ATAU TIDAK TERJAWAB (Anti Double-Scoring & Zero Delay)
+  const handleAwardPoints = (targetTeamId: string | null) => {
     if (!session || !currentQuestion) return;
-    setLoadingAction(true);
+    // Cegah penambahan poin berulang jika soal ini sudah dinilai
+    if (awardedStatus) return;
+    startOptimisticUpdate();
+
     const pointsValue = currentQuestion.points || 100;
     const nowIso = new Date().toISOString();
+    let updatedTeams = teams;
 
-    try {
-      if (targetTeamId) {
-        // Regu berhasil menjawab: tambah poin, bunyi sfx, stop timer, buka kunci
-        sounds.playScoreUp();
-        const targetTeam = teams.find((t) => t.id === targetTeamId);
-        if (targetTeam) {
-          const newScore = targetTeam.score + pointsValue;
-          setTeams((prev) => prev.map((t) => (t.id === targetTeamId ? { ...t, score: newScore } : t)));
-          await supabase.from('teams').update({ score: newScore }).eq('id', targetTeamId);
-          setAwardedStatus(`✓ +${pointsValue} PTS untuk ${targetTeam.name}`);
-        }
-      } else {
-        // Tidak terjawab / hangus: tidak ada poin yang bertambah
-        setAwardedStatus('✕ Soal Tidak Terjawab (Hangus)');
+    if (targetTeamId) {
+      sounds.playScoreUp();
+      const targetTeam = teams.find((t) => t.id === targetTeamId);
+      if (targetTeam) {
+        const newScore = targetTeam.score + pointsValue;
+        updatedTeams = teams.map((t) => (t.id === targetTeamId ? { ...t, score: newScore } : t));
+        setTeams(updatedTeams);
+        setAwardedStatus(`✓ +${pointsValue} PTS untuk ${targetTeam.name}`);
+        setLastAwardedTeamId(targetTeamId);
+
+        // 🎬 Broadcast animasi BENAR ke proyektor
+        const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+        ch.send({
+          type: 'broadcast',
+          event: 'score_event',
+          payload: {
+            type: 'correct',
+            teamName: targetTeam.name,
+            teamColor: targetTeam.color,
+            points: pointsValue,
+          },
+        }).catch(console.error);
+
+        // Background update DB
+        runBackgroundUpdate(supabase.from('teams').update({ score: newScore }).eq('id', targetTeamId));
       }
+    } else {
+      setAwardedStatus('✕ Soal Tidak Terjawab (Hangus)');
+      setLastAwardedTeamId(null);
 
-      // Hentikan timer dan buka kunci jawaban secara otomatis di panggung
-      setSession((prev) =>
-        prev
-          ? {
-              ...prev,
-              is_timer_running: false,
-              is_answer_revealed: true,
-              updated_at: nowIso,
-            }
-          : null
-      );
+      // 🎬 Broadcast animasi HANGUS ke proyektor
+      const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+      ch.send({
+        type: 'broadcast',
+        event: 'score_event',
+        payload: {
+          type: 'expired',
+          teamName: null,
+          teamColor: null,
+          points: 0,
+        },
+      }).catch(console.error);
+    }
 
-      await supabase
+    // Hentikan timer dan buka kunci jawaban seketika (Optimistic UI)
+    const nextSession: GameSession = {
+      ...session,
+      is_timer_running: false,
+      is_answer_revealed: true,
+      updated_at: nowIso,
+    };
+    setSession(nextSession);
+
+    // Broadcast status kuis terbaru ke proyektor secara instan
+    broadcastQuizState({
+      sessionUpdate: {
+        is_timer_running: false,
+        is_answer_revealed: true,
+        updated_at: nowIso,
+      },
+      teams: updatedTeams,
+      action: 'award_points',
+    });
+
+    // Background update DB
+    runBackgroundUpdate(
+      supabase
         .from('game_sessions')
         .update({
           is_timer_running: false,
           is_answer_revealed: true,
           updated_at: nowIso,
         })
-        .eq('id', session.id);
-    } catch (err) {
-      console.error('Error awarding points:', err);
-    } finally {
-      setLoadingAction(false);
-    }
+        .eq('id', session.id)
+    );
   };
 
-  // Reset status kotak yang sudah dibuka (Lokal & Database)
-  const handleResetBoxes = async () => {
+  // Koreksi / Batalkan Penilaian jika operator salah pencet
+  const handleResetAward = () => {
+    if (!session || !currentQuestion || !awardedStatus) return;
+    startOptimisticUpdate();
+    const pointsValue = currentQuestion.points || 100;
+    let updatedTeams = teams;
+
+    if (lastAwardedTeamId) {
+      const targetTeam = teams.find((t) => t.id === lastAwardedTeamId);
+      if (targetTeam) {
+        const revertedScore = Math.max(0, targetTeam.score - pointsValue);
+        updatedTeams = teams.map((t) => (t.id === lastAwardedTeamId ? { ...t, score: revertedScore } : t));
+        setTeams(updatedTeams);
+        runBackgroundUpdate(supabase.from('teams').update({ score: revertedScore }).eq('id', lastAwardedTeamId));
+      }
+    }
+
+    setAwardedStatus(null);
+    setLastAwardedTeamId(null);
+    const nowIso = new Date().toISOString();
+    const nextSession: GameSession = {
+      ...session,
+      is_answer_revealed: false,
+      updated_at: nowIso,
+    };
+    setSession(nextSession);
+
+    broadcastQuizState({
+      sessionUpdate: {
+        is_answer_revealed: false,
+        updated_at: nowIso,
+      },
+      teams: updatedTeams,
+      action: 'reset_award',
+    });
+
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({
+          is_answer_revealed: false,
+          updated_at: nowIso,
+        })
+        .eq('id', session.id)
+    );
+  };
+
+  // Reset status kotak yang sudah dibuka (Zero Delay: Optimistic + Broadcast + Background DB)
+  const handleResetBoxes = () => {
     if (!session) return;
     const confirm = window.confirm('Buka ulang semua kotak (reset status kotak yang sudah dibuka)?');
     if (!confirm) return;
+    startOptimisticUpdate();
 
     setOpenedBoxIds([]);
     try {
       localStorage.removeItem(`opened_boxes_${session.id}`);
     } catch {}
 
-    await supabase
-      .from('session_questions')
-      .update({ is_opened: false })
-      .eq('session_id', session.id)
-      .eq('round_name', session.active_round || 'Babak 1');
+    broadcastQuizState({
+      openedBoxIds: [],
+      action: 'reset_boxes',
+    });
 
-    const channelName = `room_sync_${session.id}`;
-    await supabase.channel(channelName).send({
+    const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+    ch.send({
       type: 'broadcast',
       event: 'reset_boxes',
       payload: {},
-    });
+    }).catch(console.error);
+
+    runBackgroundUpdate(
+      supabase
+        .from('session_questions')
+        .update({ is_opened: false })
+        .eq('session_id', session.id)
+        .eq('round_name', session.active_round || 'Babak 1')
+    );
   };
 
-  // Metadata Sesi
-  const { cleanTitle, boxCount } = parseSessionMeta(session);
-
-  // Ubah jumlah kotak Blink Box
-  const handleUpdateBoxCount = async (newCount: number) => {
+  // Ubah jumlah kotak Blink Box (Zero Delay)
+  const handleUpdateBoxCount = (newCount: number) => {
     if (!session || newCount < 1) return;
-    try {
-      const updatedTitle = buildSessionTitleWithBoxes(cleanTitle, newCount);
-      const { error } = await supabase
+    startOptimisticUpdate();
+    const updatedTitle = buildSessionTitleWithBoxes(cleanTitle, newCount);
+    setSession((prev) => (prev ? { ...prev, title: updatedTitle, blink_box_count: newCount } : prev));
+
+    broadcastQuizState({
+      sessionUpdate: { title: updatedTitle, blink_box_count: newCount },
+      action: 'box_count_sync',
+    });
+
+    const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+    ch.send({
+      type: 'broadcast',
+      event: 'box_count_sync',
+      payload: { boxCount: newCount },
+    }).catch(console.error);
+
+    runBackgroundUpdate(
+      supabase
         .from('game_sessions')
         .update({ title: updatedTitle })
-        .eq('id', session.id);
-
-      if (error) throw error;
-
-      setSession((prev) => (prev ? { ...prev, title: updatedTitle, blink_box_count: newCount } : prev));
-
-      supabase.channel(`room_sync_${session.id}`).send({
-        type: 'broadcast',
-        event: 'box_count_sync',
-        payload: { boxCount: newCount },
-      });
-    } catch (err) {
-      console.error('Update box count error:', err);
-    }
+        .eq('id', session.id)
+    );
   };
 
-  // Ubah filter kategori
-  const handleSelectCategoryFilter = async (catId: string) => {
+  // Ubah filter kategori (Zero Delay)
+  const handleSelectCategoryFilter = (catId: string) => {
+    startOptimisticUpdate();
     setSelectedCategoryFilter(catId);
     if (!session) return;
-    try {
-      const updatedTitle = buildSessionTitleWithMeta(cleanTitle, boxCount, catId);
-      await supabase
+    const updatedTitle = buildSessionTitleWithMeta(cleanTitle, boxCount, catId);
+    setSession((prev) => (prev ? { ...prev, title: updatedTitle } : prev));
+
+    broadcastQuizState({
+      sessionUpdate: { title: updatedTitle },
+      action: 'select_category_filter',
+    });
+
+    runBackgroundUpdate(
+      supabase
         .from('game_sessions')
         .update({ title: updatedTitle })
-        .eq('id', session.id);
-      setSession((prev) => (prev ? { ...prev, title: updatedTitle } : prev));
-    } catch (err) {
-      console.error('Update category filter error:', err);
-    }
+        .eq('id', session.id)
+    );
   };
 
   // Filter pertanyaan sesuai tipe permainan & kategori
@@ -771,30 +1110,39 @@ export default function OperatorControlPage() {
     return matchType && matchCat;
   });
 
-  const handleNextQuestion = async () => {
+  const handleNextQuestion = () => {
     if (!filteredQuestions.length || !currentQuestion) return;
     const currentIndex = filteredQuestions.findIndex((q) => q.id === currentQuestion.id);
     const nextIndex = (currentIndex + 1) % filteredQuestions.length;
     handleSelectQuestion(filteredQuestions[nextIndex], false);
   };
 
-  // Finish Match
-  const handleFinishMatch = async () => {
+  // Finish Match (Zero Delay)
+  const handleFinishMatch = () => {
     if (!session) return;
     const confirmed = window.confirm('Selesaikan pertandingan & tampilkan Podium Juara di Proyektor?');
     if (!confirmed) return;
+    startOptimisticUpdate();
 
     const nowIso = new Date().toISOString();
-    setSession({ ...session, status: 'finished', is_timer_running: false, updated_at: nowIso });
+    const updatedSession: GameSession = { ...session, status: 'finished', is_timer_running: false, updated_at: nowIso };
+    setSession(updatedSession);
 
-    await supabase
-      .from('game_sessions')
-      .update({ status: 'finished', is_timer_running: false, updated_at: nowIso })
-      .eq('id', session.id);
+    broadcastQuizState({
+      sessionUpdate: { status: 'finished', is_timer_running: false, updated_at: nowIso },
+      action: 'finish_match',
+    });
+
+    runBackgroundUpdate(
+      supabase
+        .from('game_sessions')
+        .update({ status: 'finished', is_timer_running: false, updated_at: nowIso })
+        .eq('id', session.id)
+    );
   };
 
-  // Skor
-  const handleAdjustScore = async (teamId: string, delta: number) => {
+  // Skor (Zero Delay)
+  const handleAdjustScore = (teamId: string, delta: number) => {
     const team = teams.find((t) => t.id === teamId);
     if (!team) return;
 
@@ -805,15 +1153,38 @@ export default function OperatorControlPage() {
     }
 
     const newScore = team.score + delta;
-    setTeams(teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t)));
+    const updatedTeams = teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t));
+    setTeams(updatedTeams);
 
-    await supabase
-      .from('teams')
-      .update({ score: newScore })
-      .eq('id', teamId);
+    // 🎬 Broadcast animasi skor ke proyektor
+    if (session?.id) {
+      const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+      ch.send({
+        type: 'broadcast',
+        event: 'score_event',
+        payload: {
+          type: delta > 0 ? 'correct' : 'wrong',
+          teamName: team.name,
+          teamColor: team.color,
+          points: Math.abs(delta),
+        },
+      }).catch(console.error);
+
+      broadcastQuizState({
+        teams: updatedTeams,
+        action: 'adjust_score',
+      });
+    }
+
+    runBackgroundUpdate(
+      supabase
+        .from('teams')
+        .update({ score: newScore })
+        .eq('id', teamId)
+    );
   };
 
-  const handleCustomScore = async (teamId: string) => {
+  const handleCustomScore = (teamId: string) => {
     const rawVal = customScores[teamId];
     if (!rawVal) return;
 
@@ -830,17 +1201,40 @@ export default function OperatorControlPage() {
     if (!team) return;
 
     const newScore = team.score + val;
-    setTeams(teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t)));
+    const updatedTeams = teams.map((t) => (t.id === teamId ? { ...t, score: newScore } : t));
+    setTeams(updatedTeams);
 
     setAppliedTeamId(teamId);
     setTimeout(() => setAppliedTeamId(null), 1200);
 
     setCustomScores((prev) => ({ ...prev, [teamId]: '' }));
 
-    await supabase
-      .from('teams')
-      .update({ score: newScore })
-      .eq('id', teamId);
+    // 🎬 Broadcast animasi skor ke proyektor
+    if (session?.id) {
+      const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+      ch.send({
+        type: 'broadcast',
+        event: 'score_event',
+        payload: {
+          type: val > 0 ? 'correct' : 'wrong',
+          teamName: team.name,
+          teamColor: team.color,
+          points: Math.abs(val),
+        },
+      }).catch(console.error);
+
+      broadcastQuizState({
+        teams: updatedTeams,
+        action: 'custom_score',
+      });
+    }
+
+    runBackgroundUpdate(
+      supabase
+        .from('teams')
+        .update({ score: newScore })
+        .eq('id', teamId)
+    );
   };
 
   // Team Modals
@@ -955,6 +1349,11 @@ export default function OperatorControlPage() {
     }
   };
 
+  const toggleTimerRef = useRef(toggleTimer);
+  useEffect(() => {
+    toggleTimerRef.current = toggleTimer;
+  });
+
   // Keyboard shortcut Spacebar
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -963,13 +1362,13 @@ export default function OperatorControlPage() {
 
       if (e.code === 'Space') {
         e.preventDefault();
-        toggleTimer();
+        toggleTimerRef.current();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [session?.is_timer_running, session?.id, remainingTime]);
+  }, []);
 
   const handleLogout = () => {
     sessionStorage.clear();
@@ -1029,7 +1428,7 @@ export default function OperatorControlPage() {
                       if (newRoom && newRoom !== session?.room_code) {
                         if (typeof window !== 'undefined') {
                           localStorage.setItem('active_room_code', newRoom);
-                          window.location.href = `/control?room=${encodeURIComponent(newRoom)}`;
+                          router.push(`/control?room=${encodeURIComponent(newRoom)}`);
                         }
                       }
                     }}
@@ -1055,6 +1454,8 @@ export default function OperatorControlPage() {
         </div>
 
         <div className="flex items-center gap-2 sm:gap-3">
+          <ThemeSelector session={session} />
+
           <div
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold border ${
               isConnected
@@ -1445,6 +1846,28 @@ export default function OperatorControlPage() {
                   </p>
                 )}
 
+                {/* AI Tutor Assistant - Hint saat bertanding & Penjelasan saat kunci jawaban dibuka */}
+                {currentQuestion && (
+                  <AiTutor
+                    key={currentQuestion.id}
+                    question={currentQuestion.question_text}
+                    correctAnswer={currentQuestion.correct_answer}
+                    optionsText={
+                      currentQuestion.options && currentQuestion.options.length > 0
+                        ? currentQuestion.options.map((o) => `${o.key}. ${o.text}`).join('\n')
+                        : undefined
+                    }
+                    isAnswerRevealed={session?.is_answer_revealed || !!awardedStatus}
+                    userAnswer={
+                      awardedStatus
+                        ? awardedStatus.startsWith('✓')
+                          ? `Peserta berhasil menjawab: ${awardedStatus}`
+                          : 'Peserta menjawab salah / tidak terjawab'
+                        : 'Peserta menjawab salah / tidak terjawab'
+                    }
+                  />
+                )}
+
                 {/* BARIS PENILAIAN CEPAT 1 KLIK */}
                 <div className="mt-3.5 pt-3 border-t border-slate-800/80">
                   <div className="flex items-center justify-between mb-2">
@@ -1453,9 +1876,19 @@ export default function OperatorControlPage() {
                       <span>Keputusan Cepat (+{currentQuestion?.points || 100} PTS):</span>
                     </span>
                     {awardedStatus && (
-                      <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800 px-2 py-0.5 rounded-full animate-pulse">
-                        {awardedStatus}
-                      </span>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800 px-2.5 py-0.5 rounded-full shadow-sm">
+                          {awardedStatus}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={handleResetAward}
+                          className="text-[10px] font-bold text-amber-400 hover:text-amber-300 underline decoration-dotted bg-amber-400/10 hover:bg-amber-400/20 px-2 py-0.5 rounded transition-all"
+                          title="Batalkan penilaian regu ini dan buka kembali tombol penilaian"
+                        >
+                          Koreksi Nilai
+                        </button>
+                      </div>
                     )}
                   </div>
 
@@ -1464,9 +1897,9 @@ export default function OperatorControlPage() {
                     <button
                       type="button"
                       onClick={() => handleAwardPoints(null)}
-                      disabled={loadingAction}
-                      className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-rose-500/50 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
-                      title="Soal tidak terjawab: kunci langsung dibuka tanpa menambah poin regu"
+                      disabled={loadingAction || !!awardedStatus}
+                      className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-rose-500/50 text-slate-300 hover:text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
+                      title={awardedStatus ? 'Soal ini sudah dinilai. Klik Koreksi Nilai untuk mengubah.' : 'Soal tidak terjawab: kunci langsung dibuka tanpa menambah poin regu'}
                     >
                       <X className="w-3.5 h-3.5 text-rose-400" />
                       <span>✕ Tidak Terjawab</span>
@@ -1478,9 +1911,9 @@ export default function OperatorControlPage() {
                         key={t.id}
                         type="button"
                         onClick={() => handleAwardPoints(t.id)}
-                        disabled={loadingAction}
-                        className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/60 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-50"
-                        title={`Berikan +${currentQuestion?.points || 100} poin ke ${t.name}`}
+                        disabled={loadingAction || !!awardedStatus}
+                        className="px-2.5 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700/80 hover:border-emerald-500/60 text-white text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
+                        title={awardedStatus ? 'Soal ini sudah dinilai. Klik Koreksi Nilai untuk mengubah.' : `Berikan +${currentQuestion?.points || 100} poin ke ${t.name}`}
                       >
                         <span className="w-2.5 h-2.5 rounded-full shrink-0 shadow" style={{ backgroundColor: t.color }} />
                         <span className="truncate max-w-[100px]">{t.name}</span>
@@ -1644,9 +2077,9 @@ export default function OperatorControlPage() {
             {/* TAB JENIS PERMAINAN */}
             <div className="flex items-center gap-1.5 mb-3 bg-slate-950 p-1.5 rounded-xl border border-slate-800">
               {[
-                { type: 'pilihan_ganda', label: 'Pilihan Ganda', icon: BookOpen },
-                { type: 'benar_salah', label: 'Benar / Salah', icon: HelpCircle },
-                { type: 'essay', label: 'Rebutan / Lisan', icon: Layers },
+                { type: 'pilihan_ganda' as const, label: 'Pilihan Ganda', icon: BookOpen },
+                { type: 'benar_salah' as const, label: 'Benar / Salah', icon: HelpCircle },
+                { type: 'essay' as const, label: 'Rebutan / Lisan', icon: Layers },
               ].map((item) => {
                 const Icon = item.icon;
                 const isCurrent = selectedGameType === item.type;
@@ -1654,7 +2087,7 @@ export default function OperatorControlPage() {
                 return (
                   <button
                     key={item.type}
-                    onClick={() => handleSetProjectorView('box_select', item.type as any)}
+                    onClick={() => handleSetProjectorView('box_select', item.type)}
                     className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all ${
                       isCurrent
                         ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
@@ -1807,7 +2240,7 @@ export default function OperatorControlPage() {
           </div>
         </section>
 
-        {/* KOLOM KANAN (5/12): KONTROL SKOR MANUAL & REGU (TETAP AMAN 100%) */}
+        {/* KOLOM KANAN (5/12): KONTROL SKOR MANUAL & REGU */}
         <section className="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 sm:p-6 shadow-xl flex flex-col h-fit">
           <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-800">
             <div className="flex items-center gap-2">

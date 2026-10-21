@@ -1,8 +1,8 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #020617;
+  --foreground: #f8fafc;
 }
 
 @theme inline {
@@ -12,15 +12,592 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+/* ========================================================================== */
+/* TEMA PANGGUNG REAL-TIME (STAGE MULTI-THEME ENGINE)                         */
+/* Mendukung 5 preset tema panggung yang berganti seketika secara real-time:  */
+/* 1. default (Midnight Slate)                                               */
+/* 2. daylight (Auditorium Daylight - Terang Kontras Tinggi)                 */
+/* 3. royal-gold (Royal Navy & Gold - Grand Final Mewah)                     */
+/* 4. cyberpunk (Cyberpunk Neon Arena - E-Sports / Gaming)                   */
+/* 5. emerald (Emerald Zamrud - Nuansa Alam / Syiar Islami)                  */
+/* ========================================================================== */
+
+/* 1. TEMA DEFAULT: MIDNIGHT SLATE (Gelap Modern, Safir & Ungu) */
+:root, [data-theme="default"], [data-theme="slate"] {
+  --theme-name: "Midnight Slate";
+  --background: #020617;
+  --foreground: #f8fafc;
+  --color-slate-950: #020617;
+  --color-slate-900: #0f172a;
+  --color-slate-800: #1e293b;
+  --color-slate-700: #334155;
+  --color-slate-600: #475569;
+  --color-slate-500: #64748b;
+  --color-slate-400: #94a3b8;
+  --color-slate-300: #cbd5e1;
+  --color-slate-200: #e2e8f0;
+  --color-slate-100: #f1f5f9;
+  --color-white: #ffffff;
+  color-scheme: dark;
+}
+
+/* 2. TEMA TERANG: AUDITORIUM DAYLIGHT (High-Contrast Terang untuk Siang / Proyektor) */
+[data-theme="daylight"] {
+  --theme-name: "Auditorium Daylight";
+  --background: #f8fafc;
+  --foreground: #090d16;
+  --color-slate-950: #f8fafc;
+  --color-slate-900: #ffffff;
+  --color-slate-800: #cbd5e1;
+  --color-slate-700: #94a3b8;
+  --color-slate-600: #64748b;
+  --color-slate-500: #475569;
+  --color-slate-400: #334155;
+  --color-slate-300: #1e293b;
+  --color-slate-200: #0f172a;
+  --color-slate-100: #020617;
+  --color-white: #ffffff;
+  color-scheme: light;
+}
+
+/* ========================================================================== */
+/* DAYLIGHT THEME: TEXT CONTRAST ENGINE (WCAG AAA)                            */
+/* ========================================================================== */
+
+/* Teks Netral Utama: Diubah menjadi Gelap Pekat (#0f172a / #020617) */
+[data-theme="daylight"] .text-white,
+[data-theme="daylight"] .text-slate-100,
+[data-theme="daylight"] .text-slate-200,
+[data-theme="daylight"] .text-gray-100,
+[data-theme="daylight"] .text-gray-200,
+[data-theme="daylight"] .text-gray-900 {
+  color: #0f172a !important;
+}
+
+/* Teks Sekunder: Diubah menjadi Slate Gelap Sedang (#334155 / #475569) */
+[data-theme="daylight"] .text-slate-300,
+[data-theme="daylight"] .text-slate-400,
+[data-theme="daylight"] .text-gray-400 {
+  color: #334155 !important;
+}
+
+[data-theme="daylight"] .text-slate-500,
+[data-theme="daylight"] .text-slate-600,
+[data-theme="daylight"] .text-gray-500,
+[data-theme="daylight"] .text-gray-600 {
+  color: #475569 !important;
+}
+
+/* Teks Aksen Warna (Konversi dari warna pastel redup menjadi warna gelap jernih kontras tinggi) */
+[data-theme="daylight"] .text-amber-200,
+[data-theme="daylight"] .text-amber-300,
+[data-theme="daylight"] .text-amber-400,
+[data-theme="daylight"] .text-amber-500,
+[data-theme="daylight"] .text-yellow-200,
+[data-theme="daylight"] .text-yellow-300,
+[data-theme="daylight"] .text-yellow-400 {
+  color: #92400e !important; /* amber-800: pekat kontras di background terang */
+}
+
+[data-theme="daylight"] .text-purple-200,
+[data-theme="daylight"] .text-purple-300,
+[data-theme="daylight"] .text-purple-400 {
+  color: #6b21a8 !important; /* purple-800 */
+}
+
+[data-theme="daylight"] .text-cyan-200,
+[data-theme="daylight"] .text-cyan-300,
+[data-theme="daylight"] .text-cyan-400 {
+  color: #0e7490 !important; /* deep teal */
+}
+
+[data-theme="daylight"] .text-blue-200,
+[data-theme="daylight"] .text-blue-300,
+[data-theme="daylight"] .text-blue-400 {
+  color: #1d4ed8 !important; /* cobalt-700 */
+}
+
+[data-theme="daylight"] .text-emerald-200,
+[data-theme="daylight"] .text-emerald-300,
+[data-theme="daylight"] .text-emerald-400,
+[data-theme="daylight"] .text-green-200,
+[data-theme="daylight"] .text-green-300,
+[data-theme="daylight"] .text-green-400 {
+  color: #047857 !important; /* emerald-700 */
+}
+
+[data-theme="daylight"] .text-rose-200,
+[data-theme="daylight"] .text-rose-300,
+[data-theme="daylight"] .text-rose-400,
+[data-theme="daylight"] .text-red-200,
+[data-theme="daylight"] .text-red-300,
+[data-theme="daylight"] .text-red-400 {
+  color: #be123c !important; /* ruby rose-700 */
+}
+
+[data-theme="daylight"] .text-indigo-200,
+[data-theme="daylight"] .text-indigo-300,
+[data-theme="daylight"] .text-indigo-400 {
+  color: #4338ca !important; /* indigo-700 */
+}
+
+[data-theme="daylight"] .text-pink-200,
+[data-theme="daylight"] .text-pink-300,
+[data-theme="daylight"] .text-pink-400 {
+  color: #be185d !important; /* magenta-700 */
+}
+
+/* ========================================================================== */
+/* DAYLIGHT THEME: CARD BACKGROUNDS & PANEL TINTS                             */
+/* ========================================================================== */
+
+/* Kartu Aktif & Kontainer Ungu Gelap -> Pastel Lavender Segar */
+[data-theme="daylight"] .bg-purple-950\/30,
+[data-theme="daylight"] .bg-purple-950\/40,
+[data-theme="daylight"] .bg-purple-950\/50,
+[data-theme="daylight"] .bg-purple-950\/60,
+[data-theme="daylight"] .bg-purple-950\/70,
+[data-theme="daylight"] .bg-purple-950 {
+  background-color: #f3e8ff !important;
+  border-color: #c084fc !important;
+}
+
+/* Kontainer Biru Gelap -> Pastel Blue Segar */
+[data-theme="daylight"] .bg-blue-900\/60,
+[data-theme="daylight"] .bg-blue-950\/30,
+[data-theme="daylight"] .bg-blue-950\/40,
+[data-theme="daylight"] .bg-blue-950\/50,
+[data-theme="daylight"] .bg-blue-950\/70,
+[data-theme="daylight"] .bg-blue-950 {
+  background-color: #eff6ff !important;
+  border-color: #93c5fd !important;
+}
+
+/* Kontainer Hijau Gelap -> Pastel Emerald Segar */
+[data-theme="daylight"] .bg-emerald-950,
+[data-theme="daylight"] .bg-emerald-950\/40,
+[data-theme="daylight"] .bg-emerald-950\/50,
+[data-theme="daylight"] .bg-emerald-950\/60,
+[data-theme="daylight"] .bg-emerald-950\/70,
+[data-theme="daylight"] .bg-emerald-950\/80,
+[data-theme="daylight"] .bg-emerald-950\/90 {
+  background-color: #ecfdf5 !important;
+  border-color: #6ee7b7 !important;
+}
+[data-theme="daylight"] .bg-emerald-950 * {
+  color: #064e3b !important;
+}
+
+/* Kontainer Merah/Rose Gelap -> Pastel Rose Segar */
+[data-theme="daylight"] .bg-rose-950,
+[data-theme="daylight"] .bg-rose-950\/40,
+[data-theme="daylight"] .bg-rose-950\/50,
+[data-theme="daylight"] .bg-rose-950\/60,
+[data-theme="daylight"] .bg-rose-950\/70,
+[data-theme="daylight"] .bg-rose-950\/80,
+[data-theme="daylight"] .bg-rose-950\/90,
+[data-theme="daylight"] .bg-red-950,
+[data-theme="daylight"] .bg-red-950\/50 {
+  background-color: #fff1f2 !important;
+  border-color: #fda4af !important;
+}
+[data-theme="daylight"] .bg-rose-950 *,
+[data-theme="daylight"] .bg-red-950 * {
+  color: #881337 !important;
+}
+
+/* Kontainer Indigo / Pink Gelap */
+[data-theme="daylight"] .bg-indigo-950,
+[data-theme="daylight"] .bg-indigo-950\/60 {
+  background-color: #e0e7ff !important;
+  border-color: #a5b4fc !important;
+}
+[data-theme="daylight"] .bg-pink-950\/60,
+[data-theme="daylight"] .bg-pink-950\/70 {
+  background-color: #fce7f3 !important;
+  border-color: #f9a8d4 !important;
+}
+
+/* Kartu & Container Slate Gelap -> Putih Bersih Solid */
+[data-theme="daylight"] .bg-slate-950,
+[data-theme="daylight"] .bg-slate-950\/40,
+[data-theme="daylight"] .bg-slate-950\/60,
+[data-theme="daylight"] .bg-slate-950\/70,
+[data-theme="daylight"] .bg-slate-950\/80,
+[data-theme="daylight"] .bg-slate-950\/90,
+[data-theme="daylight"] .bg-slate-950\/95 {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Section Box Utama */
+[data-theme="daylight"] .bg-slate-900,
+[data-theme="daylight"] .bg-slate-900\/40,
+[data-theme="daylight"] .bg-slate-900\/50,
+[data-theme="daylight"] .bg-slate-900\/60,
+[data-theme="daylight"] .bg-slate-900\/70,
+[data-theme="daylight"] .bg-slate-900\/80,
+[data-theme="daylight"] .bg-slate-900\/90 {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Badge Transparan di Dark Mode -> Badge Soft Pastel Kontras di Light Mode */
+[data-theme="daylight"] .bg-amber-400\/10,
+[data-theme="daylight"] .bg-amber-500\/10,
+[data-theme="daylight"] .bg-amber-500\/20 {
+  background-color: #fef3c7 !important;
+  border-color: #fcd34d !important;
+}
+
+[data-theme="daylight"] .bg-blue-500\/10,
+[data-theme="daylight"] .bg-blue-500\/20,
+[data-theme="daylight"] .bg-blue-600\/20 {
+  background-color: #eff6ff !important;
+  border-color: #bfdbfe !important;
+}
+
+[data-theme="daylight"] .bg-purple-500\/10,
+[data-theme="daylight"] .bg-purple-500\/20 {
+  background-color: #faf5ff !important;
+  border-color: #e9d5ff !important;
+}
+
+[data-theme="daylight"] .bg-cyan-500\/10,
+[data-theme="daylight"] .bg-cyan-500\/20 {
+  background-color: #ecfeff !important;
+  border-color: #a5f3fc !important;
+}
+
+[data-theme="daylight"] .bg-emerald-500\/10,
+[data-theme="daylight"] .bg-emerald-500\/20,
+[data-theme="daylight"] .bg-emerald-600\/20 {
+  background-color: #ecfdf5 !important;
+  border-color: #a7f3d0 !important;
+}
+
+[data-theme="daylight"] .bg-rose-500\/10,
+[data-theme="daylight"] .bg-rose-500\/20,
+[data-theme="daylight"] .bg-rose-600\/20 {
+  background-color: #fff1f2 !important;
+  border-color: #fecdd3 !important;
+}
+
+/* Tombol Proyektor & Operator Kecil di Kartu Ruangan */
+[data-theme="daylight"] .border-cyan-800\/40 {
+  background-color: #ecfeff !important;
+  border-color: #67e8f9 !important;
+}
+[data-theme="daylight"] .border-blue-800\/40 {
+  background-color: #eff6ff !important;
+  border-color: #93c5fd !important;
+}
+
+/* ========================================================================== */
+/* DAYLIGHT THEME: STAGE QUESTION BOXES (PAPAN KOTAK PANGGUNG)                */
+/* ========================================================================== */
+[data-theme="daylight"] .stage-box-card-available {
+  background: #ffffff !important;
+  border-color: #60a5fa !important;
+  box-shadow: 0 10px 25px -5px rgba(59, 130, 246, 0.18), 0 4px 6px -2px rgba(0, 0, 0, 0.05) !important;
+}
+
+[data-theme="daylight"] .stage-box-card-available:hover {
+  border-color: #2563eb !important;
+  box-shadow: 0 14px 28px -5px rgba(37, 99, 235, 0.25) !important;
+}
+
+[data-theme="daylight"] .stage-box-card-available .stage-box-number {
+  color: #0f172a !important;
+  -webkit-text-fill-color: #0f172a !important;
+  background: none !important;
+  text-shadow: none !important;
+  filter: none !important;
+}
+
+[data-theme="daylight"] .stage-box-card-opened {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  opacity: 0.55 !important;
+}
+
+[data-theme="daylight"] .stage-box-card-opened .stage-box-number {
+  color: #94a3b8 !important;
+  -webkit-text-fill-color: #94a3b8 !important;
+  background: none !important;
+  text-shadow: none !important;
+}
+
+[data-theme="daylight"] .stage-box-category {
+  background-color: #fce7f3 !important;
+  border-color: #f9a8d4 !important;
+  color: #be185d !important;
+}
+[data-theme="daylight"] .stage-box-category * {
+  color: #be185d !important;
+}
+
+[data-theme="daylight"] .stage-box-card-available .stage-box-status {
+  background-color: #ecfdf5 !important;
+  border-color: #86efac !important;
+  color: #047857 !important;
+}
+
+[data-theme="daylight"] .stage-box-points {
+  color: #2563eb !important;
+}
+
+/* Kategori Pilihan di Daylight */
+[data-theme="daylight"] .stage-cat-all-card {
+  background: #ffffff !important;
+  border-color: #818cf8 !important;
+  box-shadow: 0 10px 25px -5px rgba(99, 102, 241, 0.15) !important;
+}
+[data-theme="daylight"] .stage-cat-all-card h3 {
+  color: #0f172a !important;
+}
+[data-theme="daylight"] .stage-cat-all-card p {
+  color: #4338ca !important;
+}
+
+/* ========================================================================== */
+/* DAYLIGHT THEME: QUESTION DISPLAY OPTIONS                                   */
+/* ========================================================================== */
+[data-theme="daylight"] .question-opt-normal {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+  color: #0f172a !important;
+}
+[data-theme="daylight"] .question-opt-normal .question-opt-key {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
+  border: 1px solid #cbd5e1 !important;
+}
+[data-theme="daylight"] .question-opt-normal .question-opt-text {
+  color: #0f172a !important;
+}
+
+[data-theme="daylight"] .question-opt-correct {
+  background-color: #ecfdf5 !important;
+  border-color: #059669 !important;
+  box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.25) !important;
+}
+[data-theme="daylight"] .question-opt-correct .question-opt-key {
+  background-color: #059669 !important;
+  color: #ffffff !important;
+}
+[data-theme="daylight"] .question-opt-correct .question-opt-text {
+  color: #064e3b !important;
+}
+
+[data-theme="daylight"] .question-opt-dimmed {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+  color: #94a3b8 !important;
+}
+[data-theme="daylight"] .question-opt-dimmed .question-opt-key {
+  background-color: #f1f5f9 !important;
+  color: #94a3b8 !important;
+}
+[data-theme="daylight"] .question-opt-dimmed .question-opt-text {
+  color: #94a3b8 !important;
+}
+
+[data-theme="daylight"] .bs-opt-correct-green {
+  background-color: #ecfdf5 !important;
+  border-color: #059669 !important;
+}
+[data-theme="daylight"] .bs-opt-correct-green * {
+  color: #064e3b !important;
+}
+
+[data-theme="daylight"] .bs-opt-correct-red {
+  background-color: #fff1f2 !important;
+  border-color: #e11d48 !important;
+}
+[data-theme="daylight"] .bs-opt-correct-red * {
+  color: #881337 !important;
+}
+
+[data-theme="daylight"] .bs-opt-normal {
+  background-color: #ffffff !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="daylight"] .bs-opt-normal * {
+  color: #0f172a !important;
+}
+
+/* ========================================================================== */
+/* DAYLIGHT THEME: LEADERBOARD & KLASMEN                                      */
+/* ========================================================================== */
+[data-theme="daylight"] .floating-leaderboard-btn,
+[data-theme="daylight"] .floating-leaderboard-btn * {
+  color: #0f172a !important;
+}
+
+[data-theme="daylight"] .leaderboard-team-name {
+  color: #0f172a !important;
+}
+[data-theme="daylight"] .leaderboard-team-score {
+  color: #0f172a !important;
+}
+
+[data-theme="daylight"] .leaderboard-top1 {
+  background-color: #fef3c7 !important;
+  border-color: #f59e0b !important;
+}
+[data-theme="daylight"] .leaderboard-top2 {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="daylight"] .leaderboard-top3 {
+  background-color: #fffbeb !important;
+  border-color: #d97706 !important;
+}
+[data-theme="daylight"] .leaderboard-normal {
+  background-color: #f8fafc !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* ========================================================================== */
+/* DAYLIGHT THEME: SOLID COLORED ACTION BUTTONS (TEKS SELALU PUTIH BERSIH)    */
+/* ========================================================================== */
+[data-theme="daylight"] .bg-purple-600,
+[data-theme="daylight"] .bg-purple-700,
+[data-theme="daylight"] .bg-blue-600,
+[data-theme="daylight"] .bg-blue-700,
+[data-theme="daylight"] .bg-emerald-600,
+[data-theme="daylight"] .bg-emerald-700,
+[data-theme="daylight"] .bg-cyan-600,
+[data-theme="daylight"] .bg-cyan-700,
+[data-theme="daylight"] .bg-rose-600,
+[data-theme="daylight"] .bg-rose-700,
+[data-theme="daylight"] .bg-indigo-600,
+[data-theme="daylight"] .bg-indigo-700,
+[data-theme="daylight"] .bg-pink-600,
+[data-theme="daylight"] .bg-pink-700 {
+  color: #ffffff !important;
+}
+
+[data-theme="daylight"] .bg-purple-600 *,
+[data-theme="daylight"] .bg-purple-700 *,
+[data-theme="daylight"] .bg-blue-600 *,
+[data-theme="daylight"] .bg-blue-700 *,
+[data-theme="daylight"] .bg-emerald-600 *,
+[data-theme="daylight"] .bg-emerald-700 *,
+[data-theme="daylight"] .bg-cyan-600 *,
+[data-theme="daylight"] .bg-cyan-700 *,
+[data-theme="daylight"] .bg-rose-600 *,
+[data-theme="daylight"] .bg-rose-700 *,
+[data-theme="daylight"] .bg-indigo-600 *,
+[data-theme="daylight"] .bg-indigo-700 *,
+[data-theme="daylight"] .bg-pink-600 *,
+[data-theme="daylight"] .bg-pink-700 * {
+  color: #ffffff !important;
+}
+
+/* Garis Border & Form Input di Light Mode */
+[data-theme="daylight"] .border-slate-800,
+[data-theme="daylight"] .border-slate-800\/60,
+[data-theme="daylight"] .border-slate-800\/80 {
+  border-color: #cbd5e1 !important;
+}
+[data-theme="daylight"] .border-slate-700,
+[data-theme="daylight"] .border-slate-700\/80 {
+  border-color: #94a3b8 !important;
+}
+
+[data-theme="daylight"] input,
+[data-theme="daylight"] textarea,
+[data-theme="daylight"] select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+[data-theme="daylight"] input::placeholder,
+[data-theme="daylight"] textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Dropdown Option List di Native Select */
+[data-theme="daylight"] select option {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+}
+
+/* Modal Backdrop */
+[data-theme="daylight"] .fixed.inset-0.bg-slate-950\/80 {
+  background-color: rgba(15, 23, 42, 0.45) !important;
+}
+
+/* 3. TEMA MEWAH: ROYAL NAVY & GOLD (Grand Final & Cerdas Cermat Formal) */
+[data-theme="royal-gold"] {
+  --theme-name: "Royal Navy & Gold";
+  --background: #040817;
+  --foreground: #fef3c7;
+  --color-slate-950: #050b1e;
+  --color-slate-900: #0b1536;
+  --color-slate-800: #1a2a57;
+  --color-slate-700: #2d417a;
+  --color-slate-600: #4a62a3;
+  --color-slate-500: #94a8d8;
+  --color-slate-400: #cbd7f5;
+  --color-slate-300: #e0e7ff;
+  --color-slate-200: #fef08a;
+  --color-slate-100: #fef9c3;
+  --color-white: #ffffff;
+  color-scheme: dark;
+}
+
+[data-theme="royal-gold"] .text-white {
+  color: #fef08a !important;
+}
+
+/* 4. TEMA E-SPORTS: CYBERPUNK NEON (Hitam Pekat, Cyan & Magenta Elektrik) */
+[data-theme="cyberpunk"] {
+  --theme-name: "Cyberpunk Neon Arena";
+  --background: #030307;
+  --foreground: #fdf4ff;
+  --color-slate-950: #05050c;
+  --color-slate-900: #0e0921;
+  --color-slate-800: #26174a;
+  --color-slate-700: #442478;
+  --color-slate-600: #6d3ca8;
+  --color-slate-500: #a855f7;
+  --color-slate-400: #c084fc;
+  --color-slate-300: #e9d5ff;
+  --color-slate-200: #fae8ff;
+  --color-slate-100: #ffffff;
+  --color-white: #ffffff;
+  color-scheme: dark;
+}
+
+[data-theme="cyberpunk"] .border-slate-800 {
+  border-color: #2f1d5c !important;
+}
+
+/* 5. TEMA ALAM / SYIAR: EMERALD ZAMRUD (Hijau Zamrud & Mint Cerah) */
+[data-theme="emerald"] {
+  --theme-name: "Emerald Zamrud";
+  --background: #01120a;
+  --foreground: #ecfdf5;
+  --color-slate-950: #02170d;
+  --color-slate-900: #062618;
+  --color-slate-800: #0c3e29;
+  --color-slate-700: #14593c;
+  --color-slate-600: #1e7a54;
+  --color-slate-500: #34d399;
+  --color-slate-400: #6ee7b7;
+  --color-slate-300: #a7f3d0;
+  --color-slate-200: #d1fae5;
+  --color-slate-100: #f0fdf4;
+  --color-white: #ffffff;
+  color-scheme: dark;
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.3s ease, color 0.3s ease;
 }

@@ -34,14 +34,14 @@ export default function Leaderboard({ teams }: LeaderboardProps) {
             return (
               <div
                 key={team.id}
-                className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
+                className={`leaderboard-item flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
                   isTop1
-                    ? 'bg-amber-500/10 border-amber-500/40 shadow-sm shadow-amber-500/10'
+                    ? 'leaderboard-top1 bg-amber-500/10 border-amber-500/40 shadow-sm shadow-amber-500/10'
                     : isTop2
-                    ? 'bg-slate-300/10 border-slate-400/30'
+                    ? 'leaderboard-top2 bg-slate-300/10 border-slate-400/30'
                     : isTop3
-                    ? 'bg-amber-700/10 border-amber-700/30'
-                    : 'bg-slate-950/60 border-slate-800/80'
+                    ? 'leaderboard-top3 bg-amber-700/10 border-amber-700/30'
+                    : 'leaderboard-normal bg-slate-950/60 border-slate-800/80'
                 }`}
               >
                 <div className="flex items-center gap-3 min-w-0">
@@ -70,7 +70,7 @@ export default function Leaderboard({ teams }: LeaderboardProps) {
 
                   {/* Nama Regu */}
                   <div className="truncate">
-                    <span className="font-extrabold text-white text-sm block truncate">
+                    <span className="leaderboard-team-name font-extrabold text-white text-sm block truncate">
                       {team.name}
                     </span>
                     <span
@@ -82,10 +82,10 @@ export default function Leaderboard({ teams }: LeaderboardProps) {
 
                 {/* Angka Skor */}
                 <div className="text-right shrink-0 pl-2">
-                  <span className="font-mono font-black text-xl text-white">
+                  <span className="leaderboard-team-score font-mono font-black text-xl text-white">
                     {team.score}
                   </span>
-                  <span className="block text-[9px] uppercase tracking-wider text-slate-500 font-bold">
+                  <span className="leaderboard-pts block text-[9px] uppercase tracking-wider text-slate-500 font-bold">
                     PTS
                   </span>
                 </div>
