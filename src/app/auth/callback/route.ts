@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
-import { createHubServerClient } from '@/lib/supabase-hub-server';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
 import { EmailOtpType } from '@supabase/supabase-js';
+import { hubUrl, hubAnonKey, HUB_COOKIE_NAME } from '@/lib/supabase-hub';
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
@@ -9,34 +11,41 @@ export async function GET(request: Request) {
   const type = searchParams.get('type') as EmailOtpType | null;
   const next = searchParams.get('next') ?? '/auth/confirmed';
 
-  const supabase = await createHubServerClient();
+  const cookieStore = cookies();
 
-  // 1. Verifikasi menggunakan Token Hash (Format link email verifikasi standar Supabase)
+  // KUNCI JAWABANNYA: Kita paksa pakai HUB_COOKIE_NAME di Server Client
+  const supabase = createServerClient(hubUrl, hubAnonKey, {
+    cookieOptions: {
+      name: HUB_COOKIE_NAME,
+    },
+    cookies: {
+      get(name: string) {
+        return cookieStore.get(name)?.value;
+      },
+      set(name: string, value: string, options) {
+        cookieStore.set({ name, value, ...options });
+      },
+      remove(name: string, options) {
+        cookieStore.set({ name, value: '', ...options });
+      },
+    },
+  });
+
   if (token_hash && type) {
-    const { error } = await supabase.auth.verifyOtp({
-      token_hash,
-      type,
-    });
+    const { error } = await supabase.auth.verifyOtp({ token_hash, type });
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
-    console.error('[Auth Callback] verifyOtp error:', error);
   }
 
-  // 2. Verifikasi menggunakan PKCE Code
   if (code) {
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
-    console.error('[Auth Callback] exchangeCodeForSession error:', error);
   }
 
-  // Jika user sudah memiliki sesi aktif, tetap arahkan ke halaman confirmed
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
+  const { data: { user } } = await supabase.auth.getUser();
   if (user) {
     return NextResponse.redirect(`${origin}${next}`);
   }
