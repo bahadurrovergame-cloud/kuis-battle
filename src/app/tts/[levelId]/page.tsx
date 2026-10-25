@@ -916,7 +916,7 @@ function TTSGameContent() {
 
   return (
     <main
-      className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-between relative overflow-hidden select-none pb-4 transition-colors duration-500 ${
+      className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-start relative overflow-hidden select-none pb-2 transition-colors duration-500 ${
         freezeRemaining > 0 ? 'ring-8 ring-cyan-500/40 ring-inset bg-slate-950' : ''
       }`}
     >
@@ -1039,15 +1039,89 @@ function TTSGameContent() {
       )}
 
       {/* ==================================================================== */}
+      {/* CLUE CARD & POWER-UPS BAR (DI ATAS PAPAN - ANTI KETUTUP KEYBOARD HP) */}
+      {/* ==================================================================== */}
+      <div className="w-full max-w-md px-3 pt-2 pb-1 flex flex-col gap-2 shrink-0 z-20">
+        {/* Floating Clue Box */}
+        {currentWord && (
+          <div className="w-full bg-[#111726] border-2 border-slate-700 rounded-2xl p-2.5 sm:p-3 shadow-[0_3px_0_#070a12] flex items-center justify-between gap-2.5">
+            <button
+              type="button"
+              onClick={() => handleCycleClue('prev')}
+              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all shrink-0"
+              title="Soal Sebelumnya"
+            >
+              <ArrowLeft className="w-4 h-4" />
+            </button>
+
+            <div className="flex-1 text-center min-w-0">
+              <div className="flex items-center justify-center gap-1.5 mb-1">
+                <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500 text-slate-950 shrink-0">
+                  {currentWord.word_number} {currentWord.direction === 'across' ? 'Mendatar' : 'Menurun'}
+                </span>
+                <span className="text-[10px] text-slate-300 font-mono font-bold shrink-0">
+                  ({currentWord.word.length} Huruf)
+                </span>
+              </div>
+              <p className="text-xs sm:text-sm font-bold text-white leading-snug line-clamp-2">
+                {currentWord.clue}
+              </p>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => handleCycleClue('next')}
+              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all shrink-0"
+              title="Soal Selanjutnya"
+            >
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+
+        {/* Power-Ups Buttons Bar (Chunky physical game buttons) */}
+        <div className="flex items-center justify-between gap-2 px-0.5">
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleUseHint}
+              disabled={isGameOver || isVictory || isPendingHint}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black border-b-2 border-amber-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
+              title={`Buka 1 huruf acak di kata ini (${settings?.hint_price_coins || 15} Koin)`}
+            >
+              <Lightbulb className="w-3.5 h-3.5 fill-current" />
+              <span>{isPendingHint ? 'Membuka...' : `Hint (${settings?.hint_price_coins || 15}🪙)`}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleUseFreeze}
+              disabled={isGameOver || isVictory || freezeRemaining > 0 || isPendingFreeze}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-black border-b-2 border-cyan-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
+              title={`Bekukan waktu & pembusukan skor selama ${settings?.freeze_duration_seconds || 10} detik (${settings?.freeze_price_coins || 25} Koin)`}
+            >
+              <Snowflake className="w-3.5 h-3.5 fill-current" />
+              <span>{isPendingFreeze ? 'Membekukan...' : `Freeze (${settings?.freeze_price_coins || 25}🪙)`}</span>
+            </button>
+          </div>
+
+          {/* Progress Indicator */}
+          <span className="text-xs font-mono font-black text-slate-300 bg-[#111726] px-2.5 py-1 rounded-xl border border-slate-700 shrink-0">
+            {completedWordIds.length}/{words.length} Kata
+          </span>
+        </div>
+      </div>
+
+      {/* ==================================================================== */}
       {/* TTS BOARD GRID (RESPONSIF MOBILE-FIRST)                              */}
       {/* ==================================================================== */}
-      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-3 relative">
+      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 relative min-h-0">
         <div
-          className="grid gap-1.5 p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_6px_0_#070a12] relative"
+          className="grid gap-1 sm:gap-1.5 p-2 sm:p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_4px_0_#070a12] relative max-h-[46svh] sm:max-h-[56svh]"
           style={{
             gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
             width: '100%',
-            maxWidth: '380px',
+            maxWidth: '360px',
             aspectRatio: `${gridCols}/${gridRows}`,
           }}
         >
@@ -1076,7 +1150,7 @@ function TTSGameContent() {
                 <div
                   key={cellKey}
                   onClick={() => handleCellClick(r, c)}
-                  className={`w-full h-full rounded-xl relative flex items-center justify-center font-mono font-black text-sm sm:text-base cursor-pointer transition-all ${
+                  className={`w-full h-full rounded-xl relative flex items-center justify-center font-mono font-black text-xs sm:text-base cursor-pointer transition-all ${
                     isShaking
                       ? 'bg-rose-600 border-2 border-rose-800 text-white shadow-[0_3px_0_#881337] animate-bounce'
                       : isWordCompleted
@@ -1103,74 +1177,6 @@ function TTSGameContent() {
           )}
         </div>
       </section>
-
-      {/* ==================================================================== */}
-      {/* FLOATING CLUE CARD & POWER-UPS BAR                                   */}
-      {/* ==================================================================== */}
-      <footer className="w-full max-w-md px-4 flex flex-col gap-2.5 relative z-20">
-        {/* Power-Ups Buttons Bar (Chunky physical game buttons) */}
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            <button
-              onClick={handleUseHint}
-              disabled={isGameOver || isVictory || isPendingHint}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black border-b-4 border-amber-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
-              title={`Buka 1 huruf acak di kata ini (${settings?.hint_price_coins || 15} Koin)`}
-            >
-              <Lightbulb className="w-3.5 h-3.5 fill-current" />
-              <span>{isPendingHint ? 'Membuka...' : `Hint (${settings?.hint_price_coins || 15}🪙)`}</span>
-            </button>
-
-            <button
-              onClick={handleUseFreeze}
-              disabled={isGameOver || isVictory || freezeRemaining > 0 || isPendingFreeze}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-black border-b-4 border-cyan-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
-              title={`Bekukan waktu & pembusukan skor selama ${settings?.freeze_duration_seconds || 10} detik (${settings?.freeze_price_coins || 25} Koin)`}
-            >
-              <Snowflake className="w-3.5 h-3.5 fill-current" />
-              <span>{isPendingFreeze ? 'Membekukan...' : `Freeze (${settings?.freeze_price_coins || 25}🪙)`}</span>
-            </button>
-          </div>
-
-          {/* Progress Indicator */}
-          <span className="text-xs font-mono font-black text-slate-300 bg-[#111726] px-3 py-1.5 rounded-xl border border-slate-700">
-            {completedWordIds.length}/{words.length} Kata
-          </span>
-        </div>
-
-        {/* Floating Clue Box */}
-        {currentWord && (
-          <div className="w-full bg-[#111726] border-2 border-slate-700 rounded-2xl p-3.5 shadow-[0_4px_0_#070a12] flex items-center justify-between gap-3">
-            <button
-              onClick={() => handleCycleClue('prev')}
-              className="p-2.5 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all"
-            >
-              ←
-            </button>
-
-            <div className="flex-1 text-center">
-              <div className="flex items-center justify-center gap-2 mb-1">
-                <span className="text-[10px] font-mono font-black uppercase px-2.5 py-0.5 rounded-lg bg-emerald-500 text-slate-950">
-                  {currentWord.word_number} {currentWord.direction === 'across' ? 'Mendatar' : 'Menurun'}
-                </span>
-                <span className="text-[10px] text-slate-300 font-mono font-bold">
-                  ({currentWord.word.length} Huruf)
-                </span>
-              </div>
-              <p className="text-xs font-bold text-white leading-snug line-clamp-2">
-                {currentWord.clue}
-              </p>
-            </div>
-
-            <button
-              onClick={() => handleCycleClue('next')}
-              className="p-2.5 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all"
-            >
-              →
-            </button>
-          </div>
-        )}
-      </footer>
 
       {/* ==================================================================== */}
       {/* MODAL 1 & 2: PERINGATAN KECURANGAN PINDAH LAYAR (SENSOR ANTI-CHEAT)   */}
