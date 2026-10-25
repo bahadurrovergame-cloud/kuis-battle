@@ -12,7 +12,7 @@ import {
 function ResetPasswordContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const code = searchParams.get('code'); // Nangkap kode dari URL
+  const code = searchParams.get('code');
 
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -31,7 +31,6 @@ function ResetPasswordContent() {
 
     const processRecovery = async () => {
       try {
-        // 1. JIKA ADA KODE DARI EMAIL, BROWSER YANG PROSES
         if (code) {
           const { error } = await supabase.auth.exchangeCodeForSession(code);
           if (error) {
@@ -39,13 +38,11 @@ function ResetPasswordContent() {
               setErrorMsg(`Gagal memverifikasi link: ${error.message}`);
               setLoading(false);
             }
-            return; // Stop kalau token udah hangus
+            return;
           }
-          // Bersihkan URL dari kode rahasia biar rapi
           window.history.replaceState(null, '', '/reset-password');
         }
 
-        // 2. Cek Sesi Aktif
         const { data: { session } } = await supabase.auth.getSession();
         if (isMounted) {
           if (session) {
@@ -63,7 +60,6 @@ function ResetPasswordContent() {
 
     processRecovery();
 
-    // 3. Fallback Listener
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY' || session) {
         if (isMounted) {
@@ -110,10 +106,7 @@ function ResetPasswordContent() {
         confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
       } catch {}
 
-      setTimeout(() => {
-        router.push('/path');
-        router.refresh();
-      }, 1500);
+      // Timer otomatis DIBATALKAN agar user diam di halaman sukses
     } catch {
       setErrorMsg('Terjadi kesalahan jaringan.');
       setSubmitting(false);
@@ -155,12 +148,24 @@ function ResetPasswordContent() {
 
         {success ? (
           <div className="text-center py-6 space-y-4">
-            <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center text-emerald-400 animate-bounce">
+            <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center text-emerald-400">
               <ShieldCheck className="w-8 h-8" />
             </div>
             <div className="space-y-1">
               <h2 className="text-lg font-black text-white">Kata Sandi Berhasil Disimpan!</h2>
-              <p className="text-xs text-slate-400">Akun Anda telah diamankan. Mengalihkan Anda langsung ke The Path...</p>
+              <p className="text-xs text-slate-400">
+                Akun Anda telah diamankan dengan kata sandi baru. Silakan masuk kembali ke akun Anda.
+              </p>
+            </div>
+            <div className="pt-2">
+              <button
+                type="button"
+                onClick={() => router.push('/login')}
+                className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider border-b-4 border-emerald-700 active:translate-y-1 active:border-b-0 transition-all shadow flex items-center justify-center gap-2"
+              >
+                <span>Kembali ke Halaman Masuk</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
             </div>
           </div>
         ) : !hasSession ? (
