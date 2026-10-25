@@ -26,16 +26,13 @@ function LoginContent() {
   const explicitRedirect = searchParams.get('redirect');
   const urlError = searchParams.get('error');
 
-  // Tab: 'login' | 'register' | 'forgot'
   const [tab, setTab] = useState<'login' | 'register' | 'forgot'>('login');
 
-  // Form Fields
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [username, setUsername] = useState('');
   const [showPassword, setShowPassword] = useState(false);
 
-  // Status & Feedback
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
@@ -48,7 +45,6 @@ function LoginContent() {
     }
   }, [urlError]);
 
-  // Handle Login Pemain via Supabase Hub
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -56,7 +52,6 @@ function LoginContent() {
     setLoading(true);
 
     try {
-      // 1. Cek status banned email sebelum login
       const banCheck = await checkBannedEmailAction(email.trim());
       if (banCheck.isBanned) {
         setErrorMsg(
@@ -84,7 +79,6 @@ function LoginContent() {
       }
 
       if (data.user) {
-        // Cek role pengguna secara otomatis di tabel profiles
         const { data: prof } = await supabase
           .from('profiles')
           .select('role')
@@ -107,7 +101,6 @@ function LoginContent() {
     }
   };
 
-  // Handle Register Pemain Baru via Supabase Hub
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -126,7 +119,6 @@ function LoginContent() {
     setLoading(true);
 
     try {
-      // 1. Cek apakah email terdaftar di daftar banned Anti-Cheat
       const banCheck = await checkBannedEmailAction(email.trim());
       if (banCheck.isBanned) {
         setErrorMsg(
@@ -138,7 +130,6 @@ function LoginContent() {
 
       const supabase = createHubBrowserClient();
 
-      // 2. Cek keunikan username
       const { data: existingUser } = await supabase
         .from('profiles')
         .select('id')
@@ -176,8 +167,6 @@ function LoginContent() {
         return;
       }
 
-      // 3. Supabase behavior: jika email sudah terdaftar sebelumnya di auth.users,
-      // Supabase mengembalikan identities kosong [] dan TIDAK mengirimkan email baru.
       if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
         setErrorMsg(
           'Email ini sudah pernah terdaftar di sistem. Silakan langsung masuk menggunakan kata sandi Anda di tab "MASUK", atau hubungi admin jika akun perlu direset.'
@@ -198,7 +187,6 @@ function LoginContent() {
     }
   };
 
-  // Handle Lupa Password
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -208,7 +196,6 @@ function LoginContent() {
     try {
       const cleanEmail = email.trim().toLowerCase();
 
-      // 1. Cek apakah email terdaftar di banned Anti-Cheat
       const banCheck = await checkBannedEmailAction(cleanEmail);
       if (banCheck.isBanned) {
         setErrorMsg(
@@ -219,10 +206,10 @@ function LoginContent() {
       }
 
       const supabase = createHubBrowserClient();
-      const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password`;
-
+      
+      // PERBAIKAN: Langsung arahkan ke reset-password
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo,
+        redirectTo: 'https://kuis-battle.vercel.app/reset-password',
       });
 
       if (error) {
@@ -233,7 +220,7 @@ function LoginContent() {
           (error as { status?: number }).status === 500
         ) {
           setErrorMsg(
-            '⚠️ Gagal mengirim email pemulihan (Supabase Mailer 500). Hal ini umum terjadi jika kuota email bawaan Supabase Free habis (maksimal 3 email per jam) atau konfigurasi Sender Name diubah di Dashboard tanpa Custom SMTP. Anda dapat mereset kata sandi langsung via Dashboard Supabase.'
+            '⚠️ Gagal mengirim email pemulihan (Supabase Mailer 500). Hal ini umum terjadi jika kuota email bawaan Supabase Free habis (maksimal 3 email per jam).'
           );
         } else if (rawMsg.includes('rate limit')) {
           setErrorMsg(
@@ -255,7 +242,6 @@ function LoginContent() {
   return (
     <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4 relative select-none">
       <div className="w-full max-w-md bg-[#111726] border-2 border-slate-700 rounded-3xl p-6 sm:p-8 shadow-[0_8px_0_#070a12] relative z-10">
-        {/* Header Kartu */}
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-3 bg-emerald-500 rounded-2xl flex items-center justify-center text-slate-950 font-black border-b-4 border-emerald-700 shadow-md">
             <Compass className="w-7 h-7" />
@@ -270,7 +256,6 @@ function LoginContent() {
           </p>
         </div>
 
-        {/* Tab Selector: Masuk vs Daftar Baru (Chunky Game Buttons) */}
         {tab !== 'forgot' && (
           <div className="grid grid-cols-2 gap-2 p-1.5 bg-[#090d16] rounded-2xl mb-5 border-2 border-slate-800">
             <button
@@ -306,7 +291,6 @@ function LoginContent() {
           </div>
         )}
 
-        {/* Notifikasi Pesan */}
         {errorMsg && (
           <div className="mb-4 p-3.5 rounded-xl bg-rose-950/80 border-2 border-rose-600 text-rose-200 text-xs flex items-start gap-2.5 font-medium shadow">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
@@ -321,7 +305,6 @@ function LoginContent() {
           </div>
         )}
 
-        {/* State Konfirmasi Lupa Password Terkirim */}
         {resetSent ? (
           <div className="text-center py-4 space-y-4">
             <div className="w-16 h-16 mx-auto rounded-2xl bg-purple-500/20 border-2 border-purple-500 flex items-center justify-center text-purple-400">
@@ -383,7 +366,6 @@ function LoginContent() {
           </div>
         ) : (
           <>
-            {/* Form Masuk */}
             {tab === 'login' && (
               <form onSubmit={handleLogin} className="space-y-4">
                 <div>
@@ -447,7 +429,6 @@ function LoginContent() {
               </form>
             )}
 
-            {/* Form Daftar Baru */}
             {tab === 'register' && (
               <form onSubmit={handleRegister} className="space-y-4">
                 <div>
@@ -522,7 +503,6 @@ function LoginContent() {
               </form>
             )}
 
-            {/* Form Lupa Password */}
             {tab === 'forgot' && (
               <form onSubmit={handleForgotPassword} className="space-y-4">
                 <div>
@@ -542,7 +522,6 @@ function LoginContent() {
                   </div>
                 </div>
 
-                {/* Info Helper untuk Developer / Admin */}
                 <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[11px] text-amber-200/90 leading-relaxed space-y-1">
                   <p className="font-bold flex items-center gap-1.5 text-amber-400">
                     <Sparkles className="w-3.5 h-3.5" /> Info Pengembang & Admin:
@@ -577,7 +556,6 @@ function LoginContent() {
           </>
         )}
 
-        {/* Kembali ke Lobi */}
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
           <a
             href="/"
