@@ -1,9 +1,12 @@
 export interface CrosswordInputWord {
+  id?: string;
   word: string;
   clue: string;
+  points?: number;
 }
 
 export interface CrosswordPlacedWord {
+  id?: string;
   word_number: number;
   direction: 'across' | 'down';
   start_row: number;
@@ -43,8 +46,10 @@ export function buildCrosswordLayout(
   // 1. Bersihkan kata & buang duplikat
   const cleanWords = rawWords
     .map((w) => ({
+      id: w.id,
       word: String(w.word || '').toUpperCase().replace(/[^A-Z]/g, ''),
       clue: String(w.clue || '').trim(),
+      points: w.points || 100,
     }))
     .filter((w) => w.word.length >= 3 && w.word.length <= 8 && w.clue.length > 0);
 
@@ -60,8 +65,10 @@ export function buildCrosswordLayout(
   if (uniqueWords.length < 3) return null;
 
   interface InternalPlacedWord {
+    id?: string;
     word: string;
     clue: string;
+    points?: number;
     direction: 'across' | 'down';
     start_row: number;
     start_col: number;
@@ -99,8 +106,10 @@ export function buildCrosswordLayout(
 
       const placed: InternalPlacedWord[] = [
         {
+          id: firstWord.id,
           word: firstWord.word,
           clue: firstWord.clue,
+          points: firstWord.points,
           direction: firstDir,
           start_row: startR,
           start_col: startC,
@@ -235,8 +244,10 @@ export function buildCrosswordLayout(
           }
 
           placed.push({
+            id: cand.id,
             word: cand.word,
             clue: cand.clue,
+            points: cand.points,
             direction: best.direction,
             start_row: best.row,
             start_col: best.col,
@@ -313,13 +324,14 @@ export function buildCrosswordLayout(
 
   let currentNum = 1;
   const numberedWords: CrosswordPlacedWord[] = best.map((p) => ({
+    id: p.id,
     word_number: currentNum++,
     direction: p.direction,
     start_row: p.start_row,
     start_col: p.start_col,
     word: p.word,
     clue: p.clue,
-    points: 100,
+    points: p.points || 100,
   }));
 
   // 4. Hitung dimensi grid TTS

@@ -23,6 +23,7 @@ import {
 import { sounds } from '@/lib/sound';
 import confetti from 'canvas-confetti';
 import { setupConsoleGuardian } from '@/lib/anti-devtools';
+import { buildCrosswordLayout } from '@/lib/crossword-generator';
 import {
   ArrowLeft,
   Flame,
@@ -105,6 +106,7 @@ function TTSGameContent() {
   const [settings, setSettings] = useState<GameSettings | null>(null);
   const [level, setLevel] = useState<TTSLevel | null>(null);
   const [words, setWords] = useState<TTSWord[]>(FALLBACK_WORDS);
+  const wordsRef = useRef<TTSWord[]>(FALLBACK_WORDS);
   const [loading, setLoading] = useState(true);
 
   // Grid State: key "row,col" => char
@@ -214,27 +216,86 @@ function TTSGameContent() {
           }
         }
 
-        // Words
+        // Words & Existing Progress
         const { data: dbWords } = await supabase
           .from('tts_words')
           .select('*')
           .eq('level_id', levelId)
           .order('word_number', { ascending: true });
 
-        const actualWords = dbWords && dbWords.length > 0 ? (dbWords as TTSWord[]) : FALLBACK_WORDS;
-        if (isMounted) {
-          setWords(actualWords);
-          setSelectedWordId(actualWords[0].id);
-          setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
-        }
-
-        // Existing Progress
         const { data: prog } = await supabase
           .from('tts_user_progress')
           .select('*')
           .eq('user_id', user.id)
           .eq('level_id', levelId)
           .maybeSingle();
+
+        let actualWords: TTSWord[] = [];
+
+        // 1. Cek apakah pemain sudah memiliki tata letak aktif tersimpan (Skema 1: Bank Dinamis)
+        const savedActiveWords = (prog?.grid_state as any)?._active_words;
+        if (Array.isArray(savedActiveWords) && savedActiveWords.length >= 3) {
+          actualWords = savedActiveWords as TTSWord[];
+        } else if (dbWords && dbWords.length > 5) {
+          // Level ini memiliki Bank Kosakata (> 5 kata). Susun kisi-kisi dinamis unik untuk user ini!
+          const layout = buildCrosswordLayout(
+            lvl?.title || 'Level TTS',
+            dbWords.map((w) => ({
+              id: w.id,
+              word: w.word,
+              clue: w.clue,
+              points: w.points || 100,
+            })),
+            4
+          );
+
+          if (layout && layout.words.length >= 3) {
+            actualWords = layout.words.map((w, idx) => ({
+              id: w.id || `w-${idx}`,
+              level_id: levelId,
+              word_number: w.word_number,
+              direction: w.direction,
+              start_row: w.start_row,
+              start_col: w.start_col,
+              word: w.word,
+              clue: w.clue,
+              points: w.points || 100,
+              created_at: new Date().toISOString(),
+            }));
+
+            // Simpan susunan unik ini ke progress pemain di database agar konsisten saat refresh
+            const updatedGridState = {
+              ...(prog?.grid_state || {}),
+              _active_words: actualWords,
+              _active_word_ids: actualWords.map((w) => w.id),
+            };
+
+            await supabase.from('tts_user_progress').upsert(
+              {
+                user_id: user.id,
+                level_id: levelId,
+                status: prog?.status || 'in_progress',
+                grid_state: updatedGridState,
+                updated_at: new Date().toISOString(),
+              },
+              { onConflict: 'user_id,level_id' }
+            );
+          } else {
+            actualWords = (dbWords.slice(0, 4) as TTSWord[]);
+          }
+        } else {
+          // Level standar (<= 5 kata): gunakan kata-kata yang ada
+          actualWords = dbWords && dbWords.length > 0 ? (dbWords as TTSWord[]) : FALLBACK_WORDS;
+        }
+
+        if (isMounted) {
+          setWords(actualWords);
+          wordsRef.current = actualWords;
+          if (actualWords.length > 0) {
+            setSelectedWordId(actualWords[0].id);
+            setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
+          }
+        }
 
         if (prog && isMounted) {
           if (prog.grid_state) setGridState(prog.grid_state as Record<string, string>);
@@ -439,9 +500,20 @@ function TTSGameContent() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
       autoSaveTimerRef.current = setTimeout(() => {
+        const currentActiveWords = wordsRef.current;
+        const gridToSave = {
+          ...newGrid,
+          ...(currentActiveWords && currentActiveWords.length > 0
+            ? {
+                _active_words: currentActiveWords,
+                _active_word_ids: currentActiveWords.map((w) => w.id),
+              }
+            : {}),
+        };
+
         saveProgressDebouncedAction({
           levelId,
-          gridState: newGrid,
+          gridState: gridToSave,
           sessionToken,
         });
       }, 3000); // Debounce minimal 3 detik untuk mencegah spam request

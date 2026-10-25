@@ -234,6 +234,8 @@ function AdminHubContent() {
   const [playerToDelete, setPlayerToDelete] = useState<Profile | null>(null);
   const [deletingPlayerId, setDeletingPlayerId] = useState<string | null>(null);
   const [syncingLeaderboard, setSyncingLeaderboard] = useState(false);
+  const [editingWord, setEditingWord] = useState<TTSWord | null>(null);
+  const [updatingWord, setUpdatingWord] = useState(false);
 
   // Load Banned Users
   const loadBannedUsers = useCallback(async () => {
@@ -841,8 +843,30 @@ function AdminHubContent() {
         return;
       }
 
-      // 2. Masukkan kata-kata hasil preview ke tabel tts_words
-      const wordsToInsert = aiPreviewLevel.words.map((w) => ({
+      // 2. Simpan seluruh kata: Kata aktif yang sudah berkoordinat + Kata cadangan di bank kata
+      const placedWordsMap = new Map<string, (typeof aiPreviewLevel.words)[0]>();
+      aiPreviewLevel.words.forEach((w) => placedWordsMap.set(w.word, w));
+
+      const allBankWords = [...aiPreviewLevel.words];
+      let nextWordNum = Math.max(...aiPreviewLevel.words.map((w) => w.word_number), 0) + 1;
+
+      (aiPreviewLevel.candidateWords || []).forEach((cw) => {
+        const cleanCw = String(cw.word).toUpperCase().replace(/[^A-Z]/g, '');
+        if (!placedWordsMap.has(cleanCw) && cleanCw.length >= 3 && cleanCw.length <= 8) {
+          allBankWords.push({
+            word_number: nextWordNum++,
+            direction: 'across',
+            start_row: 0,
+            start_col: 0,
+            word: cleanCw,
+            clue: cw.clue,
+            points: 100,
+          });
+          placedWordsMap.set(cleanCw, allBankWords[allBankWords.length - 1]);
+        }
+      });
+
+      const wordsToInsert = allBankWords.map((w) => ({
         level_id: newLevel.id,
         word_number: w.word_number,
         direction: w.direction,
@@ -859,7 +883,7 @@ function AdminHubContent() {
         setStatusMsg({ text: `Gagal menyimpan kata: ${wordsErr.message}`, type: 'error' });
       } else {
         setStatusMsg({
-          text: `✓ Level "${newLevel.title}" (${wordsToInsert.length} kata) berhasil disimpan ke database!`,
+          text: `✓ Level "${newLevel.title}" berhasil disimpan! (Total ${wordsToInsert.length} kata bank soal siap dikocok untuk tiap pemain).`,
           type: 'success',
         });
         setAiPreviewLevel(null);
@@ -1209,6 +1233,113 @@ function AdminHubContent() {
       setWords((prev) => prev.filter((w) => w.id !== wordId));
     } catch {
       alert('Gagal menghapus kata.');
+    }
+  };
+
+  // Update / Edit Kata dan Clue yang Sudah Ada
+  const handleUpdateWord = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingWord) return;
+    setUpdatingWord(true);
+    try {
+      const cleanWord = editingWord.word.trim().toUpperCase().replace(/[^A-Z]/g, '');
+      const supabase = createHubBrowserClient();
+      const { error } = await supabase
+        .from('tts_words')
+        .update({
+          word: cleanWord,
+          clue: editingWord.clue.trim(),
+          points: Number(editingWord.points) || 100,
+        })
+        .eq('id', editingWord.id);
+
+      if (error) {
+        alert(`Gagal memperbarui kata: ${error.message}`);
+      } else {
+        setWords((prev) =>
+          prev.map((w) =>
+            w.id === editingWord.id
+              ? {
+                  ...w,
+                  word: cleanWord,
+                  clue: editingWord.clue.trim(),
+                  points: Number(editingWord.points) || 100,
+                }
+              : w
+          )
+        );
+        setStatusMsg({ text: `✓ Kata "${cleanWord}" berhasil diperbarui!`, type: 'success' });
+        setEditingWord(null);
+      }
+    } catch {
+      alert('Terjadi kesalahan jaringan.');
+    } finally {
+      setUpdatingWord(false);
+    }
+  };
+
+  // Susun Ulang Tata Letak Grid Otomatis Menggunakan Engine
+  const handleAutoLayoutExistingLevel = async () => {
+    if (!selectedLevelId || words.length < 3) return;
+    const layout = buildCrosswordLayout(editorTitle, words, Math.min(words.length, 5));
+    if (!layout) {
+      alert(
+        'Tidak menemukan persilangan yang cocok dari kata-kata saat ini. Tambahkan lebih banyak kata vokal/konsonan ke bank soal.'
+      );
+      return;
+    }
+
+    try {
+      const supabase = createHubBrowserClient();
+      await supabase
+        .from('tts_levels')
+        .update({
+          grid_rows: layout.gridRows,
+          grid_cols: layout.gridCols,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', selectedLevelId);
+
+      setEditorRows(layout.gridRows);
+      setEditorCols(layout.gridCols);
+
+      // Update koordinat kata yang bersilangan
+      const placedWordMap = new Map<string, (typeof layout.words)[0]>();
+      layout.words.forEach((w) => placedWordMap.set(w.word, w));
+
+      const updatedWords = words.map((w) => {
+        const placed = placedWordMap.get(w.word);
+        if (placed) {
+          return {
+            ...w,
+            word_number: placed.word_number,
+            direction: placed.direction,
+            start_row: placed.start_row,
+            start_col: placed.start_col,
+          };
+        }
+        return w;
+      });
+
+      for (const w of updatedWords) {
+        await supabase
+          .from('tts_words')
+          .update({
+            word_number: w.word_number,
+            direction: w.direction,
+            start_row: w.start_row,
+            start_col: w.start_col,
+          })
+          .eq('id', w.id);
+      }
+
+      setWords(updatedWords);
+      setStatusMsg({
+        text: `✓ Jaring kotak berhasil disusun ulang secara otomatis (${layout.words.length} kata terpasang, ${words.length - layout.words.length} kata di bank).`,
+        type: 'success',
+      });
+    } catch {
+      alert('Gagal menyusun ulang jaring kotak.');
     }
   };
 
@@ -2461,7 +2592,7 @@ function AdminHubContent() {
                           <h4 className="text-sm font-black text-white">{aiPreviewLevel.title}</h4>
                         </div>
                         <span className="text-[10px] font-black uppercase text-slate-300 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 shrink-0">
-                          {aiPreviewLevel.words.length} Kata • {aiPreviewLevel.gridRows}x{aiPreviewLevel.gridCols}
+                          {aiPreviewLevel.words.length} Kata Papan • {aiPreviewLevel.candidateWords?.length || aiPreviewLevel.words.length} Kata Bank • {aiPreviewLevel.gridRows}x{aiPreviewLevel.gridCols}
                         </span>
                       </div>
 
@@ -2524,9 +2655,10 @@ function AdminHubContent() {
                           type="button"
                           onClick={handleShuffleAiPositions}
                           className="py-2.5 px-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs uppercase border-b-2 border-amber-700 active:translate-y-0.5 transition-all shadow flex items-center justify-center gap-1.5"
+                          title="Lihat bagaimana pemain lain akan mendapatkan kombinasi kata berbeda dari bank kata"
                         >
                           <Shuffle className="w-3.5 h-3.5" />
-                          <span>Kocok Ulang Posisi</span>
+                          <span>Simulasi Pemain Lain</span>
                         </button>
 
                         <button
@@ -2972,9 +3104,30 @@ function AdminHubContent() {
 
                       {/* Daftar Kata yang Terpasang */}
                       <div className="space-y-2">
-                        <span className="text-[10px] font-black uppercase text-slate-400 tracking-wider block mb-2">
-                          Kata Terpasang ({words.length})
-                        </span>
+                        <div className="flex items-center justify-between mb-2">
+                          <div>
+                            <span className="text-[10px] font-black uppercase text-slate-300 tracking-wider block">
+                              Daftar Kata di Level Ini ({words.length} Kata)
+                            </span>
+                            <span className="text-[10px] text-emerald-400">
+                              {words.length > 5
+                                ? '✓ Bank Soal Aktif (Tiap pemain otomatis mendapat kombinasi 4 kata berbeda)'
+                                : 'Level Standar'}
+                            </span>
+                          </div>
+
+                          {words.length >= 3 && (
+                            <button
+                              type="button"
+                              onClick={handleAutoLayoutExistingLevel}
+                              className="px-2.5 py-1 rounded-lg bg-purple-950/80 hover:bg-purple-900 border border-purple-700 text-purple-300 text-[10px] font-bold flex items-center gap-1 transition-all"
+                              title="Tata ulang persilangan kotak secara otomatis menggunakan engine"
+                            >
+                              <Sparkles className="w-3 h-3 text-purple-400" />
+                              <span>Auto-Layout Grid</span>
+                            </button>
+                          )}
+                        </div>
 
                         <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
                           {words.length === 0 ? (
@@ -3002,13 +3155,24 @@ function AdminHubContent() {
                                   <p className="text-[11px] text-slate-400 line-clamp-1">{w.clue}</p>
                                 </div>
 
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteWord(w.id)}
-                                  className="w-7 h-7 rounded-lg bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-400 flex items-center justify-center shrink-0"
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingWord(w)}
+                                    className="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 flex items-center justify-center transition-all"
+                                    title="Edit Kata & Petunjuk"
+                                  >
+                                    <Edit3 className="w-3.5 h-3.5 text-amber-400" />
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteWord(w.id)}
+                                    className="w-7 h-7 rounded-lg bg-rose-950/60 hover:bg-rose-900 border border-rose-800 text-rose-400 flex items-center justify-center transition-all"
+                                    title="Hapus Kata"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
                               </div>
                             ))
                           )}
@@ -3747,6 +3911,88 @@ function AdminHubContent() {
                 )}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal Edit Kata / Petunjuk Soal (CRUD Lengkap) */}
+      {editingWord && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in">
+          <div className="w-full max-w-md bg-[#111726] border-2 border-slate-700 rounded-3xl p-6 shadow-2xl relative animate-in zoom-in-95">
+            <div className="flex items-center justify-between mb-4 pb-3 border-b-2 border-slate-800">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-amber-500 text-slate-950 font-black flex items-center justify-center">
+                  <Edit3 className="w-4 h-4" />
+                </div>
+                <h3 className="text-sm font-black text-white uppercase">Edit Kata & Petunjuk Soal</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingWord(null)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateWord} className="space-y-4 text-xs">
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                  Kata Jawaban (HURUF BESAR)
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editingWord.word}
+                  onChange={(e) => setEditingWord({ ...editingWord, word: e.target.value.toUpperCase() })}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono font-bold"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                  Petunjuk Soal (Clue)
+                </label>
+                <textarea
+                  rows={3}
+                  required
+                  value={editingWord.clue}
+                  onChange={(e) => setEditingWord({ ...editingWord, clue: e.target.value })}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
+                  Poin Reward
+                </label>
+                <NumericInput
+                  min={10}
+                  fallback={100}
+                  value={editingWord.points}
+                  onChange={(val) => setEditingWord({ ...editingWord, points: val })}
+                  className="w-full bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 text-white font-mono"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setEditingWord(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={updatingWord}
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  <Save className="w-4 h-4" />
+                  <span>{updatingWord ? 'Menyimpan...' : 'Simpan Perubahan'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

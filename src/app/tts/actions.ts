@@ -346,12 +346,19 @@ export async function completeLevelAction({
 
     const completedWords: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
 
-    // VALIDASI INTEGRITAS 1: Pastikan SEMUA kata pada level ini benar-benar telah terjawab!
-    const allWordsAnswered = dbWords.every((w) => completedWords.includes(w.id));
-    if (!allWordsAnswered || completedWords.length < dbWords.length) {
+    // Tentukan kata-kata target untuk pemain ini (mendukung Skema 1: Bank Kosakata Dinamis)
+    const assignedWordIds: string[] | undefined = (prog.grid_state as any)?._active_word_ids;
+    const targetWords =
+      assignedWordIds && assignedWordIds.length > 0
+        ? dbWords.filter((w) => assignedWordIds.includes(w.id))
+        : dbWords;
+
+    // VALIDASI INTEGRITAS 1: Pastikan SEMUA kata pada target level pemain benar-benar telah terjawab!
+    const allWordsAnswered = targetWords.every((w) => completedWords.includes(w.id));
+    if (!allWordsAnswered || completedWords.length < targetWords.length) {
       return {
         success: false,
-        error: `Integritas Gagal: Level belum selesai (${completedWords.length}/${dbWords.length} kata terjawab).`,
+        error: `Integritas Gagal: Level belum selesai (${completedWords.length}/${targetWords.length} kata terjawab).`,
         isCheatDetected: true,
       };
     }
@@ -360,16 +367,16 @@ export async function completeLevelAction({
     // Toleran untuk pemain yang me-reload halaman atau menyelesaikan kata terakhir.
     const prevTimeTaken = prog.time_taken_seconds || 0;
     const totalEffectiveTime = Math.max(realElapsedSeconds, prevTimeTaken);
-    if (totalEffectiveTime < 2 && dbWords.length > 2 && prog.status !== 'completed') {
+    if (totalEffectiveTime < 2 && targetWords.length > 2 && prog.status !== 'completed') {
       return {
         success: false,
-        error: `Speedhack Anomaly: Waktu tempuh (${totalEffectiveTime}s) terlalu cepat untuk ${dbWords.length} kata.`,
+        error: `Speedhack Anomaly: Waktu tempuh (${totalEffectiveTime}s) terlalu cepat untuk ${targetWords.length} kata.`,
         isCheatDetected: true,
       };
     }
 
     // VALIDASI INTEGRITAS 3: Cegah Injeksi Skor (Payload Tampering)
-    const totalBasePoints = dbWords.reduce((sum, w) => sum + (w.points || 100), 0);
+    const totalBasePoints = targetWords.reduce((sum, w) => sum + (w.points || 100), 0);
     const maxTheoreticalScore = Math.round(totalBasePoints * 3.0);
     const scoreEarned = prog.score_earned || 0;
 
@@ -580,7 +587,11 @@ export async function syncCompletedLevelsAction(): Promise<{ success: boolean; s
       : supabase;
 
     for (const prog of progressRows) {
-      const levelWordIds = wordsByLevel[prog.level_id] || [];
+      const assignedWordIds: string[] | undefined = (prog.grid_state as any)?._active_word_ids;
+      const levelWordIds =
+        assignedWordIds && assignedWordIds.length > 0
+          ? assignedWordIds
+          : wordsByLevel[prog.level_id] || [];
       const completedWords: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
 
       if (levelWordIds.length > 0 && levelWordIds.every((wid) => completedWords.includes(wid))) {
@@ -729,7 +740,7 @@ export async function saveProgressDebouncedAction({
   sessionToken,
 }: {
   levelId: string;
-  gridState: Record<string, string>;
+  gridState: Record<string, any>;
   sessionToken: string;
 }) {
   try {

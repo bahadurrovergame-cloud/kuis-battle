@@ -104,7 +104,7 @@ export interface TTSUserProgress {
   user_id: string;
   level_id: string;
   status: UserProgressStatus;
-  grid_state: Record<string, string>;
+  grid_state: Record<string, any>;
   completed_words: string[];
   score_earned: number;
   time_taken_seconds: number;
