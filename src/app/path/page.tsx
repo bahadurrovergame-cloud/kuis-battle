@@ -11,7 +11,9 @@ import {
   GameSettings,
   TTSLeaderboardEntry,
 } from '@/lib/supabase-hub';
-import { refillLivesAction, syncLifeRegenAction, syncCompletedLevelsAction } from '@/app/tts/actions';
+import { refillLivesAction, syncLifeRegenAction } from '@/app/tts/actions';
+import { getPathDataAction } from './actions';
+import { getPathCache, setPathCache } from '@/lib/path-store';
 import {
   Heart,
   Coins,
@@ -155,15 +157,24 @@ const DEFAULT_LEVELS: TTSLevel[] = [
 export default function ThePathPage() {
   const router = useRouter();
 
+  // Ambil cache lokal seketika (0 ms) agar transisi peta instan tanpa blocking spinner
+  const initialCache = useMemo(() => getPathCache(), []);
+
   // State User & Profil
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [settings, setSettings] = useState<GameSettings | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(initialCache?.profile || null);
+  const [settings, setSettings] = useState<GameSettings | null>(initialCache?.settings || null);
+  const [loading, setLoading] = useState(!initialCache);
 
   // Data Map
-  const [units, setUnits] = useState<TTSUnit[]>(DEFAULT_UNITS);
-  const [levels, setLevels] = useState<TTSLevel[]>(DEFAULT_LEVELS);
-  const [userProgress, setUserProgress] = useState<Record<string, TTSUserProgress>>({});
+  const [units, setUnits] = useState<TTSUnit[]>(
+    initialCache?.units && initialCache.units.length > 0 ? initialCache.units : DEFAULT_UNITS
+  );
+  const [levels, setLevels] = useState<TTSLevel[]>(
+    initialCache?.levels && initialCache.levels.length > 0 ? initialCache.levels : DEFAULT_LEVELS
+  );
+  const [userProgress, setUserProgress] = useState<Record<string, TTSUserProgress>>(
+    initialCache?.userProgress || {}
+  );
   const [selectedTab, setSelectedTab] = useState<'main' | 'special'>('main');
 
   // Modals & Interactive Nodes
@@ -187,79 +198,31 @@ export default function ThePathPage() {
   // Timer Regenerasi Nyawa
   const [timeUntilNextLife, setTimeUntilNextLife] = useState<string>('');
 
-  // 1. Fetch User Profile & Data dari Supabase Hub
+  // 1. Fetch User Profile & Data dari Supabase Hub (Single Parallel Server Action + SWR Cache)
   const loadData = useCallback(async () => {
     try {
-      const supabase = createHubBrowserClient();
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-
-      if (!user) {
-        router.push('/login?redirect=/path');
+      const res = await getPathDataAction();
+      if (!res.success) {
+        if (res.error?.includes('Unauthorized')) {
+          router.push('/login?redirect=/path');
+        }
         return;
       }
 
-      // Sinkronisasi regenerasi nyawa otomatis
-      const regenRes = await syncLifeRegenAction();
+      if (res.profile) setProfile(res.profile);
+      if (res.settings) setSettings(res.settings);
+      if (res.units && res.units.length > 0) setUnits(res.units);
+      if (res.levels && res.levels.length > 0) setLevels(res.levels);
+      if (res.userProgress) setUserProgress(res.userProgress);
 
-      const { data: prof } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', user.id)
-        .maybeSingle();
-
-      if (prof) {
-        if (regenRes.success && regenRes.lives !== undefined) {
-          prof.lives = regenRes.lives;
-          if (regenRes.lastLifeRegen) prof.last_life_regen = regenRes.lastLifeRegen;
-        }
-        setProfile(prof as Profile);
-      }
-
-      const { data: setts } = await supabase
-        .from('game_settings')
-        .select('*')
-        .eq('id', 1)
-        .maybeSingle();
-
-      if (setts) setSettings(setts as GameSettings);
-
-      // 1. Self-Healing Progress: Sinkronkan level yang sudah lengkap katanya jika ada keterlambatan sync
-      try {
-        await syncCompletedLevelsAction();
-      } catch {
-        // Abaikan jika network offline
-      }
-
-      const { data: dbUnits } = await supabase
-        .from('tts_units')
-        .select('*')
-        .eq('is_active', true)
-        .order('unit_number', { ascending: true });
-
-      if (dbUnits && dbUnits.length > 0) setUnits(dbUnits as TTSUnit[]);
-
-      const { data: dbLevels } = await supabase
-        .from('tts_levels')
-        .select('*')
-        .eq('status', 'published')
-        .order('level_number', { ascending: true });
-
-      if (dbLevels && dbLevels.length > 0) setLevels(dbLevels as TTSLevel[]);
-
-      const { data: dbProgress } = await supabase
-        .from('tts_user_progress')
-        .select('*')
-        .eq('user_id', user.id);
-
-      if (dbProgress) {
-        const map: Record<string, TTSUserProgress> = {};
-        dbProgress.forEach((p) => {
-          map[p.level_id] = p as TTSUserProgress;
-        });
-        setUserProgress(map);
-      }
+      // Simpan ke Cache Client SWR
+      setPathCache({
+        profile: res.profile || null,
+        settings: res.settings || null,
+        units: res.units || [],
+        levels: res.levels || [],
+        userProgress: res.userProgress || {},
+      });
     } catch (err) {
       console.error('Error loading map data:', err);
     } finally {

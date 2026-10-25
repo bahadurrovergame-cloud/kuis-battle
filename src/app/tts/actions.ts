@@ -7,6 +7,7 @@ import {
 } from '@/lib/supabase-hub-server';
 import { GameSettings, TTSLevel, TTSWord, TTSUserProgress, Profile } from '@/lib/supabase-hub';
 import { createGameSessionToken, verifyGameSessionToken } from '@/lib/game-crypto';
+import { buildCrosswordLayout } from '@/lib/crossword-generator';
 
 // ==============================================================================
 // 1. INISIALISASI SESI GAME DENGAN TOKEN ENKRIPSI (HMAC-SHA256 SIGNATURE)
@@ -91,6 +92,206 @@ export async function startLevelSessionAction({ levelId }: { levelId: string }):
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Kesalahan server saat memulai sesi';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Inisialisasi Cepat Level TTS (High-Performance Unified Server Action):
+ * Menggabungkan 8-15 request terpisah menjadi 1 request paralel berkecepatan tinggi:
+ * - Autentikasi Pengguna
+ * - Profile & Settings
+ * - Level Data & Words
+ * - Sesi Token HMAC-SHA256
+ * - Resolusi Tata Letak TTS Skema 1 (In-house Engine)
+ * - User Progress Terkini
+ */
+export async function initTTSGameAction({ levelId }: { levelId: string }): Promise<{
+  success: boolean;
+  sessionToken?: string;
+  profile?: Profile;
+  settings?: GameSettings;
+  level?: TTSLevel;
+  words?: TTSWord[];
+  progress?: TTSUserProgress;
+  error?: string;
+}> {
+  try {
+    const supabase = await createHubServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return { success: false, error: 'Sesi login tidak valid' };
+    }
+
+    // 1. Eksekusi seluruh pembacaan data secara PARALEL dengan Promise.all
+    const [
+      profRes,
+      settsRes,
+      lvlRes,
+      wordsRes,
+      progRes,
+    ] = await Promise.all([
+      supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
+      supabase.from('game_settings').select('*').eq('id', 1).maybeSingle(),
+      supabase.from('tts_levels').select('*').eq('id', levelId).maybeSingle(),
+      supabase
+        .from('tts_words')
+        .select('*')
+        .eq('level_id', levelId)
+        .order('word_number', { ascending: true }),
+      supabase
+        .from('tts_user_progress')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('level_id', levelId)
+        .maybeSingle(),
+    ]);
+
+    let prof = profRes.data as Profile | null;
+    const setts = settsRes.data as GameSettings | null;
+    const lvl = lvlRes.data as TTSLevel | null;
+    const dbWords = (wordsRes.data as TTSWord[]) || [];
+    let prog = progRes.data as TTSUserProgress | null;
+
+    if (!lvl) {
+      return { success: false, error: 'Level TTS tidak ditemukan' };
+    }
+
+    // 2. Cek & Regenerasi Nyawa in-memory (Instan tanpa blocking)
+    if (prof) {
+      const maxLives = prof.max_lives || 5;
+      const currentLives = prof.lives ?? 5;
+      const regenMinutes = setts?.life_regen_minutes || 15;
+
+      if (currentLives < maxLives && prof.last_life_regen) {
+        const lastRegen = new Date(prof.last_life_regen).getTime();
+        const now = Date.now();
+        const diffMinutes = Math.floor((now - lastRegen) / (1000 * 60));
+        const livesToAdd = Math.floor(diffMinutes / regenMinutes);
+
+        if (livesToAdd > 0) {
+          const newLives = Math.min(maxLives, currentLives + livesToAdd);
+          const newLastRegen = new Date(lastRegen + livesToAdd * regenMinutes * 60 * 1000).toISOString();
+          prof.lives = newLives;
+          prof.last_life_regen = newLastRegen;
+
+          // Asynchronously update DB in background
+          supabase
+            .from('profiles')
+            .update({ lives: newLives, last_life_regen: newLastRegen, updated_at: new Date().toISOString() })
+            .eq('id', user.id)
+            .then(() => {});
+        }
+      }
+
+      if ((prof.lives ?? 5) <= 0) {
+        return {
+          success: false,
+          error: 'Nyawa Anda habis! Tunggu waktu regenerasi atau tukarkan Koin untuk mengisi nyawa.',
+        };
+      }
+    }
+
+    // 3. Buat Cryptographic HMAC Token
+    const sessionToken = createGameSessionToken(user.id, levelId);
+
+    // 4. Resolusi Kata & Susunan Grid (Skema 1: Bank Kosakata Dinamis)
+    let actualWords: TTSWord[] = [];
+    const savedActiveWords = (prog?.grid_state as any)?._active_words;
+
+    if (Array.isArray(savedActiveWords) && savedActiveWords.length >= 3) {
+      actualWords = savedActiveWords as TTSWord[];
+    } else if (dbWords && dbWords.length > 5) {
+      // Level memiliki Bank Kosakata (> 5 kata). Susun kisi-kisi dinamis unik untuk user ini!
+      const layout = buildCrosswordLayout(
+        lvl.title || 'Level TTS',
+        dbWords.map((w) => ({
+          id: w.id,
+          word: w.word,
+          clue: w.clue,
+          points: w.points || 100,
+        })),
+        4
+      );
+
+      if (layout && layout.words.length >= 3) {
+        actualWords = layout.words.map((w, idx) => ({
+          id: w.id || `w-${idx}`,
+          level_id: levelId,
+          word_number: w.word_number,
+          direction: w.direction,
+          start_row: w.start_row,
+          start_col: w.start_col,
+          word: w.word,
+          clue: w.clue,
+          points: w.points || 100,
+          created_at: new Date().toISOString(),
+        }));
+
+        const updatedGridState = {
+          ...(prog?.grid_state || {}),
+          _active_words: actualWords,
+          _active_word_ids: actualWords.map((w) => w.id),
+        };
+
+        const { data: savedProg } = await supabase
+          .from('tts_user_progress')
+          .upsert(
+            {
+              user_id: user.id,
+              level_id: levelId,
+              status: prog?.status || 'in_progress',
+              grid_state: updatedGridState,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: 'user_id,level_id' }
+          )
+          .select()
+          .maybeSingle();
+
+        if (savedProg) prog = savedProg as TTSUserProgress;
+      } else {
+        actualWords = dbWords.slice(0, 4);
+      }
+    } else {
+      actualWords = dbWords.length > 0 ? dbWords : [];
+    }
+
+    // 5. Inisialisasi progress awal jika belum ada
+    if (!prog) {
+      const { data: newProg } = await supabase
+        .from('tts_user_progress')
+        .insert({
+          user_id: user.id,
+          level_id: levelId,
+          status: 'in_progress',
+          updated_at: new Date().toISOString(),
+        })
+        .select()
+        .maybeSingle();
+      if (newProg) prog = newProg as TTSUserProgress;
+    } else if (prog.status !== 'completed' && prog.status !== 'in_progress') {
+      await supabase
+        .from('tts_user_progress')
+        .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+        .eq('user_id', user.id)
+        .eq('level_id', levelId);
+    }
+
+    return {
+      success: true,
+      sessionToken,
+      profile: prof || undefined,
+      settings: setts || undefined,
+      level: lvl,
+      words: actualWords,
+      progress: prog || undefined,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Kesalahan server saat mempersiapkan level TTS';
     return { success: false, error: msg };
   }
 }

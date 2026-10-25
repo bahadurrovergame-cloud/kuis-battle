@@ -12,6 +12,7 @@ import {
 } from '@/lib/supabase-hub';
 import {
   startLevelSessionAction,
+  initTTSGameAction,
   submitWordAction,
   saveProgressDebouncedAction,
   useHintAction,
@@ -20,6 +21,7 @@ import {
   triggerAntiCheatExecution,
   deductLifeOnGameOverAction,
 } from '../actions';
+import { updatePathOptimisticCompletion } from '@/lib/path-store';
 import { sounds } from '@/lib/sound';
 import confetti from 'canvas-confetti';
 import { setupConsoleGuardian } from '@/lib/anti-devtools';
@@ -172,132 +174,42 @@ function TTSGameContent() {
     }
   }, []);
 
-  // 1. Fetch Inisialisasi Data Level & User
+  // 1. Fetch Inisialisasi Data Level & User (High-Speed Unified Action)
   useEffect(() => {
     let isMounted = true;
 
     const init = async () => {
       try {
-        const supabase = createHubBrowserClient();
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-
-        if (!user) {
-          router.push(`/login?redirect=/tts/${levelId}`);
-          return;
-        }
-
-        // Inisialisasi Sesi Game Terenkripsi (HMAC-SHA256 Token)
-        const sessionRes = await startLevelSessionAction({ levelId });
-        if (!sessionRes.success || !sessionRes.sessionToken) {
-          showNotice(sessionRes.error || 'Gagal memulai sesi level game.', 'error');
+        const res = await initTTSGameAction({ levelId });
+        if (!res.success) {
+          showNotice(res.error || 'Gagal mempersiapkan papan TTS.', 'error');
           setTimeout(() => router.push('/path'), 2500);
           return;
         }
-        if (isMounted) {
-          setSessionToken(sessionRes.sessionToken);
-        }
 
-        // Profil
-        const { data: prof } = await supabase.from('profiles').select('*').eq('id', user.id).single();
-        if (prof && isMounted) setProfile(prof as Profile);
+        if (!isMounted) return;
 
-        // Settings
-        const { data: setts } = await supabase.from('game_settings').select('*').eq('id', 1).maybeSingle();
-        if (setts && isMounted) setSettings(setts as GameSettings);
+        if (res.sessionToken) setSessionToken(res.sessionToken);
+        if (res.profile) setProfile(res.profile);
+        if (res.settings) setSettings(res.settings);
 
-        // Level
-        const { data: lvl } = await supabase.from('tts_levels').select('*').eq('id', levelId).maybeSingle();
-        if (lvl && isMounted) {
-          setLevel(lvl as TTSLevel);
-          if (lvl.is_hard_zone) {
-            setHardTimerRemaining(lvl.hard_timer_override || setts?.hard_timer_seconds || 60);
+        if (res.level) {
+          setLevel(res.level);
+          if (res.level.is_hard_zone) {
+            setHardTimerRemaining(res.level.hard_timer_override || res.settings?.hard_timer_seconds || 60);
           }
         }
 
-        // Words & Existing Progress
-        const { data: dbWords } = await supabase
-          .from('tts_words')
-          .select('*')
-          .eq('level_id', levelId)
-          .order('word_number', { ascending: true });
-
-        const { data: prog } = await supabase
-          .from('tts_user_progress')
-          .select('*')
-          .eq('user_id', user.id)
-          .eq('level_id', levelId)
-          .maybeSingle();
-
-        let actualWords: TTSWord[] = [];
-
-        // 1. Cek apakah pemain sudah memiliki tata letak aktif tersimpan (Skema 1: Bank Dinamis)
-        const savedActiveWords = (prog?.grid_state as any)?._active_words;
-        if (Array.isArray(savedActiveWords) && savedActiveWords.length >= 3) {
-          actualWords = savedActiveWords as TTSWord[];
-        } else if (dbWords && dbWords.length > 5) {
-          // Level ini memiliki Bank Kosakata (> 5 kata). Susun kisi-kisi dinamis unik untuk user ini!
-          const layout = buildCrosswordLayout(
-            lvl?.title || 'Level TTS',
-            dbWords.map((w) => ({
-              id: w.id,
-              word: w.word,
-              clue: w.clue,
-              points: w.points || 100,
-            })),
-            4
-          );
-
-          if (layout && layout.words.length >= 3) {
-            actualWords = layout.words.map((w, idx) => ({
-              id: w.id || `w-${idx}`,
-              level_id: levelId,
-              word_number: w.word_number,
-              direction: w.direction,
-              start_row: w.start_row,
-              start_col: w.start_col,
-              word: w.word,
-              clue: w.clue,
-              points: w.points || 100,
-              created_at: new Date().toISOString(),
-            }));
-
-            // Simpan susunan unik ini ke progress pemain di database agar konsisten saat refresh
-            const updatedGridState = {
-              ...(prog?.grid_state || {}),
-              _active_words: actualWords,
-              _active_word_ids: actualWords.map((w) => w.id),
-            };
-
-            await supabase.from('tts_user_progress').upsert(
-              {
-                user_id: user.id,
-                level_id: levelId,
-                status: prog?.status || 'in_progress',
-                grid_state: updatedGridState,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: 'user_id,level_id' }
-            );
-          } else {
-            actualWords = (dbWords.slice(0, 4) as TTSWord[]);
-          }
-        } else {
-          // Level standar (<= 5 kata): gunakan kata-kata yang ada
-          actualWords = dbWords && dbWords.length > 0 ? (dbWords as TTSWord[]) : FALLBACK_WORDS;
+        const actualWords = res.words && res.words.length > 0 ? res.words : FALLBACK_WORDS;
+        setWords(actualWords);
+        wordsRef.current = actualWords;
+        if (actualWords.length > 0) {
+          setSelectedWordId(actualWords[0].id);
+          setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
         }
 
-        if (isMounted) {
-          setWords(actualWords);
-          wordsRef.current = actualWords;
-          if (actualWords.length > 0) {
-            setSelectedWordId(actualWords[0].id);
-            setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
-          }
-        }
-
-        if (prog && isMounted) {
+        const prog = res.progress;
+        if (prog) {
           if (prog.grid_state) setGridState(prog.grid_state as Record<string, string>);
           const completed: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
           setCompletedWordIds(completed);
@@ -306,17 +218,13 @@ function TTSGameContent() {
           if (prog.combo_multiplier) setComboMultiplier(prog.combo_multiplier);
           if (prog.time_taken_seconds) setElapsedSeconds(prog.time_taken_seconds);
 
-          // Cek apakah seluruh kata pada level ini sudah berhasil dijawab
-          const allWordsDone =
-            actualWords.length > 0 &&
-            actualWords.every((w) => completed.includes(w.id));
-
+          const allWordsDone = actualWords.length > 0 && actualWords.every((w) => completed.includes(w.id));
           if (allWordsDone) {
             setIsVictory(true);
-            if (sessionRes.sessionToken) {
+            if (res.sessionToken) {
               completeLevelAction({
                 levelId,
-                sessionToken: sessionRes.sessionToken,
+                sessionToken: res.sessionToken,
               }).then((vRes) => {
                 if (vRes.success) {
                   setVictoryData({
@@ -324,6 +232,11 @@ function TTSGameContent() {
                     coins: vRes.coinsEarned ?? 20,
                     nextLevelId: vRes.nextLevelId,
                   });
+                  updatePathOptimisticCompletion(
+                    levelId,
+                    vRes.scoreEarned ?? prog.score_earned ?? 0,
+                    vRes.coinsEarned ?? 20
+                  );
                 }
               });
             }
@@ -340,7 +253,7 @@ function TTSGameContent() {
     return () => {
       isMounted = false;
     };
-  }, [levelId, router]);
+  }, [levelId, router, showNotice]);
 
   // 2. Active Word Helper
   const currentWord = useMemo(() => {
@@ -584,6 +497,9 @@ function TTSGameContent() {
             sounds.playCorrect();
             confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
 
+            // OPTIMISTIC UPDATE: Update status level tamat di cache Path seketika (0 ms)
+            updatePathOptimisticCompletion(levelId, scoreEarned, 20);
+
             completeLevelAction({
               levelId,
               sessionToken,
@@ -599,6 +515,11 @@ function TTSGameContent() {
                     coins: vRes.coinsEarned ?? 20,
                     nextLevelId: vRes.nextLevelId,
                   });
+                  updatePathOptimisticCompletion(
+                    levelId,
+                    vRes.scoreEarned ?? scoreEarned,
+                    vRes.coinsEarned ?? 20
+                  );
                 } else if (vRes.error) {
                   showNotice(vRes.error, 'error');
                 }
