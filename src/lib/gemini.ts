@@ -30,11 +30,11 @@ export function getGeminiModel(customModel?: string) {
     apiKey,
   });
 
-  // Default ke gemini-3.5-flash-lite yang terbukti aktif, cepat, dan stabil di API Google AI Studio terbaru
+  // PERBAIKAN: Default ke gemini-1.5-flash yang valid, cepat, dan stabil di API Google AI
   const modelName =
     customModel ||
     process.env.GEMINI_MODEL ||
-    'gemini-3.5-flash-lite';
+    'gemini-1.5-flash';
 
   return google(modelName);
 }
@@ -101,7 +101,6 @@ Berikan penjelasan edukatif:`;
   });
 }
 
-/**
 /**
  * Membersihkan JSON dari markdown fences dan trailing commas sebelum parsing
  */
@@ -275,4 +274,3 @@ SYARAT FORMAT OUTPUT (WAJIB DIPATUHI SECARA KETAT):
     };
   });
 }
-
