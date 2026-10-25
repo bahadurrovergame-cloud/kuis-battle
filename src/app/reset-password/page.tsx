@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createHubBrowserClient } from '@/lib/supabase-hub';
 import confetti from 'canvas-confetti';
 import {
@@ -12,13 +12,15 @@ import {
   CheckCircle2,
   AlertCircle,
   ArrowRight,
-  Sparkles,
   ShieldCheck,
   Compass,
 } from 'lucide-react';
 
 function ResetPasswordContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const code = searchParams.get('code'); // Ambil kode rahasia dari URL
+
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -31,41 +33,51 @@ function ResetPasswordContent() {
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     const supabase = createHubBrowserClient();
 
-    // 1. Cek sesi saat komponen pertama kali mount
-    const checkInitialSession = async () => {
+    const initializeSession = async () => {
       try {
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
+        // 1. Jika ada KODE di URL, tukar dulu jadi Sesi Login (PKCE Flow Browser)
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) throw error;
+          
+          // Bersihkan URL dari kode rahasia biar rapi & aman
+          window.history.replaceState(null, '', '/reset-password');
+        }
 
-        if (session) {
-          setHasSession(true);
+        // 2. Cek apakah sesi berhasil dibuat (atau memang sudah ada)
+        const { data: { session } } = await supabase.auth.getSession();
+        
+        if (isMounted) {
+          if (session) setHasSession(true);
+          setLoading(false);
         }
       } catch (err) {
-        console.error('[Reset Password] Error checking initial session:', err);
-      } finally {
-        setLoading(false);
+        console.error('[Reset Password] Error initializing session:', err);
+        if (isMounted) setLoading(false);
       }
     };
 
-    checkInitialSession();
+    initializeSession();
 
-    // 2. Dengarkan event auth, khususnya PASSWORD_RECOVERY
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    // 3. Dengarkan event auth (Fallback)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY' || session) {
-        setHasSession(true);
-        setLoading(false);
+        if (isMounted) {
+          setHasSession(true);
+          setLoading(false);
+        }
       }
     });
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Sengaja dikosongkan agar hanya jalan sekali saat komponen dimuat
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -119,12 +131,11 @@ function ResetPasswordContent() {
     }
   };
 
-  // State Memuat Awal
   if (loading) {
     return (
       <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4">
         <div className="flex items-center gap-3 bg-[#111726] border-2 border-slate-800 rounded-2xl px-6 py-4 shadow-xl">
-          <Key className="w-5 h-5 text-emerald-400 animate-spin" />
+          <Key className="w-5 h-5 text-purple-500 animate-spin" />
           <span className="text-xs font-black tracking-wider text-slate-300">
             MEMVERIFIKASI TAUTAN PEMULIHAN...
           </span>
@@ -135,11 +146,9 @@ function ResetPasswordContent() {
 
   return (
     <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4 relative select-none">
-      {/* Background Decorative Rings */}
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="w-full max-w-md bg-[#111726] border-2 border-slate-700 rounded-3xl p-6 sm:p-8 shadow-[0_8px_0_#070a12] relative z-10">
-        {/* Header Kartu */}
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-3 bg-purple-500 rounded-2xl flex items-center justify-center text-slate-950 font-black border-b-4 border-purple-700 shadow-md">
             <Key className="w-7 h-7" />
@@ -152,7 +161,6 @@ function ResetPasswordContent() {
           </p>
         </div>
 
-        {/* Notifikasi Error */}
         {errorMsg && (
           <div className="mb-5 p-3.5 rounded-xl bg-rose-950/80 border-2 border-rose-600 text-rose-200 text-xs flex items-start gap-2.5 font-medium shadow">
             <AlertCircle className="w-4 h-4 shrink-0 mt-0.5 text-rose-400" />
@@ -160,7 +168,6 @@ function ResetPasswordContent() {
           </div>
         )}
 
-        {/* State Berhasil */}
         {success ? (
           <div className="text-center py-6 space-y-4">
             <div className="w-16 h-16 mx-auto rounded-full bg-emerald-500/20 border-2 border-emerald-500 flex items-center justify-center text-emerald-400 animate-bounce">
@@ -184,7 +191,6 @@ function ResetPasswordContent() {
             </div>
           </div>
         ) : !hasSession ? (
-          /* Sesi Tidak Ditemukan / Tautan Kedaluwarsa */
           <div className="text-center py-4 space-y-4">
             <div className="p-4 rounded-2xl bg-amber-950/40 border-2 border-amber-500/40 text-left space-y-2 text-xs text-amber-200">
               <p className="font-black text-amber-300 flex items-center gap-1.5">
@@ -205,9 +211,7 @@ function ResetPasswordContent() {
             </button>
           </div>
         ) : (
-          /* Form Ganti Kata Sandi */
           <form onSubmit={handleResetPassword} className="space-y-4">
-            {/* Input Kata Sandi Baru */}
             <div>
               <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                 Kata Sandi Baru
@@ -232,7 +236,6 @@ function ResetPasswordContent() {
               </div>
             </div>
 
-            {/* Input Konfirmasi Kata Sandi */}
             <div>
               <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                 Konfirmasi Kata Sandi Baru
@@ -257,7 +260,6 @@ function ResetPasswordContent() {
               </div>
             </div>
 
-            {/* Checklist Validasi Singkat */}
             <div className="p-3 bg-[#090d16] border border-slate-800 rounded-xl space-y-1 text-[11px]">
               <div className="flex items-center gap-1.5 text-slate-400">
                 <CheckCircle2
@@ -287,7 +289,6 @@ function ResetPasswordContent() {
               </div>
             </div>
 
-            {/* Tombol Simpan */}
             <button
               type="submit"
               disabled={submitting}
@@ -299,7 +300,6 @@ function ResetPasswordContent() {
           </form>
         )}
 
-        {/* Kembali ke Lobi */}
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
           <a
             href="/"
@@ -327,4 +327,3 @@ export default function ResetPasswordPage() {
     </Suspense>
   );
 }
-
