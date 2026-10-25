@@ -42,29 +42,35 @@ export async function createHubServerClient(): Promise<SupabaseClient> {
 export function isRealServiceRoleKey(key?: string): boolean {
   if (!key || typeof key !== 'string') return false;
   if (key.includes('isi_dengan') || key.includes('placeholder')) return false;
-  if (!key.startsWith('ey')) return false;
   if (key === hubAnonKey) return false;
 
-  try {
-    const parts = key.split('.');
-    if (parts.length === 3) {
-      const payloadStr = Buffer.from(parts[1], 'base64').toString('utf-8');
-      const payload = JSON.parse(payloadStr);
-      // Hanya terima token dengan role 'service_role' asli
-      if (payload.role !== 'service_role') {
-        return false;
-      }
-      // Pastikan project ref cocok dengan project Hub
-      const hubRef = hubUrl.replace('https://', '').split('.')[0];
-      if (payload.ref && hubRef && payload.ref !== hubRef) {
-        return false;
-      }
-    }
-  } catch {
-    return false;
+  // Mendukung format token baru Supabase (sb_secret_...)
+  if (key.startsWith('sb_secret_')) {
+    return true;
   }
 
-  return true;
+  // Mendukung format JWT legacy Supabase (ey...)
+  if (key.startsWith('ey')) {
+    try {
+      const parts = key.split('.');
+      if (parts.length === 3) {
+        const payloadStr = Buffer.from(parts[1], 'base64').toString('utf-8');
+        const payload = JSON.parse(payloadStr);
+        if (payload.role !== 'service_role') {
+          return false;
+        }
+        const hubRef = hubUrl.replace('https://', '').split('.')[0];
+        if (payload.ref && hubRef && payload.ref !== hubRef) {
+          return false;
+        }
+      }
+    } catch {
+      return false;
+    }
+    return true;
+  }
+
+  return false;
 }
 
 /**
