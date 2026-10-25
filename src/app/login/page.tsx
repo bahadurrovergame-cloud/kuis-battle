@@ -207,9 +207,11 @@ function LoginContent() {
 
       const supabase = createHubBrowserClient();
       
-      // PERBAIKAN: Langsung arahkan ke reset-password
+      // PERBAIKAN: Arahkan ke callback dulu untuk verifikasi token (PKCE)
+      const redirectTo = `${window.location.origin}/auth/callback?next=/reset-password`;
+
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: 'https://kuis-battle.vercel.app/reset-password',
+        redirectTo,
       });
 
       if (error) {
