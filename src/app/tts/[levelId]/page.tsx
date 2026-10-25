@@ -22,6 +22,7 @@ import {
 } from '../actions';
 import { sounds } from '@/lib/sound';
 import confetti from 'canvas-confetti';
+import { setupConsoleGuardian } from '@/lib/anti-devtools';
 import {
   ArrowLeft,
   Flame,
@@ -123,11 +124,12 @@ function TTSGameContent() {
   const [freezeRemaining, setFreezeRemaining] = useState(0);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isVictory, setIsVictory] = useState(false);
-  const [victoryData, setVictoryData] = useState<{ score: number; coins: number } | null>(null);
+  const [victoryData, setVictoryData] = useState<{ score: number; coins: number; nextLevelId?: string } | null>(null);
 
   // Anti-Cheat Cryptographic Session Token & Execution Locks (Spam-Click Defense)
   const [sessionToken, setSessionToken] = useState<string>('');
   const [isEvaluatingWord, setIsEvaluatingWord] = useState(false);
+  const evaluatingWordIdsRef = useRef<Set<string>>(new Set());
   const [isPendingHint, setIsPendingHint] = useState(false);
   const [isPendingFreeze, setIsPendingFreeze] = useState(false);
   const [isCompletingLevel, setIsCompletingLevel] = useState(false);
@@ -135,6 +137,19 @@ function TTSGameContent() {
 
   // Anti-Cheat Sensor States & Refs
   const [cheatViolationCount, setCheatViolationCount] = useState(0);
+  const [showCoinModal, setShowCoinModal] = useState(false);
+  // In-Game Toast / Notice (Menggantikan alert bawaan agar tidak memicu window blur)
+  const [gameNotice, setGameNotice] = useState<{ message: string; type: 'error' | 'warning' | 'info' } | null>(null);
+  const noticeTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const showNotice = useCallback((message: string, type: 'error' | 'warning' | 'info' = 'warning') => {
+    if (noticeTimerRef.current) clearTimeout(noticeTimerRef.current);
+    setGameNotice({ message, type });
+    noticeTimerRef.current = setTimeout(() => {
+      setGameNotice(null);
+    }, 4500);
+  }, []);
+
   const [cheatModalType, setCheatModalType] = useState<1 | 2 | 3 | null>(null);
   const [isAccountTerminated, setIsAccountTerminated] = useState(false);
   const cheatViolationRef = useRef(0);
@@ -174,8 +189,8 @@ function TTSGameContent() {
         // Inisialisasi Sesi Game Terenkripsi (HMAC-SHA256 Token)
         const sessionRes = await startLevelSessionAction({ levelId });
         if (!sessionRes.success || !sessionRes.sessionToken) {
-          alert(sessionRes.error || 'Gagal memulai sesi level game.');
-          router.push('/path');
+          showNotice(sessionRes.error || 'Gagal memulai sesi level game.', 'error');
+          setTimeout(() => router.push('/path'), 2500);
           return;
         }
         if (isMounted) {
@@ -206,14 +221,11 @@ function TTSGameContent() {
           .eq('level_id', levelId)
           .order('word_number', { ascending: true });
 
-        if (dbWords && dbWords.length > 0 && isMounted) {
-          setWords(dbWords as TTSWord[]);
-          setSelectedWordId(dbWords[0].id);
-          setSelectedCell({ r: dbWords[0].start_row, c: dbWords[0].start_col });
-        } else if (isMounted) {
-          // Fallback starter words
-          setSelectedWordId(FALLBACK_WORDS[0].id);
-          setSelectedCell({ r: FALLBACK_WORDS[0].start_row, c: FALLBACK_WORDS[0].start_col });
+        const actualWords = dbWords && dbWords.length > 0 ? (dbWords as TTSWord[]) : FALLBACK_WORDS;
+        if (isMounted) {
+          setWords(actualWords);
+          setSelectedWordId(actualWords[0].id);
+          setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
         }
 
         // Existing Progress
@@ -226,13 +238,35 @@ function TTSGameContent() {
 
         if (prog && isMounted) {
           if (prog.grid_state) setGridState(prog.grid_state as Record<string, string>);
-          if (Array.isArray(prog.completed_words)) {
-            setCompletedWordIds(prog.completed_words);
-            completedWordIdsRef.current = prog.completed_words;
-          }
+          const completed: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
+          setCompletedWordIds(completed);
+          completedWordIdsRef.current = completed;
           if (prog.score_earned) setScoreEarned(prog.score_earned);
           if (prog.combo_multiplier) setComboMultiplier(prog.combo_multiplier);
           if (prog.time_taken_seconds) setElapsedSeconds(prog.time_taken_seconds);
+
+          // Cek apakah seluruh kata pada level ini sudah berhasil dijawab
+          const allWordsDone =
+            actualWords.length > 0 &&
+            actualWords.every((w) => completed.includes(w.id));
+
+          if (allWordsDone) {
+            setIsVictory(true);
+            if (sessionRes.sessionToken) {
+              completeLevelAction({
+                levelId,
+                sessionToken: sessionRes.sessionToken,
+              }).then((vRes) => {
+                if (vRes.success) {
+                  setVictoryData({
+                    score: vRes.scoreEarned ?? prog.score_earned ?? 0,
+                    coins: vRes.coinsEarned ?? 20,
+                    nextLevelId: vRes.nextLevelId,
+                  });
+                }
+              });
+            }
+          }
         }
       } catch (err) {
         console.error('Error loading TTS game:', err);
@@ -371,22 +405,28 @@ function TTSGameContent() {
   );
 
   useEffect(() => {
+    // HANYA gunakan document.visibilitychange (document.hidden === true).
+    // JANGAN gunakan window.onblur karena dialog/alert, klik ekstensi, atau popup browser
+    // akan memicu window.blur secara salah (false positive).
     const handleVisibilityChange = () => {
       if (document.hidden) {
         triggerCheatViolation('Pindah tab / membuka aplikasi lain saat bermain');
       }
     };
 
-    const handleWindowBlur = () => {
-      triggerCheatViolation('Keluar dari layar permainan');
-    };
-
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleWindowBlur);
+
+    // Aktifkan Console Guardian & Anti-DevTools
+    const cleanupGuardian = setupConsoleGuardian({
+      onDevToolsDetected: (reason) => {
+        triggerCheatViolation(reason);
+      },
+      strictMode: false,
+    });
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleWindowBlur);
+      cleanupGuardian();
     };
   }, [triggerCheatViolation]);
 
@@ -414,14 +454,20 @@ function TTSGameContent() {
   // ============================================================================
   const checkWordSubmission = useCallback(
     async (word: TTSWord, currentGrid: Record<string, string>) => {
-      if (!sessionToken || isEvaluatingWord || isGameOver || isVictory || isAccountTerminated) return;
+      if (!sessionToken || isGameOver || isVictory || isAccountTerminated) return;
+      if (evaluatingWordIdsRef.current.has(word.id)) return;
+      if (completedWordIdsRef.current.includes(word.id)) return;
 
       // Susun kata dari kotak
       let assembled = '';
       for (let i = 0; i < word.word.length; i++) {
         const r = word.direction === 'across' ? word.start_row : word.start_row + i;
         const c = word.direction === 'across' ? word.start_col + i : word.start_col;
-        const char = currentGrid[`${r},${c}`] || '';
+        const key = `${r},${c}`;
+        const cellInfo = activeCellsMap[key];
+        const isCellCompleted = cellInfo && cellInfo.wordIds.some((wid) => completedWordIdsRef.current.includes(wid));
+        // Jika kotak sudah menjadi bagian dari kata yang selesai, selalu gunakan huruf asli yang valid
+        const char = isCellCompleted ? cellInfo.letter : (currentGrid[key] || '');
         if (!char) return; // Belum lengkap
         assembled += char;
       }
@@ -430,7 +476,8 @@ function TTSGameContent() {
       const submissionKey = `${word.id}:${assembled}`;
       if (evaluatedSubmissionsRef.current.has(submissionKey)) return;
 
-      setIsEvaluatingWord(true);
+      evaluatingWordIdsRef.current.add(word.id);
+      setIsEvaluatingWord(evaluatingWordIdsRef.current.size > 0);
       try {
         const res = await submitWordAction({
           levelId,
@@ -478,9 +525,10 @@ function TTSGameContent() {
                   setVictoryData({
                     score: vRes.scoreEarned ?? 0,
                     coins: vRes.coinsEarned ?? 20,
+                    nextLevelId: vRes.nextLevelId,
                   });
                 } else if (vRes.error) {
-                  alert(vRes.error);
+                  showNotice(vRes.error, 'error');
                 }
               })
               .finally(() => {
@@ -500,13 +548,13 @@ function TTSGameContent() {
       } catch (err) {
         console.error('Error submitting word:', err);
       } finally {
-        setIsEvaluatingWord(false);
+        evaluatingWordIdsRef.current.delete(word.id);
+        setIsEvaluatingWord(evaluatingWordIdsRef.current.size > 0);
       }
     },
     [
       levelId,
       sessionToken,
-      isEvaluatingWord,
       isGameOver,
       isVictory,
       isAccountTerminated,
@@ -514,6 +562,7 @@ function TTSGameContent() {
       words.length,
       queueAutoSave,
       triggerCheatViolation,
+      showNotice,
     ]
   );
 
@@ -526,14 +575,43 @@ function TTSGameContent() {
     if (!/^[A-Z]$/.test(clean)) return;
 
     const cellKey = `${selectedCell.r},${selectedCell.c}`;
-    const newGrid = { ...gridState, [cellKey]: clean };
-    setGridState(newGrid);
+    const cellData = activeCellsMap[cellKey];
 
-    // Auto-save debounce
-    queueAutoSave(newGrid);
+    // Jika kotak ini sudah menjadi bagian dari kata yang selesai (hijau),
+    // lindungi agar huruf yang sudah diverifikasi benar tidak dirusak!
+    const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
 
-    // Cek apakah 1 kata utuh telah selesai terisi
+    let newGrid = { ...gridState };
+    if (!isCompletedCell) {
+      newGrid[cellKey] = clean;
+      setGridState(newGrid);
+      queueAutoSave(newGrid);
+    }
+
+    // 1. Cek kata aktif saat ini
     checkWordSubmission(currentWord, newGrid);
+
+    // 2. Cek semua kata yang bersinggungan di kotak ini (mendatar / menurun)
+    const intersectingWords = words.filter((w) => {
+      if (w.id === currentWord.id) return false;
+      if (w.direction === 'across') {
+        return (
+          selectedCell.r === w.start_row &&
+          selectedCell.c >= w.start_col &&
+          selectedCell.c < w.start_col + w.word.length
+        );
+      } else {
+        return (
+          selectedCell.c === w.start_col &&
+          selectedCell.r >= w.start_row &&
+          selectedCell.r < w.start_row + w.word.length
+        );
+      }
+    });
+
+    intersectingWords.forEach((w) => {
+      checkWordSubmission(w, newGrid);
+    });
 
     // Auto-advance ke kotak berikutnya dalam kata aktif
     const idxInWord =
@@ -541,10 +619,17 @@ function TTSGameContent() {
         ? selectedCell.c - currentWord.start_col
         : selectedCell.r - currentWord.start_row;
 
-    if (idxInWord < currentWord.word.length - 1) {
-      const nextR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r + 1;
-      const nextC = currentWord.direction === 'across' ? selectedCell.c + 1 : selectedCell.c;
+    for (let step = 1; idxInWord + step < currentWord.word.length; step++) {
+      const nextR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r + step;
+      const nextC = currentWord.direction === 'across' ? selectedCell.c + step : selectedCell.c;
+      const nextKey = `${nextR},${nextC}`;
+      const nextData = activeCellsMap[nextKey];
+      const isNextCompleted = nextData && nextData.wordIds.some((wid) => completedWordIds.includes(wid));
+      
       setSelectedCell({ r: nextR, c: nextC });
+      if (!isNextCompleted) {
+        break; // Berhenti di kotak kosong/belum selesai berikutnya
+      }
     }
   };
 
@@ -554,13 +639,15 @@ function TTSGameContent() {
     if (e.key === 'Backspace') {
       e.preventDefault();
       const cellKey = `${selectedCell.r},${selectedCell.c}`;
+      const cellData = activeCellsMap[cellKey];
+      const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
 
-      if (gridState[cellKey]) {
+      if (gridState[cellKey] && !isCompletedCell) {
         const newGrid = { ...gridState, [cellKey]: '' };
         setGridState(newGrid);
         queueAutoSave(newGrid);
       } else {
-        // Mundur ke kotak sebelumnya jika kotak saat ini sudah kosong
+        // Mundur ke kotak sebelumnya jika kotak saat ini sudah kosong atau kotak selesai
         const idxInWord =
           currentWord.direction === 'across'
             ? selectedCell.c - currentWord.start_col
@@ -613,6 +700,17 @@ function TTSGameContent() {
   // ============================================================================
   const handleUseHint = async () => {
     if (!currentWord || !profile || !sessionToken || isPendingHint || isGameOver || isVictory) return;
+
+    const hintPrice = settings?.hint_price_coins || 15;
+    if ((profile.coins ?? 0) < hintPrice) {
+      showNotice(
+        `🪙 Koin tidak cukup (${profile.coins ?? 0}/${hintPrice})! Selesaikan level untuk mendapatkan +${settings?.coins_per_level || 20} Koin per level.`,
+        'warning'
+      );
+      setShowCoinModal(true);
+      return;
+    }
+
     setIsPendingHint(true);
 
     try {
@@ -638,10 +736,13 @@ function TTSGameContent() {
           }
         }
       } else {
-        alert(res.error || 'Gagal menggunakan bantuan Hint.');
+        showNotice(res.error || 'Gagal menggunakan bantuan Hint.', 'warning');
+        if (res.error?.includes('Koin')) {
+          setShowCoinModal(true);
+        }
       }
     } catch {
-      alert('Terjadi kesalahan jaringan.');
+      showNotice('Terjadi kesalahan jaringan.', 'error');
     } finally {
       setIsPendingHint(false);
     }
@@ -649,6 +750,17 @@ function TTSGameContent() {
 
   const handleUseFreeze = async () => {
     if (!profile || !sessionToken || isPendingFreeze || freezeRemaining > 0 || isGameOver || isVictory) return;
+
+    const freezePrice = settings?.freeze_price_coins || 25;
+    if ((profile.coins ?? 0) < freezePrice) {
+      showNotice(
+        `🪙 Koin tidak cukup (${profile.coins ?? 0}/${freezePrice})! Selesaikan level untuk mendapatkan +${settings?.coins_per_level || 20} Koin per level.`,
+        'warning'
+      );
+      setShowCoinModal(true);
+      return;
+    }
+
     setIsPendingFreeze(true);
 
     try {
@@ -659,10 +771,13 @@ function TTSGameContent() {
         setFreezeRemaining(res.durationSeconds || 10);
         sounds.playScoreUp();
       } else {
-        alert(res.error || 'Gagal membekukan waktu.');
+        showNotice(res.error || 'Gagal membekukan waktu.', 'warning');
+        if (res.error?.includes('Koin')) {
+          setShowCoinModal(true);
+        }
       }
     } catch {
-      alert('Terjadi kesalahan jaringan.');
+      showNotice('Terjadi kesalahan jaringan.', 'error');
     } finally {
       setIsPendingFreeze(false);
     }
@@ -743,12 +858,49 @@ function TTSGameContent() {
             </div>
           )}
 
-          <div className="flex items-center gap-1.5 bg-[#1e293b] border-b-2 border-slate-950 px-3 py-1.5 rounded-xl text-xs font-mono font-black text-amber-400">
-            <Coins className="w-3.5 h-3.5 fill-amber-400" />
+          <button
+            type="button"
+            onClick={() => setShowCoinModal(true)}
+            className="flex items-center gap-1.5 bg-[#1e293b] hover:bg-slate-800 border-b-2 border-slate-950 px-3 py-1.5 rounded-xl text-xs font-mono font-black text-amber-400 active:translate-y-0.5 transition-all cursor-pointer group"
+            title="Klik untuk melihat info koin & cara mendapatkannya"
+          >
+            <Coins className="w-3.5 h-3.5 fill-amber-400 group-hover:scale-110 transition-transform" />
             <span>{profile?.coins ?? 0}</span>
-          </div>
+            <HelpCircle className="w-3 h-3 text-amber-400/70 ml-0.5" />
+          </button>
         </div>
       </header>
+
+      {/* ==================================================================== */}
+      {/* IN-GAME FLOATING TOAST NOTIFICATION (MENGGANTIKAN ALERT JENDELA)     */}
+      {/* ==================================================================== */}
+      {gameNotice && (
+        <div className="fixed top-14 z-50 px-4 w-full max-w-md animate-in slide-in-from-top-3 fade-in duration-200">
+          <div
+            className={`px-4 py-2.5 rounded-2xl border shadow-xl flex items-center justify-between gap-3 text-xs font-bold backdrop-blur-md ${
+              gameNotice.type === 'error'
+                ? 'bg-rose-950/90 border-rose-600 text-rose-200 shadow-rose-950/50'
+                : gameNotice.type === 'info'
+                ? 'bg-cyan-950/90 border-cyan-500 text-cyan-200 shadow-cyan-950/50'
+                : 'bg-amber-950/90 border-amber-500 text-amber-200 shadow-amber-950/50'
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <span className="text-base shrink-0">
+                {gameNotice.type === 'error' ? '🚫' : gameNotice.type === 'info' ? 'ℹ️' : '⚠️'}
+              </span>
+              <span className="leading-snug">{gameNotice.message}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setGameNotice(null)}
+              className="text-slate-400 hover:text-white shrink-0 p-1 rounded-lg hover:bg-slate-800/50"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Freeze Timer Active Banner */}
       {freezeRemaining > 0 && (
@@ -790,7 +942,7 @@ function TTSGameContent() {
               const isSelectedCell = selectedCell?.r === r && selectedCell?.c === c;
               const isWordCompleted = cellData.wordIds.some((wid) => completedWordIds.includes(wid));
               const isShaking = shakingWordId && cellData.wordIds.includes(shakingWordId);
-              const charValue = gridState[cellKey] || '';
+              const charValue = isWordCompleted ? cellData.letter : (gridState[cellKey] || '');
 
               return (
                 <div
@@ -835,20 +987,20 @@ function TTSGameContent() {
               onClick={handleUseHint}
               disabled={isGameOver || isVictory || isPendingHint}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black border-b-4 border-amber-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
-              title="Buka 1 huruf acak di kata ini (15 Koin)"
+              title={`Buka 1 huruf acak di kata ini (${settings?.hint_price_coins || 15} Koin)`}
             >
               <Lightbulb className="w-3.5 h-3.5 fill-current" />
-              <span>{isPendingHint ? 'Membuka...' : 'Hint (15🪙)'}</span>
+              <span>{isPendingHint ? 'Membuka...' : `Hint (${settings?.hint_price_coins || 15}🪙)`}</span>
             </button>
 
             <button
               onClick={handleUseFreeze}
               disabled={isGameOver || isVictory || freezeRemaining > 0 || isPendingFreeze}
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-black border-b-4 border-cyan-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
-              title="Bekukan waktu & penyusutan poin selama 10 detik (25 Koin)"
+              title={`Bekukan waktu & pembusukan skor selama ${settings?.freeze_duration_seconds || 10} detik (${settings?.freeze_price_coins || 25} Koin)`}
             >
               <Snowflake className="w-3.5 h-3.5 fill-current" />
-              <span>{isPendingFreeze ? 'Membekukan...' : 'Freeze (25🪙)'}</span>
+              <span>{isPendingFreeze ? 'Membekukan...' : `Freeze (${settings?.freeze_price_coins || 25}🪙)`}</span>
             </button>
           </div>
 
@@ -996,12 +1148,55 @@ function TTSGameContent() {
               </div>
             </div>
 
+            <div className="flex flex-col gap-2.5">
+              {victoryData?.nextLevelId ? (
+                <button
+                  onClick={() => router.push(`/tts/${victoryData.nextLevelId}`)}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
+                >
+                  <span>Lanjut ke Level Berikutnya</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              ) : (
+                <button
+                  onClick={() => router.push('/path')}
+                  className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
+                >
+                  <span>🎉 Selesai! Kembali ke Peta</span>
+                  <ArrowRight className="w-4 h-4" />
+                </button>
+              )}
+
+              <button
+                onClick={() => router.push('/path')}
+                className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2"
+              >
+                <span>Lihat Peta The Path</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* FLOATING LEVEL COMPLETED BAR (JIKA MODAL DITUTUP ATAU RESUME)       */}
+      {/* ==================================================================== */}
+      {completedWordIds.length === words.length && words.length > 0 && !isVictory && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-md p-3.5 rounded-2xl bg-gradient-to-r from-emerald-700 to-teal-800 border-2 border-emerald-400 shadow-2xl flex items-center justify-between gap-3 animate-bounce">
+          <div className="flex items-center gap-2.5">
+            <span className="text-2xl">🏆</span>
+            <div className="text-left">
+              <div className="text-xs font-black text-white uppercase tracking-wider">LEVEL SELESAI!</div>
+              <div className="text-[10px] text-emerald-200">Seluruh kata berhasil dijawab</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
             <button
-              onClick={() => router.push('/path')}
-              className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
+              onClick={() => setIsVictory(true)}
+              className="px-3.5 py-2 rounded-xl bg-white hover:bg-emerald-100 text-slate-950 font-black text-xs transition shadow flex items-center gap-1.5"
             >
-              <span>Lanjut ke Peta The Path</span>
-              <ArrowRight className="w-4 h-4" />
+              <span>Lanjut</span>
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -1045,6 +1240,102 @@ function TTSGameContent() {
                 <span>Coba Lagi</span>
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 6: INFO KOIN & SISTEM EKONOMI (PANDUAN PEMAIN)                */}
+      {/* ==================================================================== */}
+      {showCoinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-sm rounded-3xl p-5 bg-[#0f172a] border-2 border-amber-500/50 shadow-2xl text-slate-200 animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 text-xl shadow-inner">
+                  🪙
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">Panduan Koin & Power-Up</h3>
+                  <p className="text-[11px] text-amber-400 font-bold">
+                    Koin Anda Saat Ini: <span className="font-mono">{profile?.coins ?? 0}</span> 🪙
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCoinModal(false)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="py-3 text-xs space-y-3">
+              {/* Jawaban Refill Koin */}
+              <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800">
+                <div className="flex items-center gap-1.5 text-amber-300 font-black mb-1">
+                  <span className="text-sm">❓</span>
+                  <span>Apakah Koin Refill Otomatis?</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed text-[11px]">
+                  <b>Tidak.</b> Koin <i>tidak</i> bertambah otomatis per detik atau per menit. Koin adalah <b>mata uang hadiah prestasi</b> pemain.
+                </p>
+              </div>
+
+              {/* Cara Dapatkan Koin */}
+              <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-emerald-400 font-black">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <span>Cara Mendapatkan Koin:</span>
+                </div>
+                <ul className="text-[11px] text-slate-300 space-y-1 pl-1">
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>
+                      <b>Menamatkan level di peta:</b> Hadiah{' '}
+                      <span className="text-amber-400 font-black">+{settings?.coins_per_level || 20} Koin</span> setiap level selesai!
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>Menyelesaikan bab/pulau dan event spesial akhir pekan.</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Kegunaan Koin */}
+              <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-cyan-400 font-black">
+                  <Zap className="w-4 h-4 text-cyan-400" />
+                  <span>Kegunaan Koin:</span>
+                </div>
+                <ul className="text-[11px] text-slate-300 space-y-1 pl-1">
+                  <li>💡 <b>Hint ({settings?.hint_price_coins || 15}🪙)</b>: Buka 1 huruf acak pada kata aktif.</li>
+                  <li>❄️ <b>Freeze ({settings?.freeze_price_coins || 25}🪙)</b>: Bekukan pembusukan skor & timer ({settings?.freeze_duration_seconds || 10}s).</li>
+                  <li>❤️ <b>Refill Nyawa ({settings?.coins_refill_lives_price || 50}🪙)</b>: Isi penuh 5 nyawa di peta tanpa menunggu cooldown.</li>
+                </ul>
+              </div>
+
+              {/* Penjelasan Nyawa yang Otomatis Refill */}
+              <div className="bg-rose-950/30 p-2.5 rounded-xl border border-rose-800/40 text-[11px] text-rose-200 flex items-start gap-2">
+                <Heart className="w-4 h-4 text-rose-500 fill-rose-500 shrink-0 mt-0.5" />
+                <div>
+                  <b className="text-rose-400">Pemberitahuan Regenerasi Nyawa:</b>
+                  <p className="mt-0.5 text-slate-300">
+                    Yang terisi otomatis adalah <b>Nyawa (❤️)</b>, yaitu <b>+1 nyawa setiap {settings?.life_regen_minutes || 15} menit</b> jika berkurang atau habis.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowCoinModal(false)}
+              className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition-all active:translate-y-0.5 border-b-2 border-amber-700 active:border-b-0"
+            >
+              Saya Mengerti & Lanjut Main
+            </button>
           </div>
         </div>
       )}

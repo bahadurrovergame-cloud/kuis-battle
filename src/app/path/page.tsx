@@ -11,7 +11,7 @@ import {
   GameSettings,
   TTSLeaderboardEntry,
 } from '@/lib/supabase-hub';
-import { refillLivesAction, syncLifeRegenAction } from '@/app/tts/actions';
+import { refillLivesAction, syncLifeRegenAction, syncCompletedLevelsAction } from '@/app/tts/actions';
 import {
   Heart,
   Coins,
@@ -32,6 +32,7 @@ import {
   Crown,
   Clock,
   Medal,
+  Sparkles,
 } from 'lucide-react';
 
 const DEFAULT_UNITS: TTSUnit[] = [
@@ -175,6 +176,7 @@ export default function ThePathPage() {
   } | null>(null);
 
   const [showNoLivesModal, setShowNoLivesModal] = useState(false);
+  const [showCoinModal, setShowCoinModal] = useState(false);
   const [refillingLives, setRefillingLives] = useState(false);
 
   // Leaderboard Modal State
@@ -223,6 +225,13 @@ export default function ThePathPage() {
 
       if (setts) setSettings(setts as GameSettings);
 
+      // 1. Self-Healing Progress: Sinkronkan level yang sudah lengkap katanya jika ada keterlambatan sync
+      try {
+        await syncCompletedLevelsAction();
+      } catch {
+        // Abaikan jika network offline
+      }
+
       const { data: dbUnits } = await supabase
         .from('tts_units')
         .select('*')
@@ -262,13 +271,15 @@ export default function ThePathPage() {
     loadData();
   }, [loadData]);
 
-  // 2. Fetch Leaderboard Realtime
+  // 2. Fetch Leaderboard Realtime (Menggabungkan tts_leaderboard dengan profil pemain)
   const fetchLeaderboard = useCallback(async () => {
     setLoadingLeaderboard(true);
     try {
       const supabase = createHubBrowserClient();
       const season = settings?.current_season || 1;
-      const { data, error } = await supabase
+
+      // 1. Ambil data dari tts_leaderboard
+      const { data: lbData } = await supabase
         .from('tts_leaderboard')
         .select('*, profiles(*)')
         .eq('season_number', season)
@@ -276,12 +287,35 @@ export default function ThePathPage() {
         .order('total_time_taken', { ascending: true })
         .limit(50);
 
-      if (data) {
-        setLeaderboardList(data as TTSLeaderboardEntry[]);
-      }
-      if (error) {
-        console.error('Error fetching leaderboard:', error);
-      }
+      // 2. Ambil data dari profiles untuk memastikan seluruh pemain yang memiliki skor tampil
+      const { data: allProfs } = await supabase
+        .from('profiles')
+        .select('*')
+        .order('total_score', { ascending: false })
+        .limit(50);
+
+      const existingUserIds = new Set((lbData || []).map((e) => e.user_id));
+      const mergedList: TTSLeaderboardEntry[] = [...((lbData as TTSLeaderboardEntry[]) || [])];
+
+      (allProfs || []).forEach((prof) => {
+        if (!existingUserIds.has(prof.id)) {
+          mergedList.push({
+            id: prof.id,
+            user_id: prof.id,
+            season_number: season,
+            total_score: prof.total_score || 0,
+            total_time_taken: 0,
+            levels_completed: (prof.total_score || 0) > 0 ? 1 : 0,
+            updated_at: prof.updated_at,
+            profiles: prof as Profile,
+          });
+        }
+      });
+
+      // Urutkan berdasarkan total_score tertinggi
+      mergedList.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
+
+      setLeaderboardList(mergedList);
     } catch (err) {
       console.error('Error fetching leaderboard:', err);
     } finally {
@@ -343,27 +377,44 @@ export default function ThePathPage() {
     return () => clearInterval(interval);
   }, [profile, settings]);
 
-  // 3. Status Buka Kunci Level
+  // 3. Status Buka Kunci Level (Unit-Aware & Sequential Progression)
   const levelStatusMap = useMemo(() => {
     const map: Record<string, { isUnlocked: boolean; isCompleted: boolean }> = {};
-    const sortedLevels = [...levels].sort((a, b) => a.level_number - b.level_number);
+    const sortedUnits = [...units].sort((a, b) => a.unit_number - b.unit_number);
 
-    sortedLevels.forEach((lvl, idx) => {
-      const prog = userProgress[lvl.id];
-      const isCompleted = prog?.status === 'completed';
+    sortedUnits.forEach((unit, uIdx) => {
+      const unitLevels = levels
+        .filter((l) => l.unit_id === unit.id)
+        .sort((a, b) => a.level_number - b.level_number);
 
-      let isUnlocked = idx === 0;
-      if (idx > 0) {
-        const prevLevel = sortedLevels[idx - 1];
-        const prevProg = userProgress[prevLevel.id];
-        isUnlocked = prevProg?.status === 'completed';
-      }
+      // Pulau pertama selalu terbuka. Pulau selanjutnya terbuka jika seluruh level di pulau sebelumnya tamat
+      const prevUnit = uIdx > 0 ? sortedUnits[uIdx - 1] : null;
+      const prevUnitLevels = prevUnit ? levels.filter((l) => l.unit_id === prevUnit.id) : [];
+      const isPrevUnitFinished =
+        uIdx === 0 ||
+        (prevUnitLevels.length > 0 &&
+          prevUnitLevels.every((l) => userProgress[l.id]?.status === 'completed'));
 
-      map[lvl.id] = { isUnlocked, isCompleted };
+      unitLevels.forEach((lvl, idx) => {
+        const prog = userProgress[lvl.id];
+        const isCompleted = prog?.status === 'completed';
+
+        let isUnlocked = false;
+        if (isPrevUnitFinished) {
+          if (idx === 0) {
+            isUnlocked = true;
+          } else {
+            const prevLevel = unitLevels[idx - 1];
+            isUnlocked = userProgress[prevLevel.id]?.status === 'completed';
+          }
+        }
+
+        map[lvl.id] = { isUnlocked, isCompleted };
+      });
     });
 
     return map;
-  }, [levels, userProgress]);
+  }, [units, levels, userProgress]);
 
   // 4. Modal Handler Saat Klik Node
   const handleNodeClick = (level: TTSLevel, unit: TTSUnit) => {
@@ -473,10 +524,16 @@ export default function ThePathPage() {
           </button>
 
           {/* Koin */}
-          <div className="flex items-center gap-1.5 bg-[#1e293b] border-b-2 border-slate-950 px-3 py-1.5 rounded-xl text-xs font-black text-amber-400">
-            <Coins className="w-4 h-4 text-amber-400 fill-amber-500" />
+          <button
+            type="button"
+            onClick={() => setShowCoinModal(true)}
+            className="flex items-center gap-1.5 bg-[#1e293b] hover:bg-slate-800 border-b-2 border-slate-950 px-3 py-1.5 rounded-xl text-xs font-black text-amber-400 active:translate-y-0.5 transition-all shadow-sm cursor-pointer group"
+            title="Klik untuk info koin & cara mendapatkannya"
+          >
+            <Coins className="w-4 h-4 text-amber-400 fill-amber-500 group-hover:scale-110 transition-transform" />
             <span>{profile?.coins ?? 50}</span>
-          </div>
+            <span className="text-[10px] text-amber-300/70 font-bold ml-0.5">ℹ️</span>
+          </button>
 
           {/* Skor & Akses Papan Peringkat */}
           <button
@@ -1042,6 +1099,102 @@ export default function ThePathPage() {
                 </span>
               </div>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 4: INFO KOIN & SISTEM EKONOMI (PANDUAN PEMAIN)                */}
+      {/* ==================================================================== */}
+      {showCoinModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md animate-in fade-in">
+          <div className="w-full max-w-sm rounded-3xl p-5 bg-[#0f172a] border-2 border-amber-500/50 shadow-2xl text-slate-200 animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-2xl bg-amber-500/20 border border-amber-500/40 flex items-center justify-center text-amber-400 text-xl shadow-inner">
+                  🪙
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-white">Panduan Koin & Power-Up</h3>
+                  <p className="text-[11px] text-amber-400 font-bold">
+                    Koin Anda Saat Ini: <span className="font-mono">{profile?.coins ?? 0}</span> 🪙
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowCoinModal(false)}
+                className="w-8 h-8 rounded-xl bg-slate-800 hover:bg-slate-700 flex items-center justify-center text-slate-400 hover:text-white transition-colors"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="py-3 text-xs space-y-3">
+              {/* Jawaban Refill Koin */}
+              <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800">
+                <div className="flex items-center gap-1.5 text-amber-300 font-black mb-1">
+                  <span className="text-sm">❓</span>
+                  <span>Apakah Koin Refill Otomatis?</span>
+                </div>
+                <p className="text-slate-300 leading-relaxed text-[11px]">
+                  <b>Tidak.</b> Koin <i>tidak</i> bertambah otomatis per detik atau per menit. Koin adalah <b>mata uang hadiah prestasi</b> pemain.
+                </p>
+              </div>
+
+              {/* Cara Dapatkan Koin */}
+              <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-emerald-400 font-black">
+                  <Sparkles className="w-4 h-4 text-emerald-400" />
+                  <span>Cara Mendapatkan Koin:</span>
+                </div>
+                <ul className="text-[11px] text-slate-300 space-y-1 pl-1">
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>
+                      <b>Menamatkan level di peta:</b> Hadiah{' '}
+                      <span className="text-amber-400 font-black">+{settings?.coins_per_level || 20} Koin</span> setiap level selesai!
+                    </span>
+                  </li>
+                  <li className="flex items-start gap-1.5">
+                    <span className="text-emerald-400 font-bold">✓</span>
+                    <span>Menyelesaikan bab/pulau dan event spesial akhir pekan.</span>
+                  </li>
+                </ul>
+              </div>
+
+              {/* Kegunaan Koin */}
+              <div className="bg-slate-900/90 p-3 rounded-2xl border border-slate-800 space-y-1.5">
+                <div className="flex items-center gap-1.5 text-cyan-400 font-black">
+                  <Zap className="w-4 h-4 text-cyan-400" />
+                  <span>Kegunaan Koin:</span>
+                </div>
+                <ul className="text-[11px] text-slate-300 space-y-1 pl-1">
+                  <li>💡 <b>Hint ({settings?.hint_price_coins || 15}🪙)</b>: Buka 1 huruf acak pada kata aktif.</li>
+                  <li>❄️ <b>Freeze ({settings?.freeze_price_coins || 25}🪙)</b>: Bekukan pembusukan skor & timer ({settings?.freeze_duration_seconds || 10}s).</li>
+                  <li>❤️ <b>Refill Nyawa ({settings?.coins_refill_lives_price || 50}🪙)</b>: Isi penuh 5 nyawa di peta tanpa menunggu cooldown.</li>
+                </ul>
+              </div>
+
+              {/* Penjelasan Nyawa yang Otomatis Refill */}
+              <div className="bg-rose-950/30 p-2.5 rounded-xl border border-rose-800/40 text-[11px] text-rose-200 flex items-start gap-2">
+                <Heart className="w-4 h-4 text-rose-500 fill-rose-500 shrink-0 mt-0.5" />
+                <div>
+                  <b className="text-rose-400">Pemberitahuan Regenerasi Nyawa:</b>
+                  <p className="mt-0.5 text-slate-300">
+                    Yang terisi otomatis adalah <b>Nyawa (❤️)</b>, yaitu <b>+1 nyawa setiap {settings?.life_regen_minutes || 15} menit</b> jika berkurang atau habis.
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowCoinModal(false)}
+              className="w-full py-3 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs shadow-md transition-all active:translate-y-0.5 border-b-2 border-amber-700 active:border-b-0"
+            >
+              Saya Mengerti & Lanjut Bertualang
+            </button>
           </div>
         </div>
       )}

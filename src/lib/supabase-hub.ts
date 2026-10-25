@@ -137,6 +137,14 @@ export interface HallOfFameEntry {
   archived_at: string;
 }
 
+export interface BannedUser {
+  id: string;
+  email: string;
+  user_id: string | null;
+  reason: string;
+  banned_at: string;
+}
+
 // ============================================================================
 // FACTORY FUNCTION: KLIEN BROWSER SUPABASE HUB (CLIENT COMPONENT SAFE)
 // ============================================================================

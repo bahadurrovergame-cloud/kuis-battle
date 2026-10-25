@@ -58,16 +58,31 @@ export async function startLevelSessionAction({ levelId }: { levelId: string }):
     // 3. Buat Cryptographic HMAC Token yang memuat timestamp server terverifikasi
     const sessionToken = createGameSessionToken(user.id, levelId);
 
-    // 4. Inisialisasi progress awal jika belum ada
-    await supabase.from('tts_user_progress').upsert(
-      {
+    // 4. Inisialisasi progress awal (HANYA jika belum ada atau statusnya bukan 'completed')
+    const { data: existingProg } = await supabase
+      .from('tts_user_progress')
+      .select('status')
+      .eq('user_id', user.id)
+      .eq('level_id', levelId)
+      .maybeSingle();
+
+    if (!existingProg) {
+      await supabase.from('tts_user_progress').insert({
         user_id: user.id,
         level_id: levelId,
         status: 'in_progress',
         updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id,level_id' }
-    );
+      });
+    } else if (existingProg.status !== 'completed') {
+      await supabase
+        .from('tts_user_progress')
+        .update({
+          status: 'in_progress',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id)
+        .eq('level_id', levelId);
+    }
 
     return {
       success: true,
@@ -228,14 +243,17 @@ export async function submitWordAction({
     const finalEarnedScore = Math.round(netPoints * newCombo);
 
     // 8. Update Progress di Database secara Atomik
-    completedWords.push(wordId);
+    if (!completedWords.includes(wordId)) {
+      completedWords.push(wordId);
+    }
     const currentTotalScore = (existingProg?.score_earned || 0) + finalEarnedScore;
+    const targetStatus = existingProg?.status === 'completed' ? 'completed' : 'in_progress';
 
     await supabase.from('tts_user_progress').upsert(
       {
         user_id: user.id,
         level_id: levelId,
-        status: 'in_progress',
+        status: targetStatus,
         completed_words: completedWords,
         score_earned: currentTotalScore,
         combo_multiplier: newCombo,
@@ -275,6 +293,8 @@ export async function completeLevelAction({
   scoreEarned?: number;
   coinsEarned?: number;
   totalScoreNow?: number;
+  nextLevelId?: string;
+  isAlreadyCompleted?: boolean;
   error?: string;
   isCheatDetected?: boolean;
 }> {
@@ -318,7 +338,7 @@ export async function completeLevelAction({
       .select('*')
       .eq('user_id', user.id)
       .eq('level_id', levelId)
-      .single();
+      .maybeSingle();
 
     if (!prog) {
       return { success: false, error: 'Progress level pemain tidak ditemukan' };
@@ -337,18 +357,18 @@ export async function completeLevelAction({
     }
 
     // VALIDASI INTEGRITAS 2: Speedhack Prevention (Batas Fisik Kecepatan Manusia)
-    // Manusia membaca soal dan mengetik minimal 1.5 detik per kata.
-    const minPhysicalHumanSeconds = Math.max(3, Math.floor(dbWords.length * 1.5));
-    if (realElapsedSeconds < minPhysicalHumanSeconds) {
+    // Toleran untuk pemain yang me-reload halaman atau menyelesaikan kata terakhir.
+    const prevTimeTaken = prog.time_taken_seconds || 0;
+    const totalEffectiveTime = Math.max(realElapsedSeconds, prevTimeTaken);
+    if (totalEffectiveTime < 2 && dbWords.length > 2 && prog.status !== 'completed') {
       return {
         success: false,
-        error: `Speedhack Anomaly: Waktu tempuh (${realElapsedSeconds}s) mustahil diselesaikan secara fisik oleh manusia untuk ${dbWords.length} kata.`,
+        error: `Speedhack Anomaly: Waktu tempuh (${totalEffectiveTime}s) terlalu cepat untuk ${dbWords.length} kata.`,
         isCheatDetected: true,
       };
     }
 
     // VALIDASI INTEGRITAS 3: Cegah Injeksi Skor (Payload Tampering)
-    // Skor tidak boleh melebihi batas teoretis maksimal: total poin dasar kata x 3.0 (max combo)
     const totalBasePoints = dbWords.reduce((sum, w) => sum + (w.points || 100), 0);
     const maxTheoreticalScore = Math.round(totalBasePoints * 3.0);
     const scoreEarned = prog.score_earned || 0;
@@ -370,33 +390,37 @@ export async function completeLevelAction({
 
     const coinsReward = setts?.coins_per_level || 20;
     const currentSeason = setts?.current_season || 1;
+    const isFirstTimeCompletion = prog.status !== 'completed';
 
     // 6. Update Status Progress Level Menjadi Completed
-    await supabase
+    const dbClient = isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)
+      ? createHubAdminClient()
+      : supabase;
+
+    await dbClient
       .from('tts_user_progress')
       .update({
         status: 'completed',
-        time_taken_seconds: realElapsedSeconds,
+        time_taken_seconds: Math.max(realElapsedSeconds, prevTimeTaken),
         completed_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
       .eq('user_id', user.id)
       .eq('level_id', levelId);
 
-    // 7. Tambahkan Koin & Skor ke Profil Pemain (Gunakan service role jika ada, atau session server client)
-    const dbClient = isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)
-      ? createHubAdminClient()
-      : supabase;
-
+    // 7. Tambahkan Koin & Skor ke Profil Pemain (HANYA jika belum pernah completed sebelumnya)
+    let coinsEarnedThisRun = 0;
     const { data: prof } = await dbClient
       .from('profiles')
       .select('coins, total_score')
       .eq('id', user.id)
       .single();
 
-    const currentTotalScore = (prof?.total_score || 0) + scoreEarned;
+    let currentTotalScore = prof?.total_score || 0;
 
-    if (prof) {
+    if (prof && isFirstTimeCompletion) {
+      coinsEarnedThisRun = coinsReward;
+      currentTotalScore += scoreEarned;
       await dbClient
         .from('profiles')
         .update({
@@ -407,39 +431,167 @@ export async function completeLevelAction({
         .eq('id', user.id);
     }
 
-    // 8. Update Klasemen Realtime (tts_leaderboard)
-    const { data: leaderRow } = await dbClient
-      .from('tts_leaderboard')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('season_number', currentSeason)
+    // 8. Update Klasemen Realtime (tts_leaderboard) jika penyelesaian baru
+    if (isFirstTimeCompletion) {
+      const { data: leaderRow } = await dbClient
+        .from('tts_leaderboard')
+        .select('*')
+        .eq('user_id', user.id)
+        .eq('season_number', currentSeason)
+        .maybeSingle();
+
+      const prevScore = leaderRow?.total_score || 0;
+      const prevTime = leaderRow?.total_time_taken || 0;
+      const prevLevels = leaderRow?.levels_completed || 0;
+
+      await dbClient.from('tts_leaderboard').upsert(
+        {
+          user_id: user.id,
+          season_number: currentSeason,
+          total_score: prevScore + scoreEarned,
+          total_time_taken: prevTime + realElapsedSeconds,
+          levels_completed: prevLevels + 1,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,season_number' }
+      );
+    }
+
+    // 9. Cari Next Level ID untuk navigasi langsung ke level selanjutnya
+    let nextLevelId: string | null = null;
+    const { data: currentLvl } = await dbClient
+      .from('tts_levels')
+      .select('id, level_number, unit_id')
+      .eq('id', levelId)
       .maybeSingle();
 
-    const prevScore = leaderRow?.total_score || 0;
-    const prevTime = leaderRow?.total_time_taken || 0;
-    const prevLevels = leaderRow?.levels_completed || 0;
+    if (currentLvl) {
+      // Cari level berikutnya di unit yang sama
+      const { data: nextInUnit } = await dbClient
+        .from('tts_levels')
+        .select('id')
+        .eq('unit_id', currentLvl.unit_id)
+        .eq('status', 'published')
+        .gt('level_number', currentLvl.level_number)
+        .order('level_number', { ascending: true })
+        .limit(1)
+        .maybeSingle();
 
-    await dbClient.from('tts_leaderboard').upsert(
-      {
-        user_id: user.id,
-        season_number: currentSeason,
-        total_score: prevScore + scoreEarned,
-        total_time_taken: prevTime + realElapsedSeconds,
-        levels_completed: prevLevels + 1,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: 'user_id,season_number' }
-    );
+      if (nextInUnit) {
+        nextLevelId = nextInUnit.id;
+      } else {
+        // Cari level pertama di unit selanjutnya
+        const { data: currentUnit } = await dbClient
+          .from('tts_units')
+          .select('unit_number')
+          .eq('id', currentLvl.unit_id)
+          .maybeSingle();
+
+        if (currentUnit) {
+          const { data: nextUnit } = await dbClient
+            .from('tts_units')
+            .select('id')
+            .eq('is_active', true)
+            .gt('unit_number', currentUnit.unit_number)
+            .order('unit_number', { ascending: true })
+            .limit(1)
+            .maybeSingle();
+
+          if (nextUnit) {
+            const { data: firstLvlNextUnit } = await dbClient
+              .from('tts_levels')
+              .select('id')
+              .eq('unit_id', nextUnit.id)
+              .eq('status', 'published')
+              .order('level_number', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+
+            if (firstLvlNextUnit) {
+              nextLevelId = firstLvlNextUnit.id;
+            }
+          }
+        }
+      }
+    }
 
     return {
       success: true,
       scoreEarned,
-      coinsEarned: coinsReward,
+      coinsEarned: coinsEarnedThisRun,
       totalScoreNow: currentTotalScore,
+      nextLevelId: nextLevelId || undefined,
+      isAlreadyCompleted: !isFirstTimeCompletion,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Gagal menyelesaikan level';
     return { success: false, error: msg };
+  }
+}
+
+/**
+ * Self-Healing Progress: Menyinkronkan status level yang seluruh katanya sudah lengkap
+ * agar pulau dan path segera mencerminkan status tamat dan membuka level berikutnya.
+ */
+export async function syncCompletedLevelsAction(): Promise<{ success: boolean; syncedCount: number }> {
+  try {
+    const supabase = await createHubServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return { success: false, syncedCount: 0 };
+
+    const { data: progressRows } = await supabase
+      .from('tts_user_progress')
+      .select('*')
+      .eq('user_id', user.id)
+      .neq('status', 'completed');
+
+    if (!progressRows || progressRows.length === 0) {
+      return { success: true, syncedCount: 0 };
+    }
+
+    const { data: allWords } = await supabase
+      .from('tts_words')
+      .select('id, level_id');
+
+    if (!allWords || allWords.length === 0) return { success: true, syncedCount: 0 };
+
+    const wordsByLevel: Record<string, string[]> = {};
+    allWords.forEach((w) => {
+      if (!wordsByLevel[w.level_id]) wordsByLevel[w.level_id] = [];
+      wordsByLevel[w.level_id].push(w.id);
+    });
+
+    let syncedCount = 0;
+    const dbClient = isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)
+      ? createHubAdminClient()
+      : supabase;
+
+    for (const prog of progressRows) {
+      const levelWordIds = wordsByLevel[prog.level_id] || [];
+      const completedWords: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
+
+      if (levelWordIds.length > 0 && levelWordIds.every((wid) => completedWords.includes(wid))) {
+        await dbClient
+          .from('tts_user_progress')
+          .update({
+            status: 'completed',
+            completed_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .eq('level_id', prog.level_id);
+
+        syncedCount++;
+      }
+    }
+
+    return { success: true, syncedCount };
+  } catch (err) {
+    console.error('Error syncing completed levels:', err);
+    return { success: false, syncedCount: 0 };
   }
 }
 
@@ -468,7 +620,7 @@ export async function useHintAction({
 
     const { data: setts } = await supabase
       .from('game_settings')
-      .select('hint_price_coins')
+      .select('hint_price_coins, coins_per_level')
       .eq('id', 1)
       .maybeSingle();
 
@@ -484,7 +636,10 @@ export async function useHintAction({
       .single();
 
     if (!prof || prof.coins < price) {
-      return { success: false, error: `Koin tidak mencukupi (${prof?.coins ?? 0}/${price} Koin)` };
+      return {
+        success: false,
+        error: `Koin tidak mencukupi (${prof?.coins ?? 0}/${price} 🪙). Selesaikan level di peta petualangan untuk mendapatkan +${setts?.coins_per_level || 20} Koin per level!`,
+      };
     }
 
     const newCoins = prof.coins - price;
@@ -522,7 +677,7 @@ export async function useFreezeAction({
 
     const { data: setts } = await supabase
       .from('game_settings')
-      .select('freeze_price_coins, freeze_duration_seconds')
+      .select('freeze_price_coins, freeze_duration_seconds, coins_per_level')
       .eq('id', 1)
       .maybeSingle();
 
@@ -539,7 +694,10 @@ export async function useFreezeAction({
       .single();
 
     if (!prof || prof.coins < price) {
-      return { success: false, error: `Koin tidak mencukupi (${prof?.coins ?? 0}/${price} Koin)` };
+      return {
+        success: false,
+        error: `Koin tidak mencukupi (${prof?.coins ?? 0}/${price} 🪙). Selesaikan level di peta petualangan untuk mendapatkan +${setts?.coins_per_level || 20} Koin per level!`,
+      };
     }
 
     const newCoins = prof.coins - price;

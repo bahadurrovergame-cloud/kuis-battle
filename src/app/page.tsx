@@ -284,7 +284,7 @@ export default function GameHubLobby() {
               Ruang Peserta Kuis
             </a>
             <span className="text-slate-600">•</span>
-            <a href="/login-kuis" className="text-blue-400 hover:text-blue-300 font-black transition-colors flex items-center gap-1">
+            <a href="/battle/login" className="text-blue-400 hover:text-blue-300 font-black transition-colors flex items-center gap-1">
               <Shield className="w-3.5 h-3.5" />
               <span>Login Kru Kuis Battle</span>
             </a>

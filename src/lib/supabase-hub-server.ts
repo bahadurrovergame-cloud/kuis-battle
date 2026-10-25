@@ -40,12 +40,31 @@ export async function createHubServerClient(): Promise<SupabaseClient> {
  * Helper untuk memvalidasi apakah kunci Service Role asli (bukan placeholder atau anon key).
  */
 export function isRealServiceRoleKey(key?: string): boolean {
-  return Boolean(
-    key &&
-    key.startsWith('ey') &&
-    !key.includes('isi_dengan') &&
-    key !== hubAnonKey
-  );
+  if (!key || typeof key !== 'string') return false;
+  if (key.includes('isi_dengan') || key.includes('placeholder')) return false;
+  if (!key.startsWith('ey')) return false;
+  if (key === hubAnonKey) return false;
+
+  try {
+    const parts = key.split('.');
+    if (parts.length === 3) {
+      const payloadStr = Buffer.from(parts[1], 'base64').toString('utf-8');
+      const payload = JSON.parse(payloadStr);
+      // Hanya terima token dengan role 'service_role' asli
+      if (payload.role !== 'service_role') {
+        return false;
+      }
+      // Pastikan project ref cocok dengan project Hub
+      const hubRef = hubUrl.replace('https://', '').split('.')[0];
+      if (payload.ref && hubRef && payload.ref !== hubRef) {
+        return false;
+      }
+    }
+  } catch {
+    return false;
+  }
+
+  return true;
 }
 
 /**

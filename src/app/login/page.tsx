@@ -207,9 +207,10 @@ function LoginContent() {
 
       const supabase = createHubBrowserClient();
       
-      // PERBAIKAN: Arahkan ke callback dulu agar token diproses (PKCE), baru dilempar ke reset-password
+      // Dynamic origin agar cocok baik saat running di localhost:3000 maupun di domain production
+      const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
-        redirectTo: 'https://kuis-battle.vercel.app/auth/callback?next=/reset-password',
+        redirectTo: `${origin}/auth/callback?next=/reset-password`,
       });
 
       if (error) {
@@ -527,7 +528,7 @@ function LoginContent() {
                     <Sparkles className="w-3.5 h-3.5" /> Info Pengembang & Admin:
                   </p>
                   <p className="text-slate-300">
-                    Layanan email default Supabase Free dibatasi 3 email/jam. Anda juga dapat mereset kata sandi akun secara instan langsung dari <strong>Supabase Dashboard &rarr; Authentication &rarr; Users</strong> tanpa perlu menunggu email.
+                    Jika Anda tidak menerima email reset, periksa folder Spam/Promosi. Jika masih tidak ada, kemungkinan kuota email Supabase Free habis (maksimal 3 email per jam). Silakan tunggu beberapa menit sebelum mencoba lagi, atau hubungi admin untuk bantuan.
                   </p>
                 </div>
 
@@ -557,6 +558,7 @@ function LoginContent() {
         )}
 
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
+          
           <a
             href="/"
             className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold"

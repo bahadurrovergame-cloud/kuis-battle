@@ -34,7 +34,7 @@ export function getGeminiModel(customModel?: string) {
   const modelName =
     customModel ||
     process.env.GEMINI_MODEL ||
-    'gemini-1.5-flash';
+    'gemini-3.5-flash-lite';
 
   return google(modelName);
 }
@@ -214,12 +214,35 @@ SYARAT FORMAT OUTPUT (WAJIB DIPATUHI SECARA KETAT):
   }
 ]`;
 
-  const result = await generateText({
-    model,
-    prompt,
-  });
+  const candidateModels = [
+    'gemini-3.5-flash-lite',
+    'gemini-3.5-flash',
+    'gemini-flash-latest',
+  ];
 
-  const parsed = cleanAndParseJson<GeneratedQuestion[]>(result.text);
+  let parsed: GeneratedQuestion[] | null = null;
+  let lastError: unknown = null;
+
+  for (const m of candidateModels) {
+    try {
+      const activeModel = getGeminiModel(m);
+      const result = await generateText({
+        model: activeModel,
+        prompt,
+        abortSignal: AbortSignal.timeout(12000),
+      });
+      parsed = cleanAndParseJson<GeneratedQuestion[]>(result.text);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        break;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+  }
+
+  if (!parsed || !Array.isArray(parsed)) {
+    throw lastError || new Error('Hasil AI bukan berupa array JSON yang valid');
+  }
 
   if (!Array.isArray(parsed)) {
     throw new Error('Hasil AI bukan berupa array JSON yang valid');

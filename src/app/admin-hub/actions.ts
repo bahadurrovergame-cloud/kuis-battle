@@ -5,7 +5,7 @@ import {
   createHubServerClient,
   isRealServiceRoleKey,
 } from '@/lib/supabase-hub-server';
-import { TTSUnit } from '@/lib/supabase-hub';
+import { TTSUnit, Profile, BannedUser } from '@/lib/supabase-hub';
 
 /**
  * Mendapatkan Supabase client terbaik untuk operasi admin:
@@ -205,3 +205,540 @@ export async function createUnitAction(payload: {
   }
 }
 
+
+/**
+ * Perbarui Data Pulau Tematik (Edit Unit).
+ */
+export async function updateUnitAction(payload: {
+  id: string;
+  unit_number: number;
+  title: string;
+  description: string;
+  theme_color: string;
+  is_special_event: boolean;
+  is_active?: boolean;
+}): Promise<{
+  success: boolean;
+  unit?: TTSUnit;
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+    const { data, error } = await supabaseAdmin
+      .from('tts_units')
+      .update({
+        unit_number: payload.unit_number,
+        title: payload.title.trim(),
+        description: payload.description.trim(),
+        theme_color: payload.theme_color,
+        is_special_event: payload.is_special_event,
+        is_active: payload.is_active !== undefined ? payload.is_active : true,
+      })
+      .eq('id', payload.id)
+      .select()
+      .single();
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, unit: data as TTSUnit };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Gagal memperbarui data pulau.' };
+  }
+}
+
+/**
+ * Hapus Pulau Tematik (Cascade Hapus Level & Soal Terkait).
+ */
+export async function deleteUnitAction(unitId: string): Promise<{
+  success: boolean;
+  units?: TTSUnit[];
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+    const { error } = await supabaseAdmin
+      .from('tts_units')
+      .delete()
+      .eq('id', unitId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    // Ambil sisa pulau dan rapikan nomornya secara berurutan (1, 2, 3...)
+    const { data: remainingUnits } = await supabaseAdmin
+      .from('tts_units')
+      .select('id')
+      .order('unit_number', { ascending: true });
+
+    if (remainingUnits && remainingUnits.length > 0) {
+      const remainingIds = remainingUnits.map((u) => u.id);
+      // Fase 1: Set negatif sementara agar tidak tabrakan unique constraint
+      for (let i = 0; i < remainingIds.length; i++) {
+        await supabaseAdmin.from('tts_units').update({ unit_number: -(i + 1) }).eq('id', remainingIds[i]);
+      }
+      // Fase 2: Set positif berurutan (1, 2, 3...)
+      for (let i = 0; i < remainingIds.length; i++) {
+        await supabaseAdmin.from('tts_units').update({ unit_number: i + 1 }).eq('id', remainingIds[i]);
+      }
+    }
+
+    const { data: updatedUnits } = await supabaseAdmin
+      .from('tts_units')
+      .select('*')
+      .order('unit_number', { ascending: true });
+
+    return { success: true, units: (updatedUnits as TTSUnit[]) || [] };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Gagal menghapus pulau.' };
+  }
+}
+
+/**
+ * Menyusun ulang nomor urutan Pulau/Unit Tematik (Reorder / Drag & Drop).
+ * Menggunakan pendekatan 2-fase (negatif lalu positif) untuk menghindari tabrakan
+ * unique constraint "tts_units_unit_number_key" pada PostgreSQL.
+ */
+export async function reorderUnitsAction(unitIdsInOrder: string[]): Promise<{
+  success: boolean;
+  units?: TTSUnit[];
+  error?: string;
+}> {
+  try {
+    if (!unitIdsInOrder || unitIdsInOrder.length === 0) {
+      return { success: false, error: 'Daftar ID pulau kosong' };
+    }
+
+    const supabaseAdmin = await getEffectiveAdminClient();
+
+    // Fase 1: Ubah ke nilai negatif sementara agar tidak melanggar unique constraint
+    for (let i = 0; i < unitIdsInOrder.length; i++) {
+      const id = unitIdsInOrder[i];
+      const tempNumber = -(i + 1);
+      const { error: phase1Err } = await supabaseAdmin
+        .from('tts_units')
+        .update({ unit_number: tempNumber })
+        .eq('id', id);
+
+      if (phase1Err) {
+        return { success: false, error: `Fase 1 gagal: ${phase1Err.message}` };
+      }
+    }
+
+    // Fase 2: Tetapkan nomor urut baru yang rapi (1, 2, 3...)
+    for (let i = 0; i < unitIdsInOrder.length; i++) {
+      const id = unitIdsInOrder[i];
+      const newNumber = i + 1;
+      const { error: phase2Err } = await supabaseAdmin
+        .from('tts_units')
+        .update({ unit_number: newNumber })
+        .eq('id', id);
+
+      if (phase2Err) {
+        return { success: false, error: `Fase 2 gagal: ${phase2Err.message}` };
+      }
+    }
+
+    // Ambil daftar pulau terbaru yang sudah berurutan
+    const { data: updatedUnits, error: fetchErr } = await supabaseAdmin
+      .from('tts_units')
+      .select('*')
+      .order('unit_number', { ascending: true });
+
+    if (fetchErr) {
+      return { success: false, error: fetchErr.message };
+    }
+
+    return { success: true, units: (updatedUnits as TTSUnit[]) || [] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal menyusun ulang urutan pulau.';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Hapus Level TTS beserta seluruh kata soal dan progress user terkait.
+ */
+export async function deleteLevelAction(levelId: string): Promise<{
+  success: boolean;
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+    await supabaseAdmin.from('tts_user_progress').delete().eq('level_id', levelId);
+    await supabaseAdmin.from('tts_words').delete().eq('level_id', levelId);
+    const { error } = await supabaseAdmin.from('tts_levels').delete().eq('id', levelId);
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Gagal menghapus level.' };
+  }
+}
+
+/**
+ * Mengambil daftar pemain yang diblokir oleh sistem Anti-Cheat.
+ */
+export async function getBannedUsersAction(): Promise<{
+  success: boolean;
+  bannedUsers?: BannedUser[];
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+    const { data, error } = await supabaseAdmin
+      .from('banned_users')
+      .select('*')
+      .order('banned_at', { ascending: false });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, bannedUsers: (data as BannedUser[]) || [] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal memuat daftar pemain diblokir.';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Buka blokir beberapa pemain sekaligus (Bulk Unban).
+ */
+export async function unbanMultipleEmailsAction(emails: string[]): Promise<{
+  success: boolean;
+  count?: number;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const cleanEmails = emails.map((e) => e.trim().toLowerCase()).filter(Boolean);
+    if (cleanEmails.length === 0) {
+      return { success: false, error: 'Pilih minimal satu pemain untuk dibuka blokirnya.' };
+    }
+
+    const supabaseAdmin = await getEffectiveAdminClient();
+
+    // 1. Hapus dari tabel banned_users
+    const { error: delErr } = await supabaseAdmin
+      .from('banned_users')
+      .delete()
+      .in('email', cleanEmails);
+
+    if (delErr) {
+      return { success: false, error: delErr.message };
+    }
+
+    // 2. Bersihkan dari auth.users jika service role tersedia
+    if (isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)) {
+      try {
+        const adminAuth = createHubAdminClient();
+        const { data: usersData } = await adminAuth.auth.admin.listUsers();
+        if (usersData?.users) {
+          for (const user of usersData.users) {
+            if (user.email && cleanEmails.includes(user.email.toLowerCase())) {
+              await adminAuth.auth.admin.deleteUser(user.id);
+            }
+          }
+        }
+      } catch (authErr) {
+        console.warn('[Admin Unban] Error deleting from auth.users:', authErr);
+      }
+    }
+
+    return {
+      success: true,
+      count: cleanEmails.length,
+      message: `${cleanEmails.length} pemain berhasil dibuka blokirnya (unban).`,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal membuka blokir pemain.';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Mengambil daftar pemain untuk kelola koin dan poin.
+ */
+export async function getPlayersListAction(search = ''): Promise<{
+  success: boolean;
+  players?: Profile[];
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+    let query = supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .order('total_score', { ascending: false })
+      .limit(100);
+
+    if (search.trim()) {
+      query = query.ilike('username', `%${search.trim()}%`);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      return { success: false, error: error.message };
+    }
+
+    return { success: true, players: (data as Profile[]) || [] };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal memuat daftar pemain.';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Suntik / Atur Poin Skor, Koin, dan Nyawa Pemain (atau Admin Sendiri).
+ */
+export async function adjustPlayerResourcesAction(payload: {
+  userId: string;
+  addCoins?: number;
+  addScore?: number;
+  setCoins?: number;
+  setScore?: number;
+  setLives?: number;
+}): Promise<{
+  success: boolean;
+  profile?: Profile;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+
+    // 1. Ambil profil user saat ini
+    const { data: prof, error: getErr } = await supabaseAdmin
+      .from('profiles')
+      .select('*')
+      .eq('id', payload.userId)
+      .single();
+
+    if (getErr || !prof) {
+      return { success: false, error: 'Profil pemain tidak ditemukan.' };
+    }
+
+    const newCoins =
+      payload.setCoins !== undefined
+        ? Math.max(0, payload.setCoins)
+        : Math.max(0, (prof.coins || 0) + (payload.addCoins || 0));
+
+    const newScore =
+      payload.setScore !== undefined
+        ? Math.max(0, payload.setScore)
+        : Math.max(0, (prof.total_score || 0) + (payload.addScore || 0));
+
+    const maxLives = prof.max_lives || 5;
+    const newLives =
+      payload.setLives !== undefined
+        ? Math.min(maxLives, Math.max(0, payload.setLives))
+        : prof.lives;
+
+    // 2. Simpan ke database
+    const { data: updatedProf, error: updErr } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        coins: newCoins,
+        total_score: newScore,
+        lives: newLives,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', payload.userId)
+      .select()
+      .single();
+
+    if (updErr || !updatedProf) {
+      return { success: false, error: updErr?.message || 'Gagal menyimpan perubahan pemain.' };
+    }
+
+    // 3. Sinkronisasi ke tts_leaderboard jika skor berubah
+    if (payload.addScore || payload.setScore !== undefined) {
+      const { data: setts } = await supabaseAdmin
+        .from('game_settings')
+        .select('current_season')
+        .eq('id', 1)
+        .maybeSingle();
+
+      const seasonNum = setts?.current_season || 1;
+
+      await supabaseAdmin.from('tts_leaderboard').upsert(
+        {
+          user_id: payload.userId,
+          season_number: seasonNum,
+          total_score: newScore,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,season_number' }
+      );
+    }
+
+    return {
+      success: true,
+      profile: updatedProf as Profile,
+      message: `Berhasil memperbarui data @${prof.username}: 🪙 ${newCoins} Koin, ⭐ ${newScore} Skor, ❤️ ${newLives} Nyawa.`,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal menyesuaikan sumber daya pemain.';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Mengambil statistik kata yang sudah ada untuk filter anti-duplikat.
+ */
+export async function getExistingWordsStatsAction(): Promise<{
+  success: boolean;
+  totalWords: number;
+  publishedWords: number;
+  wordList?: string[];
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+    const { data: publishedLevels } = await supabaseAdmin
+      .from('tts_levels')
+      .select('id')
+      .eq('status', 'published');
+
+    const publishedIds = new Set((publishedLevels || []).map((l) => l.id));
+
+    const { data: allWords } = await supabaseAdmin
+      .from('tts_words')
+      .select('word, level_id');
+
+    const total = allWords?.length || 0;
+    const published = (allWords || []).filter((w) => publishedIds.has(w.level_id)).length;
+    const uniqueWords = Array.from(new Set((allWords || []).map((w) => w.word.toUpperCase().trim())));
+
+    return {
+      success: true,
+      totalWords: total,
+      publishedWords: published,
+      wordList: uniqueWords,
+    };
+  } catch {
+    return { success: false, totalWords: 0, publishedWords: 0 };
+  }
+}
+
+/**
+ * Menghapus akun dan data pemain secara permanen oleh Admin.
+ */
+export async function deletePlayerAction(targetUserId: string): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    const supabaseServer = await createHubServerClient();
+    const {
+      data: { user },
+    } = await supabaseServer.auth.getUser();
+
+    if (!user) return { success: false, error: 'Unauthorized: Sesi login tidak valid.' };
+
+    // 1. Verifikasi bahwa penyeru adalah Admin
+    const { data: adminProf } = await supabaseServer
+      .from('profiles')
+      .select('role')
+      .eq('id', user.id)
+      .single();
+
+    if (adminProf?.role !== 'admin') {
+      return { success: false, error: 'Akses Ditolak: Hanya Admin yang dapat menghapus pemain.' };
+    }
+
+    if (user.id === targetUserId) {
+      return { success: false, error: 'Tidak dapat menghapus akun Anda sendiri.' };
+    }
+
+    const { data: targetProf } = await supabaseServer
+      .from('profiles')
+      .select('username')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    const targetUsername = targetProf?.username || 'pemain';
+
+    // 2. Eksekusi penghapusan akun auth jika service role tersedia
+    if (isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)) {
+      const adminAuth = createHubAdminClient();
+      await adminAuth.auth.admin.deleteUser(targetUserId).catch(() => {});
+    }
+
+    // 3. Hapus data game dan profil pemain
+    const dbClient = await getEffectiveAdminClient();
+    await dbClient.from('tts_user_progress').delete().eq('user_id', targetUserId);
+    await dbClient.from('tts_leaderboard').delete().eq('user_id', targetUserId);
+    const { error: delErr } = await dbClient.from('profiles').delete().eq('id', targetUserId);
+
+    if (delErr) {
+      return { success: false, error: delErr.message };
+    }
+
+    return {
+      success: true,
+      message: `Pemain @${targetUsername} berhasil dihapus permanen dari sistem.`,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal menghapus pemain.';
+    return { success: false, error: msg };
+  }
+}
+
+/**
+ * Sinkronisasi klasemen: memastikan profil pemain yang memiliki skor tercatat di tabel tts_leaderboard.
+ */
+export async function syncLeaderboardAction(): Promise<{
+  success: boolean;
+  syncedCount?: number;
+  error?: string;
+}> {
+  try {
+    const supabaseAdmin = await getEffectiveAdminClient();
+
+    // 1. Ambil Season aktif
+    const { data: setts } = await supabaseAdmin
+      .from('game_settings')
+      .select('current_season')
+      .eq('id', 1)
+      .maybeSingle();
+
+    const currentSeason = setts?.current_season || 1;
+
+    // 2. Ambil seluruh profil pemain
+    const { data: profs } = await supabaseAdmin
+      .from('profiles')
+      .select('id, username, total_score');
+
+    if (!profs || profs.length === 0) {
+      return { success: true, syncedCount: 0 };
+    }
+
+    let count = 0;
+    for (const p of profs) {
+      const score = p.total_score || 0;
+      await supabaseAdmin.from('tts_leaderboard').upsert(
+        {
+          user_id: p.id,
+          season_number: currentSeason,
+          total_score: score,
+          levels_completed: score > 0 ? 1 : 0,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,season_number' }
+      );
+      count++;
+    }
+
+    return { success: true, syncedCount: count };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal menyinkronkan klasemen.';
+    return { success: false, error: msg };
+  }
+}

@@ -45,6 +45,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { GeneratedQuestion } from '@/lib/gemini';
+import NumericInput from '@/components/NumericInput';
 
 interface Category {
   id: string;
@@ -188,7 +189,7 @@ export default function AdminDashboardPage() {
   useEffect(() => {
     const role = sessionStorage.getItem('auth_role');
     if (role !== 'admin') {
-      router.push('/login');
+      router.push('/battle/login');
     } else {
       queueMicrotask(() => {
         setIsAuthorized(true);
@@ -874,6 +875,9 @@ export default function AdminDashboardPage() {
     setAiGenError('');
     setIsAiGenerating(true);
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+
       const res = await fetch('/api/ai/generate-soal', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -893,7 +897,10 @@ export default function AdminDashboardPage() {
                 .slice(0, 20)
             : [],
         }),
+        signal: controller.signal,
       });
+
+      clearTimeout(timeoutId);
 
       const data = await res.json();
       if (!data.success) {
@@ -902,7 +909,11 @@ export default function AdminDashboardPage() {
       setAiGeneratedQuestions(data.questions || []);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
-      setAiGenError(`Gagal membuat soal: ${msg}`);
+      if (msg.toLowerCase().includes('abort')) {
+        setAiGenError('Proses AI melebihi batas waktu (25 detik). Silakan coba klik generate lagi.');
+      } else {
+        setAiGenError(`Gagal membuat soal: ${msg}`);
+      }
     } finally {
       setIsAiGenerating(false);
     }
@@ -1293,7 +1304,7 @@ export default function AdminDashboardPage() {
           <button
             onClick={() => {
               sessionStorage.clear();
-              router.push('/login');
+              router.push('/battle/login');
             }}
             className="p-2 text-slate-400 hover:text-rose-400 rounded-xl bg-slate-900 border border-slate-800 transition-all"
             title="Keluar"
@@ -2552,12 +2563,12 @@ export default function AdminDashboardPage() {
                   <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
                     Durasi Timer (Detik)
                   </label>
-                  <input
-                    type="number"
+                  <NumericInput
                     min={5}
                     max={180}
+                    fallback={30}
                     value={formData.timer_duration}
-                    onChange={(e) => setFormData({ ...formData, timer_duration: Number(e.target.value) })}
+                    onChange={(val) => setFormData({ ...formData, timer_duration: val })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
@@ -2565,13 +2576,12 @@ export default function AdminDashboardPage() {
                   <label className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">
                     Poin Nilai
                   </label>
-                  <input
-                    type="number"
+                  <NumericInput
                     min={10}
                     max={1000}
-                    step={10}
+                    fallback={100}
                     value={formData.points}
-                    onChange={(e) => setFormData({ ...formData, points: Number(e.target.value) })}
+                    onChange={(val) => setFormData({ ...formData, points: val })}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
@@ -2683,19 +2693,20 @@ export default function AdminDashboardPage() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs font-bold text-slate-400 block mb-1">Jumlah Anggota</label>
-                  <input
-                    type="number"
+                  <NumericInput
+                    min={1}
+                    fallback={3}
                     value={teamFormMemberCount}
-                    onChange={(e) => setTeamFormMemberCount(Number(e.target.value))}
+                    onChange={setTeamFormMemberCount}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-slate-400 block mb-1">Skor Awal</label>
-                  <input
-                    type="number"
+                  <NumericInput
+                    fallback={0}
                     value={teamFormScore}
-                    onChange={(e) => setTeamFormScore(Number(e.target.value))}
+                    onChange={setTeamFormScore}
                     className="w-full bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
@@ -2890,10 +2901,11 @@ export default function AdminDashboardPage() {
                   <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
                     Nilai Poin
                   </label>
-                  <input
-                    type="number"
+                  <NumericInput
+                    min={10}
+                    fallback={100}
                     value={aiPoints}
-                    onChange={(e) => setAiPoints(Number(e.target.value))}
+                    onChange={setAiPoints}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>
@@ -2901,10 +2913,11 @@ export default function AdminDashboardPage() {
                   <label className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-1.5">
                     Durasi Timer (Detik)
                   </label>
-                  <input
-                    type="number"
+                  <NumericInput
+                    min={5}
+                    fallback={30}
                     value={aiTimer}
-                    onChange={(e) => setAiTimer(Number(e.target.value))}
+                    onChange={setAiTimer}
                     className="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2 text-xs text-white font-mono"
                   />
                 </div>

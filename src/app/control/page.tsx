@@ -157,7 +157,7 @@ export default function OperatorControlPage() {
   useEffect(() => {
     const role = sessionStorage.getItem('auth_role');
     if (!role) {
-      router.push('/login');
+      router.push('/battle/login');
     } else {
       queueMicrotask(() => {
         setIsAuthorized(true);
@@ -1372,7 +1372,7 @@ export default function OperatorControlPage() {
 
   const handleLogout = () => {
     sessionStorage.clear();
-    router.push('/login');
+    router.push('/battle/login');
   };
 
   if (!isAuthorized) {
