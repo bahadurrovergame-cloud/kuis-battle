@@ -669,14 +669,6 @@ export async function deletePlayerAction(targetUserId: string): Promise<{
       return { success: false, error: 'Tidak dapat menghapus akun Anda sendiri.' };
     }
 
-    const { data: targetProf } = await supabaseServer
-      .from('profiles')
-      .select('username')
-      .eq('id', targetUserId)
-      .maybeSingle();
-
-    const targetUsername = targetProf?.username || 'pemain';
-
     // 2. Verifikasi apakah Service Role Key sudah dikonfigurasi
     // Supabase menerapkan Row Level Security (RLS) ketat yang melarang akun auth biasa menghapus akun user lain
     if (!isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)) {
@@ -688,6 +680,15 @@ export async function deletePlayerAction(targetUserId: string): Promise<{
     }
 
     const adminAuth = createHubAdminClient();
+
+    // Dapatkan username target menggunakan admin client (bypass RLS)
+    const { data: targetProf } = await adminAuth
+      .from('profiles')
+      .select('username')
+      .eq('id', targetUserId)
+      .maybeSingle();
+
+    const targetUsername = targetProf?.username || 'pemain';
 
     // 3. Hapus data game dan profil pemain dengan hak Service Role (Bypass RLS)
     await adminAuth.from('tts_user_progress').delete().eq('user_id', targetUserId);
@@ -703,7 +704,7 @@ export async function deletePlayerAction(targetUserId: string): Promise<{
 
     // 4. Eksekusi penghapusan akun Auth
     const { error: authDelErr } = await adminAuth.auth.admin.deleteUser(targetUserId);
-    if (authDelErr && !authDelErr.message?.toLowerCase().includes('not found')) {
+    if (authDelErr && !authDelErr.message?.toLowerCase().includes('not found') && !authDelErr.message?.toLowerCase().includes('user not found')) {
       console.warn('Auth user delete warning:', authDelErr.message);
     }
 

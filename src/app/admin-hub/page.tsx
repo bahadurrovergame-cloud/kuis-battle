@@ -1355,10 +1355,21 @@ function AdminHubContent() {
         loadPlayers(playerSearch);
         loadLeaderboard();
       } else {
-        alert(res.error || 'Gagal menghapus pemain.');
+        // Jika pemain ternyata sudah tidak ada di database, bersihkan dari tampilan dan tutup modal
+        if (res.error?.includes('tidak ditemukan')) {
+          setPlayerToDelete(null);
+          setPlayersList((prev) => prev.filter((p) => p.id !== targetUserId));
+          loadPlayers(playerSearch);
+          loadLeaderboard();
+          setStatusMsg({ type: 'success', text: `✓ Pemain @${targetUsername} sudah dibersihkan dari daftar.` });
+        } else {
+          alert(res.error || 'Gagal menghapus pemain.');
+          setPlayerToDelete(null);
+        }
       }
     } catch {
       alert('Terjadi kesalahan saat menghapus pemain.');
+      setPlayerToDelete(null);
     } finally {
       setDeletingPlayerId(null);
     }
