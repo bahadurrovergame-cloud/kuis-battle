@@ -13,7 +13,12 @@ import {
 } from '@/lib/supabase-hub';
 import { refillLivesAction, syncLifeRegenAction } from '@/app/tts/actions';
 import { getPathDataAction } from './actions';
-import { getPathCache, setPathCache } from '@/lib/path-store';
+import {
+  getPathCache,
+  setPathCache,
+  getOptimisticCompletions,
+  clearOptimisticCompletion,
+} from '@/lib/path-store';
 import {
   Heart,
   Coins,
@@ -198,6 +203,28 @@ export default function ThePathPage() {
   // Timer Regenerasi Nyawa
   const [timeUntilNextLife, setTimeUntilNextLife] = useState<string>('');
 
+  // Pastikan modal preview level sebelumnya tertutup seketika saat halaman peta dibuka
+  useEffect(() => {
+    setSelectedNode(null);
+  }, []);
+
+  // Listen ke event update optimistik & window focus agar peta selalu sinkron 0 ms
+  useEffect(() => {
+    const syncFromCache = () => {
+      const cache = getPathCache();
+      if (cache) {
+        if (cache.profile) setProfile(cache.profile);
+        if (cache.userProgress) setUserProgress(cache.userProgress);
+      }
+    };
+    window.addEventListener('path-data-updated', syncFromCache);
+    window.addEventListener('focus', syncFromCache);
+    return () => {
+      window.removeEventListener('path-data-updated', syncFromCache);
+      window.removeEventListener('focus', syncFromCache);
+    };
+  }, []);
+
   // 1. Fetch User Profile & Data dari Supabase Hub (Single Parallel Server Action + SWR Cache)
   const loadData = useCallback(async () => {
     try {
@@ -213,16 +240,44 @@ export default function ThePathPage() {
       if (res.settings) setSettings(res.settings);
       if (res.units && res.units.length > 0) setUnits(res.units);
       if (res.levels && res.levels.length > 0) setLevels(res.levels);
-      if (res.userProgress) setUserProgress(res.userProgress);
 
-      // Simpan ke Cache Client SWR
-      setPathCache({
-        profile: res.profile || null,
-        settings: res.settings || null,
-        units: res.units || [],
-        levels: res.levels || [],
-        userProgress: res.userProgress || {},
-      });
+      // Gabungkan progres dari server dengan rekaman optimistik lokal
+      if (res.userProgress) {
+        const optimistic = getOptimisticCompletions();
+        const mergedProgress = { ...res.userProgress };
+
+        for (const [lvlId, opt] of Object.entries(optimistic)) {
+          if (!mergedProgress[lvlId] || mergedProgress[lvlId].status !== 'completed') {
+            mergedProgress[lvlId] = {
+              id: `opt-${lvlId}`,
+              user_id: res.profile?.id || '',
+              level_id: lvlId,
+              status: 'completed',
+              score_earned: Math.max(opt.score, mergedProgress[lvlId]?.score_earned || 0),
+              time_taken_seconds: 60,
+              completed_words: [],
+              grid_state: {},
+              combo_multiplier: 1,
+              completed_at: opt.completedAt,
+              updated_at: opt.completedAt,
+            };
+          } else {
+            // Database sudah mengonfirmasi tamat, bersihkan antrean optimistik
+            clearOptimisticCompletion(lvlId);
+          }
+        }
+
+        setUserProgress(mergedProgress);
+
+        // Simpan ke Cache Client SWR
+        setPathCache({
+          profile: res.profile || null,
+          settings: res.settings || null,
+          units: res.units || [],
+          levels: res.levels || [],
+          userProgress: mergedProgress,
+        });
+      }
     } catch (err) {
       console.error('Error loading map data:', err);
     } finally {
@@ -412,6 +467,8 @@ export default function ThePathPage() {
   };
 
   const handleStartLevel = (levelId: string) => {
+    // Tutup paksa modal sebelum navigasi agar tidak nge-flash saat user kembali ke peta
+    setSelectedNode(null);
     router.push(`/tts/${levelId}`);
   };
 

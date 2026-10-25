@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, Suspense, memo } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import {
   createHubBrowserClient,
@@ -97,6 +97,82 @@ const FALLBACK_WORDS: TTSWord[] = [
     created_at: new Date().toISOString(),
   },
 ];
+
+// ============================================================================
+// MEMOIZED CROSSWORD CELL COMPONENT (ANTI-LAG 60FPS RE-RENDER)
+// Mengetik satu huruf HANYA me-render sel yang berubah, bukan seluruh 100 sel!
+// ============================================================================
+interface CrosswordCellProps {
+  r: number;
+  c: number;
+  cellData?: {
+    letter: string;
+    wordIds: string[];
+    startNumber?: number;
+  };
+  isSelectedWord: boolean;
+  isSelectedCell: boolean;
+  isWordCompleted: boolean;
+  isShaking: boolean;
+  charValue: string;
+  onClick: (r: number, c: number) => void;
+}
+
+const CrosswordCell = memo(
+  function CrosswordCell({
+    r,
+    c,
+    cellData,
+    isSelectedWord,
+    isSelectedCell,
+    isWordCompleted,
+    isShaking,
+    charValue,
+    onClick,
+  }: CrosswordCellProps) {
+    if (!cellData) {
+      return (
+        <div className="w-full h-full bg-[#070a12] rounded-lg pointer-events-none" />
+      );
+    }
+
+    return (
+      <div
+        onClick={() => onClick(r, c)}
+        className={`w-full h-full rounded-xl relative flex items-center justify-center font-mono font-black text-xs sm:text-base cursor-pointer transition-all select-none ${
+          isShaking
+            ? 'bg-rose-600 border-2 border-rose-800 text-white shadow-[0_3px_0_#881337] animate-bounce'
+            : isWordCompleted
+            ? 'bg-emerald-600 border-2 border-emerald-500 text-white shadow-[0_2px_0_#065f46]'
+            : isSelectedCell
+            ? 'bg-amber-400 text-slate-950 border-2 border-amber-600 shadow-[0_3px_0_#92400e] scale-105 z-10'
+            : isSelectedWord
+            ? 'bg-[#064e3b] border-2 border-emerald-500 text-white shadow-[0_2px_0_#022c22]'
+            : 'bg-[#1a2336] border-2 border-slate-700 text-white hover:bg-[#222e46] shadow-[0_2px_0_#0b101b]'
+        }`}
+      >
+        {cellData.startNumber && (
+          <span className="absolute top-0.5 left-1 text-[8px] font-mono font-black text-slate-300 pointer-events-none">
+            {cellData.startNumber}
+          </span>
+        )}
+        <span className="pointer-events-none">{charValue}</span>
+      </div>
+    );
+  },
+  (prev, next) => {
+    return (
+      prev.isSelectedWord === next.isSelectedWord &&
+      prev.isSelectedCell === next.isSelectedCell &&
+      prev.isWordCompleted === next.isWordCompleted &&
+      prev.isShaking === next.isShaking &&
+      prev.charValue === next.charValue &&
+      prev.cellData?.letter === next.cellData?.letter &&
+      prev.cellData?.startNumber === next.cellData?.startNumber &&
+      prev.onClick === next.onClick
+    );
+  }
+);
 
 function TTSGameContent() {
   const router = useRouter();
@@ -406,13 +482,15 @@ function TTSGameContent() {
 
   // ============================================================================
   // 6. DEBOUNCED CLOUD AUTO-SAVE (ANTI-SPAM DATABASE DENGAN TOKEN SESI)
+  // Mengetik tidak membanjiri jaringan: auto-save di-debounce 2 detik setelah user
+  // berhenti mengetik, atau seketika saat satu kata selesai dijawab.
   // ============================================================================
   const queueAutoSave = useCallback(
-    (newGrid: Record<string, string>) => {
+    (newGrid: Record<string, string>, immediate: boolean = false) => {
       if (!sessionToken) return;
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
 
-      autoSaveTimerRef.current = setTimeout(() => {
+      const doSave = () => {
         const currentActiveWords = wordsRef.current;
         const gridToSave = {
           ...newGrid,
@@ -428,8 +506,14 @@ function TTSGameContent() {
           levelId,
           gridState: gridToSave,
           sessionToken,
-        });
-      }, 3000); // Debounce minimal 3 detik untuk mencegah spam request
+        }).catch((err) => console.error('Background auto-save error:', err));
+      };
+
+      if (immediate) {
+        doSave();
+      } else {
+        autoSaveTimerRef.current = setTimeout(doSave, 2000);
+      }
     },
     [levelId, sessionToken]
   );
@@ -529,8 +613,8 @@ function TTSGameContent() {
               });
           }
 
-          // Simpan langsung state kata benar
-          queueAutoSave(currentGrid);
+          // Simpan langsung state kata benar seketika di latar belakang
+          queueAutoSave(currentGrid, true);
         } else {
           // Salah: efek shake & suara salah
           sounds.playWrong();
@@ -703,30 +787,48 @@ function TTSGameContent() {
     }
   };
 
-  // Fokuskan invisible input saat cell diklik
-  const handleCellClick = (r: number, c: number) => {
-    const key = `${r},${c}`;
-    const cellData = activeCellsMap[key];
-    if (!cellData) return;
+  // Fokuskan invisible input saat cell diklik (stabil dengan useCallback)
+  const handleCellClick = useCallback(
+    (r: number, c: number) => {
+      const key = `${r},${c}`;
+      const cellData = activeCellsMap[key];
+      if (!cellData) return;
 
-    // Jika mengklik kotak yang sama dan itu persilangan (> 1 kata), toggle arah Mendatar <-> Menurun
-    if (selectedCell?.r === r && selectedCell?.c === c && cellData.wordIds.length > 1) {
-      const otherWordId = cellData.wordIds.find((wid) => wid !== selectedWordId);
-      if (otherWordId) {
-        setSelectedWordId(otherWordId);
-      }
-    } else {
-      setSelectedCell({ r, c });
-      if (!cellData.wordIds.includes(selectedWordId)) {
-        setSelectedWordId(cellData.wordIds[0]);
-      }
-    }
+      setSelectedCell((prevSelected) => {
+        // Jika mengklik kotak yang sama dan itu persilangan (> 1 kata), toggle arah Mendatar <-> Menurun
+        if (prevSelected?.r === r && prevSelected?.c === c && cellData.wordIds.length > 1) {
+          setSelectedWordId((prevWordId) => {
+            const otherWordId = cellData.wordIds.find((wid) => wid !== prevWordId);
+            return otherWordId || prevWordId;
+          });
+        } else {
+          setSelectedWordId((prevWordId) => {
+            if (!cellData.wordIds.includes(prevWordId)) {
+              return cellData.wordIds[0];
+            }
+            return prevWordId;
+          });
+        }
+        return { r, c };
+      });
 
-    if (inputRef.current) {
-      inputRef.current.value = '';
-      inputRef.current.focus();
-    }
-  };
+      if (inputRef.current) {
+        inputRef.current.value = '';
+        inputRef.current.focus();
+      }
+    },
+    [activeCellsMap]
+  );
+
+  // Transisi Peta Optimistik (0 ms) & Force Clear Modal Level
+  const handleReturnToPath = useCallback(() => {
+    updatePathOptimisticCompletion(
+      levelId,
+      victoryData?.score || scoreEarned,
+      victoryData?.coins || 20
+    );
+    router.replace('/path');
+  }, [levelId, victoryData, scoreEarned, router]);
 
   // Navigasi Soal Sebelumnya / Selanjutnya
   const handleCycleClue = useCallback(
@@ -946,7 +1048,7 @@ function TTSGameContent() {
       {/* ==================================================================== */}
       <header className="w-full max-w-md bg-[#0f172a] border-b-2 border-slate-800 px-4 py-2.5 flex items-center justify-between shadow-md sticky top-0 z-30">
         <button
-          onClick={() => router.push('/path')}
+          onClick={handleReturnToPath}
           className="w-9 h-9 rounded-xl bg-slate-800 border-b-2 border-slate-950 hover:bg-slate-700 flex items-center justify-center text-slate-200 active:translate-y-0.5 transition-all"
         >
           <ArrowLeft className="w-4 h-4" />
@@ -1130,48 +1232,25 @@ function TTSGameContent() {
               const cellKey = `${r},${c}`;
               const cellData = activeCellsMap[cellKey];
 
-              if (!cellData) {
-                // Kotak Kosong / Hitam
-                return (
-                  <div
-                    key={cellKey}
-                    className="w-full h-full bg-[#070a12] rounded-lg pointer-events-none"
-                  />
-                );
-              }
-
-              const isSelectedWord = currentWord && cellData.wordIds.includes(currentWord.id);
-              const isSelectedCell = selectedCell?.r === r && selectedCell?.c === c;
-              const isWordCompleted = cellData.wordIds.some((wid) => completedWordIds.includes(wid));
-              const isShaking = shakingWordId && cellData.wordIds.includes(shakingWordId);
-              const charValue = isWordCompleted ? cellData.letter : (gridState[cellKey] || '');
+              const isSelectedWord = Boolean(currentWord && cellData?.wordIds.includes(currentWord.id));
+              const isSelectedCell = Boolean(selectedCell?.r === r && selectedCell?.c === c);
+              const isWordCompleted = Boolean(cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid)));
+              const isShaking = Boolean(shakingWordId && cellData?.wordIds.includes(shakingWordId));
+              const charValue = isWordCompleted ? (cellData?.letter || '') : (gridState[cellKey] || '');
 
               return (
-                <div
+                <CrosswordCell
                   key={cellKey}
-                  onClick={() => handleCellClick(r, c)}
-                  className={`w-full h-full rounded-xl relative flex items-center justify-center font-mono font-black text-xs sm:text-base cursor-pointer transition-all ${
-                    isShaking
-                      ? 'bg-rose-600 border-2 border-rose-800 text-white shadow-[0_3px_0_#881337] animate-bounce'
-                      : isWordCompleted
-                      ? 'bg-emerald-600 border-2 border-emerald-500 text-white shadow-[0_2px_0_#065f46]'
-                      : isSelectedCell
-                      ? 'bg-amber-400 text-slate-950 border-2 border-amber-600 shadow-[0_3px_0_#92400e] scale-105 z-10'
-                      : isSelectedWord
-                      ? 'bg-[#064e3b] border-2 border-emerald-500 text-white shadow-[0_2px_0_#022c22]'
-                      : 'bg-[#1a2336] border-2 border-slate-700 text-white hover:bg-[#222e46] shadow-[0_2px_0_#0b101b]'
-                  }`}
-                >
-                  {/* Start Word Number */}
-                  {cellData.startNumber && (
-                    <span className="absolute top-0.5 left-1 text-[8px] font-mono font-black text-slate-300">
-                      {cellData.startNumber}
-                    </span>
-                  )}
-
-                  {/* Character Value */}
-                  <span>{charValue}</span>
-                </div>
+                  r={r}
+                  c={c}
+                  cellData={cellData}
+                  isSelectedWord={isSelectedWord}
+                  isSelectedCell={isSelectedCell}
+                  isWordCompleted={isWordCompleted}
+                  isShaking={isShaking}
+                  charValue={charValue}
+                  onClick={handleCellClick}
+                />
               );
             })
           )}
@@ -1293,7 +1372,7 @@ function TTSGameContent() {
                 </button>
               ) : (
                 <button
-                  onClick={() => router.push('/path')}
+                  onClick={handleReturnToPath}
                   className="w-full py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black text-xs transition-all shadow-lg shadow-emerald-600/30 flex items-center justify-center gap-2"
                 >
                   <span>🎉 Selesai! Kembali ke Peta</span>
@@ -1302,7 +1381,7 @@ function TTSGameContent() {
               )}
 
               <button
-                onClick={() => router.push('/path')}
+                onClick={handleReturnToPath}
                 className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition flex items-center justify-center gap-2"
               >
                 <span>Lihat Peta The Path</span>
@@ -1361,7 +1440,7 @@ function TTSGameContent() {
 
             <div className="flex items-center gap-2">
               <button
-                onClick={() => router.push('/path')}
+                onClick={handleReturnToPath}
                 className="py-3 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs"
               >
                 Peta
