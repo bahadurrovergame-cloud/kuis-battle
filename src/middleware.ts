@@ -5,15 +5,14 @@ import { hubUrl, hubAnonKey, HUB_COOKIE_NAME } from '@/lib/supabase-hub';
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 1. ISOLASI TOTAL KUIS BATTLE: Biarkan jalur ini lewat 100% tanpa ditanya auth email
+  // 1. ISOLASI TOTAL: Abaikan semua rute Kuis Battle lama, API lama, dan aset statis
+  // Rute-rute ini tidak akan tersentuh oleh klien Supabase Hub maupun cookies Game Hub.
   if (
     pathname.startsWith('/battle') ||
     pathname.startsWith('/operator') ||
     pathname.startsWith('/control') ||
     pathname.startsWith('/peserta') ||
     pathname.startsWith('/admin/soal') ||
-    pathname.startsWith('/bank-soal') || // <-- DITAMBAHKAN: Bebaskan Bank Soal
-    pathname.startsWith('/login-kuis') || // <-- DITAMBAHKAN: Bebaskan Pintu Login PIN
     pathname.startsWith('/api/') ||
     pathname.startsWith('/_next') ||
     pathname.includes('.')
@@ -21,7 +20,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  // 2. Perbarui sesi cookie Supabase Hub (sb-hub-auth-token) secara aman
+  // 2. Perbarui sesi cookie Supabase Hub (sb-hub-auth-token) secara aman di Edge Middleware
   let response = NextResponse.next({
     request: {
       headers: request.headers,
