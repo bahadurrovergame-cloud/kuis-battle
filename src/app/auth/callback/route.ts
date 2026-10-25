@@ -11,9 +11,9 @@ export async function GET(request: Request) {
   const type = searchParams.get('type') as EmailOtpType | null;
   const next = searchParams.get('next') ?? '/auth/confirmed';
 
-  const cookieStore = cookies();
+  // PERBAIKAN: Wajib pakai await untuk versi Next.js terbaru
+  const cookieStore = await cookies();
 
-  // KUNCI JAWABANNYA: Kita paksa pakai HUB_COOKIE_NAME di Server Client
   const supabase = createServerClient(hubUrl, hubAnonKey, {
     cookieOptions: {
       name: HUB_COOKIE_NAME,
