@@ -3,7 +3,6 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createHubBrowserClient } from '@/lib/supabase-hub';
-// Biarkan import ini jika sistem ban email memang diatur secara global di database lu
 import { checkBannedEmailAction } from '@/app/tts/actions';
 import {
   Gamepad2,
@@ -15,8 +14,10 @@ import {
   ArrowRight,
   Eye,
   EyeOff,
+  Flame,
+  Crown,
+  Compass,
   Sparkles,
-  MonitorPlay,
 } from 'lucide-react';
 
 function LoginContent() {
@@ -54,7 +55,7 @@ function LoginContent() {
       const banCheck = await checkBannedEmailAction(email.trim());
       if (banCheck.isBanned) {
         setErrorMsg(
-          `⛔ AKUN DIBANNED PERMANEN: Email ini telah dibanned oleh sistem (${banCheck.reason}). Hubungi administrator jika ini kesalahan.`
+          `⛔ AKUN DIBANNED PERMANEN: Email ini telah dibanned oleh sistem Anti-Cheat (${banCheck.reason}). Hubungi administrator jika ini kesalahan.`
         );
         setLoading(false);
         return;
@@ -70,7 +71,7 @@ function LoginContent() {
         if (error.message.includes('Email not confirmed')) {
           setErrorMsg('Email Anda belum diverifikasi. Silakan periksa kotak masuk (inbox / spam) email Anda.');
         } else if (error.message.includes('Invalid login credentials')) {
-          setErrorMsg('Email atau kata sandi tidak sesuai. Jika belum mendaftar, klik tab "Daftar Baru".');
+          setErrorMsg('Email atau kata sandi tidak sesuai. Jika Anda belum mendaftar, silakan klik tab "Daftar Baru" terlebih dahulu.');
         } else {
           setErrorMsg(error.message);
         }
@@ -84,13 +85,12 @@ function LoginContent() {
           .eq('id', data.user.id)
           .maybeSingle();
 
-        // LOGIKA REDIRECT KHUSUS KUIS BATTLE
         if (explicitRedirect) {
           router.push(explicitRedirect);
         } else if (prof?.role === 'admin') {
-          router.push('/admin/soal'); // Langsung masuk ke Panel Admin Kuis Battle
+          router.push('/admin-hub');
         } else {
-          router.push('/'); // Lobi Utama Kuis Battle
+          router.push('/path');
         }
         router.refresh();
       }
@@ -122,7 +122,7 @@ function LoginContent() {
       const banCheck = await checkBannedEmailAction(email.trim());
       if (banCheck.isBanned) {
         setErrorMsg(
-          `⛔ PENDAFTARAN DITOLAK: Email ini telah di-BANNED secara permanen. Anda tidak diizinkan membuat akun baru dengan email ini.`
+          `⛔ PENDAFTARAN DITOLAK: Email ini telah di-BANNED secara permanen oleh sistem Anti-Cheat (${banCheck.reason}). Anda tidak diizinkan membuat akun baru dengan email ini.`
         );
         setLoading(false);
         return;
@@ -151,7 +151,7 @@ function LoginContent() {
           emailRedirectTo: redirectTo,
           data: {
             username: cleanUsername,
-            role: 'player', // Default ke player/operator
+            role: 'player',
           },
         },
       });
@@ -159,7 +159,7 @@ function LoginContent() {
       if (error) {
         if (error.message.toLowerCase().includes('rate limit')) {
           setErrorMsg(
-            '⚠️ Batas pengiriman email verifikasi tercapai. Harap tunggu beberapa menit sebelum mendaftar kembali.'
+            '⚠️ Batas pengiriman email verifikasi tercapai (maksimal 3-4 email per jam pada layanan bawaan Supabase Free). Harap tunggu beberapa menit sebelum mendaftar kembali.'
           );
         } else {
           setErrorMsg(error.message);
@@ -169,7 +169,7 @@ function LoginContent() {
 
       if (data.user && (!data.user.identities || data.user.identities.length === 0)) {
         setErrorMsg(
-          'Email ini sudah pernah terdaftar di sistem. Silakan langsung masuk menggunakan kata sandi Anda di tab "MASUK".'
+          'Email ini sudah pernah terdaftar di sistem. Silakan langsung masuk menggunakan kata sandi Anda di tab "MASUK", atau hubungi admin jika akun perlu direset.'
         );
         return;
       }
@@ -199,7 +199,7 @@ function LoginContent() {
       const banCheck = await checkBannedEmailAction(cleanEmail);
       if (banCheck.isBanned) {
         setErrorMsg(
-          `⛔ AKUN DI-BANNED: Email ini telah dinonaktifkan secara permanen. Reset password tidak dapat dilakukan.`
+          `⛔ AKUN DI-BANNED: Email ini telah dinonaktifkan secara permanen oleh Anti-Cheat (${banCheck.reason}). Reset password tidak dapat dilakukan.`
         );
         setLoading(false);
         return;
@@ -207,6 +207,7 @@ function LoginContent() {
 
       const supabase = createHubBrowserClient();
       
+      // PERBAIKAN: Arahkan ke callback dulu agar token diproses (PKCE), baru dilempar ke reset-password
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: 'https://kuis-battle.vercel.app/auth/callback?next=/reset-password',
       });
@@ -219,11 +220,11 @@ function LoginContent() {
           (error as { status?: number }).status === 500
         ) {
           setErrorMsg(
-            '⚠️ Gagal mengirim email pemulihan (Supabase Mailer 500). Hal ini umum terjadi jika kuota email habis.'
+            '⚠️ Gagal mengirim email pemulihan (Supabase Mailer 500). Hal ini umum terjadi jika kuota email bawaan Supabase Free habis (maksimal 3 email per jam).'
           );
         } else if (rawMsg.includes('rate limit')) {
           setErrorMsg(
-            '⚠️ Batas pengiriman email tercapai (Rate Limit). Harap tunggu beberapa menit.'
+            '⚠️ Batas pengiriman email tercapai (Rate Limit). Harap tunggu beberapa menit sebelum mencoba kembali.'
           );
         } else {
           setErrorMsg(error.message);
@@ -243,14 +244,14 @@ function LoginContent() {
       <div className="w-full max-w-md bg-[#111726] border-2 border-slate-700 rounded-3xl p-6 sm:p-8 shadow-[0_8px_0_#070a12] relative z-10">
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-3 bg-emerald-500 rounded-2xl flex items-center justify-center text-slate-950 font-black border-b-4 border-emerald-700 shadow-md">
-            <MonitorPlay className="w-7 h-7" />
+            <Compass className="w-7 h-7" />
           </div>
           <h1 className="text-2xl font-black tracking-tight text-white">
-            MASUK KUIS BATTLE
+            MASUK KE GAME HUB
           </h1>
           <p className="text-xs text-slate-400 mt-1 font-medium">
-            {tab === 'login' && 'Masuk untuk mengontrol jalannya kuis dan layar proyektor'}
-            {tab === 'register' && 'Daftar akun untuk menjadi operator atau admin kuis'}
+            {tab === 'login' && 'Masuk untuk menjelajahi The Path atau mengelola game'}
+            {tab === 'register' && 'Daftar akun gratis, dapatkan 50 Koin awal & mulai bertualang'}
             {tab === 'forgot' && 'Masukkan email terdaftar untuk menyetel ulang kata sandi'}
           </p>
         </div>
@@ -324,7 +325,7 @@ function LoginContent() {
               <ol className="list-decimal list-inside space-y-1.5 text-slate-400 font-medium">
                 <li>Buka aplikasi email Anda (cek folder Spam/Promosi jika belum ada).</li>
                 <li>Klik tombol atau tautan reset kata sandi di email tersebut.</li>
-                <li>Buat kata sandi baru Anda dan langsung mulai kelola kuis!</li>
+                <li>Buat kata sandi baru Anda dan langsung mulai bermain di The Path!</li>
               </ol>
             </div>
 
@@ -347,7 +348,7 @@ function LoginContent() {
               <ol className="list-decimal list-inside space-y-1.5 text-slate-400 font-medium">
                 <li>Buka aplikasi email Anda (cek folder Spam jika belum masuk).</li>
                 <li>Klik tautan verifikasi yang kami kirimkan.</li>
-                <li>Kembali ke sini dan klik tombol Masuk untuk mulai mengontrol kuis!</li>
+                <li>Kembali ke sini dan klik tombol Masuk untuk mulai bermain di The Path!</li>
               </ol>
             </div>
 
@@ -432,7 +433,7 @@ function LoginContent() {
               <form onSubmit={handleRegister} className="space-y-4">
                 <div>
                   <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
-                    Username
+                    Username Pemain
                   </label>
                   <div className="relative">
                     <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
@@ -441,10 +442,13 @@ function LoginContent() {
                       required
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
-                      placeholder="contoh: jagoan_kuis"
+                      placeholder="contoh: jagoan_tts"
                       className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-mono transition-all"
                     />
                   </div>
+                  <span className="text-[10px] text-slate-400 mt-1 block">
+                    Akan tampil di papan klasemen & profil Anda.
+                  </span>
                 </div>
 
                 <div>
@@ -518,7 +522,16 @@ function LoginContent() {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-2 mt-4">
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[11px] text-amber-200/90 leading-relaxed space-y-1">
+                  <p className="font-bold flex items-center gap-1.5 text-amber-400">
+                    <Sparkles className="w-3.5 h-3.5" /> Info Pengembang & Admin:
+                  </p>
+                  <p className="text-slate-300">
+                    Layanan email default Supabase Free dibatasi 3 email/jam. Anda juga dapat mereset kata sandi akun secara instan langsung dari <strong>Supabase Dashboard &rarr; Authentication &rarr; Users</strong> tanpa perlu menunggu email.
+                  </p>
+                </div>
+
+                <div className="flex items-center gap-2">
                   <button
                     type="button"
                     onClick={() => {
