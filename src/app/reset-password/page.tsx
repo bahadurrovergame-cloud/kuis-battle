@@ -1,23 +1,19 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { createHubBrowserClient } from '@/lib/supabase-hub';
 import confetti from 'canvas-confetti';
 import {
-  Key,
-  Lock,
-  Eye,
-  EyeOff,
-  CheckCircle2,
-  AlertCircle,
-  ArrowRight,
-  ShieldCheck,
-  Compass,
+  Key, Lock, Eye, EyeOff, CheckCircle2,
+  AlertCircle, ArrowRight, ShieldCheck, Compass,
 } from 'lucide-react';
 
 function ResetPasswordContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const code = searchParams.get('code'); // Nangkap kode dari URL
+
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -30,32 +26,58 @@ function ResetPasswordContent() {
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
+    let isMounted = true;
     const supabase = createHubBrowserClient();
 
-    const checkInitialSession = async () => {
+    const processRecovery = async () => {
       try {
+        // 1. JIKA ADA KODE DARI EMAIL, BROWSER YANG PROSES
+        if (code) {
+          const { error } = await supabase.auth.exchangeCodeForSession(code);
+          if (error) {
+            if (isMounted) {
+              setErrorMsg(`Gagal memverifikasi link: ${error.message}`);
+              setLoading(false);
+            }
+            return; // Stop kalau token udah hangus
+          }
+          // Bersihkan URL dari kode rahasia biar rapi
+          window.history.replaceState(null, '', '/reset-password');
+        }
+
+        // 2. Cek Sesi Aktif
         const { data: { session } } = await supabase.auth.getSession();
-        if (session) setHasSession(true);
+        if (isMounted) {
+          if (session) {
+            setHasSession(true);
+          }
+          setLoading(false);
+        }
       } catch (err) {
-        console.error('[Reset Password] Error checking session:', err);
-      } finally {
-        setLoading(false);
+        if (isMounted) {
+          setErrorMsg('Terjadi kesalahan sistem saat memuat halaman.');
+          setLoading(false);
+        }
       }
     };
 
-    checkInitialSession();
+    processRecovery();
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    // 3. Fallback Listener
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
       if (event === 'PASSWORD_RECOVERY' || session) {
-        setHasSession(true);
-        setLoading(false);
+        if (isMounted) {
+          setHasSession(true);
+          setLoading(false);
+        }
       }
     });
 
     return () => {
+      isMounted = false;
       subscription.unsubscribe();
     };
-  }, []);
+  }, [code]);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -93,7 +115,7 @@ function ResetPasswordContent() {
         router.refresh();
       }, 1500);
     } catch {
-      setErrorMsg('Terjadi kesalahan jaringan saat memperbarui kata sandi.');
+      setErrorMsg('Terjadi kesalahan jaringan.');
       setSubmitting(false);
     }
   };
@@ -102,7 +124,7 @@ function ResetPasswordContent() {
     return (
       <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4">
         <div className="flex items-center gap-3 bg-[#111726] border-2 border-slate-800 rounded-2xl px-6 py-4 shadow-xl">
-          <Key className="w-5 h-5 text-emerald-400 animate-spin" />
+          <Key className="w-5 h-5 text-purple-500 animate-spin" />
           <span className="text-xs font-black tracking-wider text-slate-300">
             MEMVERIFIKASI TAUTAN PEMULIHAN...
           </span>
@@ -113,7 +135,7 @@ function ResetPasswordContent() {
 
   return (
     <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4 relative select-none">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="w-full max-w-md bg-[#111726] border-2 border-slate-700 rounded-3xl p-6 sm:p-8 shadow-[0_8px_0_#070a12] relative z-10">
         <div className="text-center mb-6">
@@ -175,19 +197,8 @@ function ResetPasswordContent() {
               </div>
             </div>
 
-            <div className="p-3 bg-[#090d16] border border-slate-800 rounded-xl space-y-1 text-[11px]">
-              <div className="flex items-center gap-1.5 text-slate-400">
-                <CheckCircle2 className={`w-3.5 h-3.5 ${password.length >= 6 ? 'text-emerald-400' : 'text-slate-600'}`} />
-                <span className={password.length >= 6 ? 'text-emerald-300' : ''}>Minimal 6 karakter</span>
-              </div>
-              <div className="flex items-center gap-1.5 text-slate-400">
-                <CheckCircle2 className={`w-3.5 h-3.5 ${password.length > 0 && password === confirmPassword ? 'text-emerald-400' : 'text-slate-600'}`} />
-                <span className={password.length > 0 && password === confirmPassword ? 'text-emerald-300' : ''}>Kedua kata sandi cocok</span>
-              </div>
-            </div>
-
-            <button type="submit" disabled={submitting} className="w-full py-3.5 mt-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider border-b-4 border-purple-800 active:translate-y-1 active:border-b-0 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
-              <span>{submitting ? 'MENYIMPAN KATA SANDI...' : 'SIMPAN KATA SANDI & MULAI BERMAIN'}</span><ArrowRight className="w-4 h-4" />
+            <button type="submit" disabled={submitting} className="w-full py-3.5 mt-4 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider border-b-4 border-purple-800 active:translate-y-1 active:border-b-0 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+              <span>{submitting ? 'MENYIMPAN...' : 'SIMPAN KATA SANDI'}</span><ArrowRight className="w-4 h-4" />
             </button>
           </form>
         )}
