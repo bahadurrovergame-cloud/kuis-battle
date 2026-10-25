@@ -707,15 +707,15 @@ function AdminHubContent() {
 
       const generated = json.data;
 
-      // SET KE LIVE PREVIEW DRAFT: Tidak langsung disimpan ke database!
+      // SET KE LIVE PREVIEW DRAFT: Otomatis mengikuti parameter game global
       setAiPreviewLevel({
         title: generated.title || `Level ${aiLevelNumber}: ${aiTheme}`,
         gridRows: generated.gridRows || 8,
         gridCols: generated.gridCols || 8,
         isHardZone: aiIsHard,
         levelNumber: aiLevelNumber,
-        hardTimerOverride: aiIsHard ? aiHardTimer : null,
-        decayRateOverride: aiIsHard ? aiDecayRate : null,
+        hardTimerOverride: null, // Mengikuti settings.hard_timer_seconds secara dinamis
+        decayRateOverride: null, // Mengikuti settings.decay_rate_per_sec secara dinamis
         candidateWords: generated.candidateWords || [],
         words: generated.words.map((w: any) => ({
           word_number: w.word_number,
@@ -724,7 +724,7 @@ function AdminHubContent() {
           start_col: w.start_col,
           word: String(w.word).toUpperCase().replace(/[^A-Z]/g, ''),
           clue: w.clue,
-          points: w.points || 100,
+          points: settings.base_points_per_word || 100, // Mengikuti base_points_per_word parameter game
         })),
       });
 
@@ -1160,8 +1160,8 @@ function AdminHubContent() {
           grid_rows: editorRows,
           grid_cols: editorCols,
           is_hard_zone: editorIsHard,
-          hard_timer_override: editorIsHard ? editorHardTimer : null,
-          decay_rate_override: editorIsHard ? editorDecayRate : null,
+          hard_timer_override: null, // Mengikuti settings.hard_timer_seconds secara otomatis
+          decay_rate_override: null, // Mengikuti settings.decay_rate_per_sec secara otomatis
           branch_direction: editorBranch,
           status: targetStatus,
           updated_at: new Date().toISOString(),
@@ -1206,7 +1206,7 @@ function AdminHubContent() {
           start_col: newWordCol,
           word: cleanWord,
           clue: newWordClue.trim(),
-          points: newWordPoints,
+          points: Number(settings.base_points_per_word) || 100,
         })
         .select()
         .single();
@@ -2479,7 +2479,7 @@ function AdminHubContent() {
 
                         {showAiAdvanced && (
                           <div className="p-4 pt-0 border-t border-slate-800/80 space-y-3 text-xs">
-                            <div className="grid grid-cols-2 gap-3 mt-3">
+                            <div className="grid grid-cols-2 gap-3 mt-3 items-center">
                               <div>
                                 <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
                                   Nomor Level
@@ -2493,45 +2493,42 @@ function AdminHubContent() {
                                 />
                               </div>
 
-                              <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
-                                  Durasi Timer (Detik)
-                                </label>
-                                <NumericInput
-                                  min={10}
-                                  max={300}
-                                  fallback={60}
-                                  value={aiHardTimer}
-                                  onChange={setAiHardTimer}
-                                  className="w-full bg-[#111726] border border-slate-700 rounded-xl px-3 py-2 text-white font-mono font-bold"
-                                />
-                              </div>
-                            </div>
-
-                            <div className="grid grid-cols-2 gap-3">
-                              <div>
-                                <label className="text-[10px] font-bold text-slate-400 uppercase block mb-1">
-                                  Poin Tiap Kata
-                                </label>
-                                <input
-                                  type="text"
-                                  value={settings.base_points_per_word}
-                                  disabled
-                                  className="w-full bg-[#111726] border border-slate-700 rounded-xl px-3 py-2 text-slate-400 font-mono"
-                                />
-                              </div>
-
-                              <div className="flex items-center pt-5">
+                              <div className="pt-4">
                                 <label className="flex items-center gap-2 text-xs text-rose-300 font-bold cursor-pointer">
                                   <input
                                     type="checkbox"
                                     checked={aiIsHard}
                                     onChange={(e) => setAiIsHard(e.target.checked)}
-                                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500"
+                                    className="w-4 h-4 rounded text-rose-600 focus:ring-rose-500 accent-rose-600"
                                   />
                                   <span>Jadikan Zona Hard</span>
                                 </label>
                               </div>
+                            </div>
+
+                            {/* Info Otomatis: Sinkron dengan Tab 1 Kontrol Parameter (Bebas Input Ganda) */}
+                            <div className="p-3 rounded-2xl bg-[#0b0f19] border border-slate-800 text-[11px] space-y-1.5 shadow-inner">
+                              <span className="text-[10px] font-black uppercase text-amber-400 block tracking-wider">
+                                ⚙️ Otomatis Mengikuti Kontrol Parameter Game:
+                              </span>
+                              <div className="flex items-center justify-between text-slate-300">
+                                <span>Poin Dasar per Kata:</span>
+                                <span className="font-mono font-bold text-emerald-400">
+                                  {settings.base_points_per_word} Pts
+                                </span>
+                              </div>
+                              {aiIsHard ? (
+                                <div className="flex items-center justify-between text-rose-300 font-bold">
+                                  <span>Durasi Timer Zona Hard:</span>
+                                  <span className="font-mono text-amber-400">
+                                    {settings.hard_timer_seconds} Detik
+                                  </span>
+                                </div>
+                              ) : (
+                                <div className="text-slate-400 text-[10px] italic">
+                                  Level santai tanpa timer darurat.
+                                </div>
+                              )}
                             </div>
                           </div>
                         )}
@@ -2936,37 +2933,26 @@ function AdminHubContent() {
                           </div>
 
                           {editorIsHard ? (
-                            <>
-                              <div>
-                                <label className="text-[10px] font-bold text-rose-300 uppercase block mb-1">
-                                  Durasi Timer (Detik)
-                                </label>
-                                <NumericInput
-                                  min={10}
-                                  max={300}
-                                  fallback={60}
-                                  value={editorHardTimer || 60}
-                                  onChange={setEditorHardTimer}
-                                  className="w-full bg-slate-900 border border-rose-800 rounded-xl px-3 py-2 text-white font-mono font-bold"
-                                />
+                            <div className="col-span-2 p-3 bg-rose-950/40 border border-rose-800/80 rounded-xl text-[11px] space-y-1">
+                              <span className="font-black text-rose-300 block uppercase text-[10px]">
+                                🔥 Zona Hard Otomatis Mengikuti Parameter Game:
+                              </span>
+                              <div className="flex items-center justify-between text-slate-300">
+                                <span>Durasi Timer:</span>
+                                <span className="font-mono font-bold text-amber-400">
+                                  {settings.hard_timer_seconds} Detik
+                                </span>
                               </div>
-                              <div>
-                                <label className="text-[10px] font-bold text-rose-300 uppercase block mb-1">
-                                  Poin Hilang / Detik (Decay)
-                                </label>
-                                <NumericInput
-                                  min={1}
-                                  max={20}
-                                  fallback={4}
-                                  value={editorDecayRate || 4}
-                                  onChange={setEditorDecayRate}
-                                  className="w-full bg-slate-900 border border-rose-800 rounded-xl px-3 py-2 text-white font-mono font-bold"
-                                />
+                              <div className="flex items-center justify-between text-slate-300">
+                                <span>Poin Decay / Detik:</span>
+                                <span className="font-mono font-bold text-rose-400">
+                                  -{settings.decay_rate_per_sec} Poin/dtk
+                                </span>
                               </div>
-                            </>
+                            </div>
                           ) : (
-                            <div className="col-span-2 flex items-center text-[11px] text-slate-400 italic pt-3">
-                              Level santai tanpa hitung mundur darurat. Menggunakan pengaturan standar game.
+                            <div className="col-span-2 flex items-center text-[11px] text-slate-400 italic pt-2">
+                              Level santai tanpa timer darurat. Mengikuti standar {settings.base_points_per_word} Poin/kata.
                             </div>
                           )}
                         </div>
