@@ -557,25 +557,37 @@ export async function adjustPlayerResourcesAction(payload: {
       return { success: false, error: updErr?.message || 'Gagal menyimpan perubahan pemain.' };
     }
 
-    // 3. Sinkronisasi ke tts_leaderboard jika skor berubah
+    // 3. Sinkronisasi ke tts_leaderboard jika skor berubah (HANYA UNTUK NON-ADMIN)
     if (payload.addScore || payload.setScore !== undefined) {
-      const { data: setts } = await supabaseAdmin
-        .from('game_settings')
-        .select('current_season')
-        .eq('id', 1)
-        .maybeSingle();
+      const isPlayerAdmin =
+        updatedProf.role === 'admin' ||
+        updatedProf.username?.toLowerCase().includes('admin');
 
-      const seasonNum = setts?.current_season || 1;
+      if (isPlayerAdmin) {
+        // Admin tidak boleh masuk ke leaderboard
+        await supabaseAdmin
+          .from('tts_leaderboard')
+          .delete()
+          .eq('user_id', payload.userId);
+      } else {
+        const { data: setts } = await supabaseAdmin
+          .from('game_settings')
+          .select('current_season')
+          .eq('id', 1)
+          .maybeSingle();
 
-      await supabaseAdmin.from('tts_leaderboard').upsert(
-        {
-          user_id: payload.userId,
-          season_number: seasonNum,
-          total_score: newScore,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'user_id,season_number' }
-      );
+        const seasonNum = setts?.current_season || 1;
+
+        await supabaseAdmin.from('tts_leaderboard').upsert(
+          {
+            user_id: payload.userId,
+            season_number: seasonNum,
+            total_score: newScore,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: 'user_id,season_number' }
+        );
+      }
     }
 
     return {
@@ -711,17 +723,30 @@ export async function syncLeaderboardAction(): Promise<{
 
     const currentSeason = setts?.current_season || 1;
 
-    // 2. Ambil seluruh profil pemain
+    // 2. Ambil seluruh profil pemain (kecuali admin)
     const { data: profs } = await supabaseAdmin
       .from('profiles')
-      .select('id, username, total_score');
+      .select('id, username, total_score, role');
 
     if (!profs || profs.length === 0) {
       return { success: true, syncedCount: 0 };
     }
 
+    // Bersihkan akun admin dari tts_leaderboard agar tidak masuk klasemen pemain
+    const adminIds = (profs || [])
+      .filter((p) => p.role === 'admin' || p.username?.toLowerCase().includes('admin'))
+      .map((p) => p.id);
+
+    if (adminIds.length > 0) {
+      await supabaseAdmin.from('tts_leaderboard').delete().in('user_id', adminIds);
+    }
+
+    const nonAdminProfs = profs.filter(
+      (p) => p.role !== 'admin' && !p.username?.toLowerCase().includes('admin')
+    );
+
     let count = 0;
-    for (const p of profs) {
+    for (const p of nonAdminProfs) {
       const score = p.total_score || 0;
       await supabaseAdmin.from('tts_leaderboard').upsert(
         {

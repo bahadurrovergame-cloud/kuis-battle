@@ -1294,7 +1294,16 @@ function AdminHubContent() {
       // Urutkan kembali berdasarkan total_score tertinggi
       mergedList.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
 
-      setLeaderboard(mergedList);
+      // Filter: Hanya pemain non-admin yang masuk ke papan klasemen kompetisi
+      const nonAdminMerged = mergedList.filter((entry) => {
+        const p = entry.profiles;
+        if (!p) return true;
+        if (p.role === 'admin') return false;
+        if (p.username && p.username.toLowerCase().includes('admin')) return false;
+        return true;
+      });
+
+      setLeaderboard(nonAdminMerged);
     } catch (err) {
       console.error('Error loading leaderboard:', err);
     }

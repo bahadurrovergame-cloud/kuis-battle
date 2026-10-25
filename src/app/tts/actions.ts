@@ -431,8 +431,18 @@ export async function completeLevelAction({
         .eq('id', user.id);
     }
 
-    // 8. Update Klasemen Realtime (tts_leaderboard) jika penyelesaian baru
-    if (isFirstTimeCompletion) {
+    // 8. Update Klasemen Realtime (tts_leaderboard) jika penyelesaian baru (HANYA UNTUK NON-ADMIN)
+    const { data: userRoleProf } = await dbClient
+      .from('profiles')
+      .select('role, username')
+      .eq('id', user.id)
+      .maybeSingle();
+
+    const isAdminUser =
+      userRoleProf?.role === 'admin' ||
+      userRoleProf?.username?.toLowerCase().includes('admin');
+
+    if (isFirstTimeCompletion && !isAdminUser) {
       const { data: leaderRow } = await dbClient
         .from('tts_leaderboard')
         .select('*')

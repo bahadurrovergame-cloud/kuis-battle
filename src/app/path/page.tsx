@@ -315,7 +315,16 @@ export default function ThePathPage() {
       // Urutkan berdasarkan total_score tertinggi
       mergedList.sort((a, b) => (b.total_score || 0) - (a.total_score || 0));
 
-      setLeaderboardList(mergedList);
+      // Filter: Hanya pemain non-admin yang masuk ke papan klasemen publik
+      const nonAdminList = mergedList.filter((entry) => {
+        const p = entry.profiles;
+        if (!p) return true;
+        if (p.role === 'admin') return false;
+        if (p.username && p.username.toLowerCase().includes('admin')) return false;
+        return true;
+      });
+
+      setLeaderboardList(nonAdminList);
     } catch (err) {
       console.error('Error fetching leaderboard:', err);
     } finally {
@@ -1085,7 +1094,9 @@ export default function ThePathPage() {
                     Peringkat Kamu
                   </span>
                   <span className="font-black text-emerald-400">
-                    {userRankIndex !== -1
+                    {profile?.role === 'admin' || profile?.username?.toLowerCase().includes('admin')
+                      ? '👑 Akun Admin (Tidak Masuk Klasemen)'
+                      : userRankIndex !== -1
                       ? `#${userRankIndex + 1} dari ${leaderboardList.length} Pemain`
                       : 'Belum Masuk Klasemen'}
                   </span>
