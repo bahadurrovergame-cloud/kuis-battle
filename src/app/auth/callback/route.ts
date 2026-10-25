@@ -1,25 +1,37 @@
 import { NextResponse } from 'next/server';
 import { createHubServerClient } from '@/lib/supabase-hub-server';
+import { EmailOtpType } from '@supabase/supabase-js';
 
 export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const code = searchParams.get('code');
-  const next = searchParams.get('next') ?? '/auth/confirmed';
+  const token_hash = searchParams.get('token_hash');
+  const type = searchParams.get('type') as EmailOtpType | null;
+  const next = searchParams.get('next') ?? '/reset-password';
 
-  // LOGIKA BARU: JALAN PINTAS LUPA PASSWORD
-  // Kita lempar kodenya ke halaman reset, biar Browser yang memproses PKCE-nya!
-  if (code && next.includes('/reset-password')) {
-    return NextResponse.redirect(`${origin}/reset-password?code=${code}`);
+  const supabase = await createHubServerClient();
+
+  // 1. Verifikasi menggunakan Token Hash (Solusi Permanen yang aman diklik langsung)
+  if (token_hash && type) {
+    const { error } = await supabase.auth.verifyOtp({
+      token_hash,
+      type,
+    });
+    if (!error) {
+      return NextResponse.redirect(`${origin}${next}`);
+    }
+    console.error('[Auth Callback] verifyOtp error:', error.message);
   }
 
-  // Logika Lama: Tetap jalan untuk verifikasi Daftar Akun Baru
+  // 2. Fallback jika masih mendeteksi PKCE code
   if (code) {
-    const supabase = await createHubServerClient();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
     if (!error) {
       return NextResponse.redirect(`${origin}${next}`);
     }
+    console.error('[Auth Callback] exchangeCodeForSession error:', error.message);
   }
 
+  // Jika gagal total, arahkan kembali ke login dengan pesan error
   return NextResponse.redirect(`${origin}/login?error=auth_callback_failed`);
 }
