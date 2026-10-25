@@ -270,25 +270,26 @@ export default function GameHubLobby() {
       </section>
 
       {/* ==================================================================== */}
-      {/* TACTILE FOOTER                                                       */}
+      {/* TACTILE FOOTER (UPDATE TOMBOL KUIS BATTLE DI SINI)                   */}
       {/* ==================================================================== */}
       <footer className="w-full bg-[#111726] border-t-2 border-slate-800 px-4 py-4 sm:px-6 mt-12 text-xs text-slate-400">
         <div className="max-w-5xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-3">
           <span className="font-bold">© 2026 Game Hub & TTS Kompetitif.</span>
-          <div className="flex items-center gap-3 font-black">
+          <div className="flex items-center gap-3 font-black flex-wrap justify-center">
             <a href="/path" className="hover:text-emerald-400 transition-colors">
               Peta TTS
             </a>
             <span className="text-slate-600">•</span>
             <a href="/battle" className="hover:text-blue-400 transition-colors">
-              Kuis Battle
+              Ruang Peserta Kuis
             </a>
             <span className="text-slate-600">•</span>
-            <a href="/battle/login" className="hover:text-slate-200 transition-colors">
-              Operator PIN
+            <a href="/login-kuis" className="text-blue-400 hover:text-blue-300 font-black transition-colors flex items-center gap-1">
+              <Shield className="w-3.5 h-3.5" />
+              <span>Login Kru Kuis Battle</span>
             </a>
-            <span className="text-slate-600">•</span>
-            <a href="/admin-hub" className="text-amber-400 hover:text-amber-300 transition-colors flex items-center gap-1">
+            <span className="text-slate-600 hidden sm:inline">•</span>
+            <a href="/admin-hub" className="text-amber-400 hover:text-amber-300 transition-colors flex items-center gap-1 mt-2 sm:mt-0">
               <Crown className="w-3.5 h-3.5" />
               <span>Panel Sultan Admin</span>
             </a>
