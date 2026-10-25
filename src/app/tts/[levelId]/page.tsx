@@ -641,96 +641,144 @@ function TTSGameContent() {
   // ============================================================================
   // 8. INPUT HURUF PER KOTAK & NAVIGASI KEYBOARD
   // ============================================================================
-  const handleCellInput = (char: string) => {
-    if (!selectedCell || !currentWord) return;
-    const clean = char.slice(-1).toUpperCase();
-    if (!/^[A-Z]$/.test(clean)) return;
+  const handleCellInput = useCallback(
+    (char: string) => {
+      if (!selectedCell || !currentWord) return;
+      const clean = char.slice(-1).toUpperCase();
+      if (!/^[A-Z]$/.test(clean)) return;
 
-    const cellKey = `${selectedCell.r},${selectedCell.c}`;
-    const cellData = activeCellsMap[cellKey];
-
-    // Jika kotak ini sudah menjadi bagian dari kata yang selesai (hijau),
-    // lindungi agar huruf yang sudah diverifikasi benar tidak dirusak!
-    const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
-
-    let newGrid = { ...gridState };
-    if (!isCompletedCell) {
-      newGrid[cellKey] = clean;
-      setGridState(newGrid);
-      queueAutoSave(newGrid);
-    }
-
-    // 1. Cek kata aktif saat ini
-    checkWordSubmission(currentWord, newGrid);
-
-    // 2. Cek semua kata yang bersinggungan di kotak ini (mendatar / menurun)
-    const intersectingWords = words.filter((w) => {
-      if (w.id === currentWord.id) return false;
-      if (w.direction === 'across') {
-        return (
-          selectedCell.r === w.start_row &&
-          selectedCell.c >= w.start_col &&
-          selectedCell.c < w.start_col + w.word.length
-        );
-      } else {
-        return (
-          selectedCell.c === w.start_col &&
-          selectedCell.r >= w.start_row &&
-          selectedCell.r < w.start_row + w.word.length
-        );
+      // Bersihkan buffer input seketika agar tidak menumpuk karakter lama
+      if (inputRef.current) {
+        inputRef.current.value = '';
       }
-    });
 
-    intersectingWords.forEach((w) => {
-      checkWordSubmission(w, newGrid);
-    });
-
-    // Auto-advance ke kotak berikutnya dalam kata aktif
-    const idxInWord =
-      currentWord.direction === 'across'
-        ? selectedCell.c - currentWord.start_col
-        : selectedCell.r - currentWord.start_row;
-
-    for (let step = 1; idxInWord + step < currentWord.word.length; step++) {
-      const nextR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r + step;
-      const nextC = currentWord.direction === 'across' ? selectedCell.c + step : selectedCell.c;
-      const nextKey = `${nextR},${nextC}`;
-      const nextData = activeCellsMap[nextKey];
-      const isNextCompleted = nextData && nextData.wordIds.some((wid) => completedWordIds.includes(wid));
-      
-      setSelectedCell({ r: nextR, c: nextC });
-      if (!isNextCompleted) {
-        break; // Berhenti di kotak kosong/belum selesai berikutnya
-      }
-    }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (!selectedCell || !currentWord) return;
-
-    if (e.key === 'Backspace') {
-      e.preventDefault();
       const cellKey = `${selectedCell.r},${selectedCell.c}`;
       const cellData = activeCellsMap[cellKey];
+
+      // Jika kotak ini sudah menjadi bagian dari kata yang selesai (hijau),
+      // lindungi agar huruf yang sudah diverifikasi benar tidak dirusak!
       const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
 
-      if (gridState[cellKey] && !isCompletedCell) {
-        const newGrid = { ...gridState, [cellKey]: '' };
+      let newGrid = { ...gridState };
+      if (!isCompletedCell) {
+        newGrid[cellKey] = clean;
         setGridState(newGrid);
         queueAutoSave(newGrid);
-      } else {
-        // Mundur ke kotak sebelumnya jika kotak saat ini sudah kosong atau kotak selesai
-        const idxInWord =
-          currentWord.direction === 'across'
-            ? selectedCell.c - currentWord.start_col
-            : selectedCell.r - currentWord.start_row;
+      }
 
-        if (idxInWord > 0) {
-          const prevR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r - 1;
-          const prevC = currentWord.direction === 'across' ? selectedCell.c - 1 : selectedCell.c;
-          setSelectedCell({ r: prevR, c: prevC });
+      // 1. Cek kata aktif saat ini
+      checkWordSubmission(currentWord, newGrid);
+
+      // 2. Cek semua kata yang bersinggungan di kotak ini (mendatar / menurun)
+      const intersectingWords = words.filter((w) => {
+        if (w.id === currentWord.id) return false;
+        if (w.direction === 'across') {
+          return (
+            selectedCell.r === w.start_row &&
+            selectedCell.c >= w.start_col &&
+            selectedCell.c < w.start_col + w.word.length
+          );
+        } else {
+          return (
+            selectedCell.c === w.start_col &&
+            selectedCell.r >= w.start_row &&
+            selectedCell.r < w.start_row + w.word.length
+          );
+        }
+      });
+
+      intersectingWords.forEach((w) => {
+        checkWordSubmission(w, newGrid);
+      });
+
+      // Auto-advance ke kotak berikutnya dalam kata aktif
+      const idxInWord =
+        currentWord.direction === 'across'
+          ? selectedCell.c - currentWord.start_col
+          : selectedCell.r - currentWord.start_row;
+
+      for (let step = 1; idxInWord + step < currentWord.word.length; step++) {
+        const nextR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r + step;
+        const nextC = currentWord.direction === 'across' ? selectedCell.c + step : selectedCell.c;
+        const nextKey = `${nextR},${nextC}`;
+        const nextData = activeCellsMap[nextKey];
+        const isNextCompleted = nextData && nextData.wordIds.some((wid) => completedWordIds.includes(wid));
+
+        setSelectedCell({ r: nextR, c: nextC });
+        if (!isNextCompleted) {
+          break; // Berhenti di kotak kosong/belum selesai berikutnya
         }
       }
+    },
+    [selectedCell, currentWord, activeCellsMap, completedWordIds, gridState, queueAutoSave, checkWordSubmission, words]
+  );
+
+  const handleBackspace = useCallback(() => {
+    if (!selectedCell || !currentWord) return;
+    const cellKey = `${selectedCell.r},${selectedCell.c}`;
+    const cellData = activeCellsMap[cellKey];
+    const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
+
+    if (gridState[cellKey] && !isCompletedCell) {
+      const newGrid = { ...gridState, [cellKey]: '' };
+      setGridState(newGrid);
+      queueAutoSave(newGrid);
+    } else {
+      // Mundur ke kotak sebelumnya yang belum completed lalu kosongkan
+      const idxInWord =
+        currentWord.direction === 'across'
+          ? selectedCell.c - currentWord.start_col
+          : selectedCell.r - currentWord.start_row;
+
+      for (let step = 1; idxInWord - step >= 0; step++) {
+        const prevR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r - step;
+        const prevC = currentWord.direction === 'across' ? selectedCell.c - step : selectedCell.c;
+        const prevKey = `${prevR},${prevC}`;
+        const prevData = activeCellsMap[prevKey];
+        const isPrevCompleted = prevData && prevData.wordIds.some((wid) => completedWordIds.includes(wid));
+
+        if (!isPrevCompleted) {
+          setSelectedCell({ r: prevR, c: prevC });
+          const newGrid = { ...gridState, [prevKey]: '' };
+          setGridState(newGrid);
+          queueAutoSave(newGrid);
+          break;
+        }
+      }
+    }
+  }, [selectedCell, currentWord, activeCellsMap, completedWordIds, gridState, queueAutoSave]);
+
+  const handleArrowNavigation = useCallback(
+    (dir: 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown') => {
+      if (!selectedCell) return;
+      let deltaR = 0;
+      let deltaC = 0;
+      if (dir === 'ArrowLeft') deltaC = -1;
+      if (dir === 'ArrowRight') deltaC = 1;
+      if (dir === 'ArrowUp') deltaR = -1;
+      if (dir === 'ArrowDown') deltaR = 1;
+
+      const newR = selectedCell.r + deltaR;
+      const newC = selectedCell.c + deltaC;
+      const newKey = `${newR},${newC}`;
+      const cellData = activeCellsMap[newKey];
+      if (cellData) {
+        setSelectedCell({ r: newR, c: newC });
+        if (!cellData.wordIds.includes(selectedWordId)) {
+          setSelectedWordId(cellData.wordIds[0]);
+        }
+      }
+    },
+    [selectedCell, activeCellsMap, selectedWordId]
+  );
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Backspace') {
+      e.preventDefault();
+      handleBackspace();
+    } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+      e.preventDefault();
+      handleArrowNavigation(e.key as any);
     }
   };
 
@@ -740,32 +788,111 @@ function TTSGameContent() {
     const cellData = activeCellsMap[key];
     if (!cellData) return;
 
-    setSelectedCell({ r, c });
-
-    // Jika kata yang aktif tidak mengandung kotak ini, alihkan kata aktif
-    if (!cellData.wordIds.includes(selectedWordId)) {
-      setSelectedWordId(cellData.wordIds[0]);
+    // Jika mengklik kotak yang sama dan itu persilangan (> 1 kata), toggle arah Mendatar <-> Menurun
+    if (selectedCell?.r === r && selectedCell?.c === c && cellData.wordIds.length > 1) {
+      const otherWordId = cellData.wordIds.find((wid) => wid !== selectedWordId);
+      if (otherWordId) {
+        setSelectedWordId(otherWordId);
+      }
+    } else {
+      setSelectedCell({ r, c });
+      if (!cellData.wordIds.includes(selectedWordId)) {
+        setSelectedWordId(cellData.wordIds[0]);
+      }
     }
 
     if (inputRef.current) {
+      inputRef.current.value = '';
       inputRef.current.focus();
     }
   };
 
   // Navigasi Soal Sebelumnya / Selanjutnya
-  const handleCycleClue = (direction: 'next' | 'prev') => {
-    const currentIndex = words.findIndex((w) => w.id === selectedWordId);
-    let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
-    if (nextIndex >= words.length) nextIndex = 0;
-    if (nextIndex < 0) nextIndex = words.length - 1;
+  const handleCycleClue = useCallback(
+    (direction: 'next' | 'prev') => {
+      const currentIndex = words.findIndex((w) => w.id === selectedWordId);
+      let nextIndex = direction === 'next' ? currentIndex + 1 : currentIndex - 1;
+      if (nextIndex >= words.length) nextIndex = 0;
+      if (nextIndex < 0) nextIndex = words.length - 1;
 
-    const nextWord = words[nextIndex];
-    setSelectedWordId(nextWord.id);
-    setSelectedCell({ r: nextWord.start_row, c: nextWord.start_col });
-    if (inputRef.current) {
-      inputRef.current.focus();
-    }
-  };
+      const nextWord = words[nextIndex];
+      setSelectedWordId(nextWord.id);
+      setSelectedCell({ r: nextWord.start_row, c: nextWord.start_col });
+      if (inputRef.current) {
+        inputRef.current.value = '';
+        inputRef.current.focus();
+      }
+    },
+    [words, selectedWordId]
+  );
+
+  // Global Keyboard Listener untuk Desktop Hardware Keyboard
+  useEffect(() => {
+    const onGlobalKeyDown = (e: KeyboardEvent) => {
+      if (isGameOver || isVictory || isAccountTerminated || cheatModalType || showCoinModal) return;
+      if (e.target instanceof HTMLInputElement && e.target !== inputRef.current) return;
+      if (e.target instanceof HTMLTextAreaElement) return;
+
+      if (e.key === 'Backspace') {
+        e.preventDefault();
+        handleBackspace();
+        return;
+      }
+
+      if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
+        e.preventDefault();
+        handleArrowNavigation(e.key as any);
+        return;
+      }
+
+      if (e.key === ' ') {
+        e.preventDefault();
+        if (selectedCell) {
+          const key = `${selectedCell.r},${selectedCell.c}`;
+          const cellData = activeCellsMap[key];
+          if (cellData && cellData.wordIds.length > 1) {
+            const other = cellData.wordIds.find((wid) => wid !== selectedWordId);
+            if (other) setSelectedWordId(other);
+          } else {
+            handleCycleClue('next');
+          }
+        }
+        return;
+      }
+
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        handleCycleClue(e.shiftKey ? 'prev' : 'next');
+        return;
+      }
+
+      if (/^[a-zA-Z]$/.test(e.key)) {
+        e.preventDefault();
+        handleCellInput(e.key.toUpperCase());
+        if (inputRef.current) {
+          inputRef.current.value = '';
+        }
+      }
+    };
+
+    window.addEventListener('keydown', onGlobalKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onGlobalKeyDown);
+    };
+  }, [
+    isGameOver,
+    isVictory,
+    isAccountTerminated,
+    cheatModalType,
+    showCoinModal,
+    selectedCell,
+    selectedWordId,
+    activeCellsMap,
+    handleCellInput,
+    handleBackspace,
+    handleArrowNavigation,
+    handleCycleClue,
+  ]);
 
   // ============================================================================
   // 9. POWER-UP: BUKA HINT & BEKUKAN WAKTU (DENGAN LOCK SPAM-CLICK & SESI AMAN)
@@ -876,10 +1003,18 @@ function TTSGameContent() {
       <input
         ref={inputRef}
         type="text"
+        value=""
         inputMode="text"
         autoCapitalize="characters"
+        autoComplete="off"
+        autoCorrect="off"
+        spellCheck="false"
         onPaste={(e) => e.preventDefault()} // ANTI-COPAS MUTLAK
-        onChange={(e) => handleCellInput(e.target.value)}
+        onChange={(e) => {
+          const val = e.target.value;
+          e.target.value = '';
+          handleCellInput(val);
+        }}
         onKeyDown={handleKeyDown}
         className="opacity-0 absolute -top-10 left-0 w-1 h-1 pointer-events-none"
         autoFocus
