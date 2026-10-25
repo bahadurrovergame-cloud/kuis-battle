@@ -2546,12 +2546,12 @@ function AdminHubContent() {
                             </span>
                             <span className="text-[10px] font-mono font-bold text-slate-300 bg-slate-800 px-2 py-0.5 rounded border border-slate-700">
                               {filterPublishedOnly
-                                ? `${existingWordsStats.publishedWords} Kata Published`
-                                : `${existingWordsStats.totalWords} Total Kata di DB`}
+                                ? `${existingWordsStats.publishedWords} Kata Published di Seluruh Game`
+                                : `${existingWordsStats.totalWords} Total Kata Terdaftar di Seluruh Game`}
                             </span>
                           </div>
                           <p className="text-[11px] text-slate-400 mt-1 leading-snug">
-                            Kata dan petunjuk soal yang sudah pernah ada di database otomatis dilarang bagi AI agar pemain tidak mendapatkan soal yang kembar.
+                            Seluruh kata dari level lain yang ada di database otomatis dilarang bagi AI agar kisi-kisi level baru ini tidak memiliki kata kembar.
                           </p>
                           <label className="flex items-center gap-2 mt-2 text-[11px] font-bold text-slate-300 cursor-pointer">
                             <input

@@ -689,30 +689,22 @@ export async function deletePlayerAction(targetUserId: string): Promise<{
 
     const adminAuth = createHubAdminClient();
 
-    // 3. Eksekusi penghapusan akun Auth
-    const { error: authDelErr } = await adminAuth.auth.admin.deleteUser(targetUserId);
-    if (authDelErr) {
-      console.warn('Auth user delete warning:', authDelErr.message);
-    }
-
-    // 4. Hapus data game dan profil pemain dengan hak Service Role (Bypass RLS)
+    // 3. Hapus data game dan profil pemain dengan hak Service Role (Bypass RLS)
     await adminAuth.from('tts_user_progress').delete().eq('user_id', targetUserId);
     await adminAuth.from('tts_leaderboard').delete().eq('user_id', targetUserId);
-    const { data: delResult, error: delErr } = await adminAuth
+    const { error: delErr } = await adminAuth
       .from('profiles')
       .delete()
-      .eq('id', targetUserId)
-      .select();
+      .eq('id', targetUserId);
 
     if (delErr) {
       return { success: false, error: delErr.message };
     }
 
-    if (!delResult || delResult.length === 0) {
-      return {
-        success: false,
-        error: `Gagal menghapus @${targetUsername}: Data pemain tidak ditemukan atau ditolak oleh izin database.`,
-      };
+    // 4. Eksekusi penghapusan akun Auth
+    const { error: authDelErr } = await adminAuth.auth.admin.deleteUser(targetUserId);
+    if (authDelErr && !authDelErr.message?.toLowerCase().includes('not found')) {
+      console.warn('Auth user delete warning:', authDelErr.message);
     }
 
     return {
