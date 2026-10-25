@@ -1003,7 +1003,7 @@ function TTSGameContent() {
       <input
         ref={inputRef}
         type="text"
-        value=""
+        defaultValue=""
         inputMode="text"
         autoCapitalize="characters"
         autoComplete="off"
