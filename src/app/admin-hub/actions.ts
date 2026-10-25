@@ -677,20 +677,42 @@ export async function deletePlayerAction(targetUserId: string): Promise<{
 
     const targetUsername = targetProf?.username || 'pemain';
 
-    // 2. Eksekusi penghapusan akun auth jika service role tersedia
-    if (isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)) {
-      const adminAuth = createHubAdminClient();
-      await adminAuth.auth.admin.deleteUser(targetUserId).catch(() => {});
+    // 2. Verifikasi apakah Service Role Key sudah dikonfigurasi
+    // Supabase menerapkan Row Level Security (RLS) ketat yang melarang akun auth biasa menghapus akun user lain
+    if (!isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)) {
+      return {
+        success: false,
+        error:
+          'Gagal: Penghapusan pemain permanen memerlukan SUPABASE_HUB_SERVICE_ROLE_KEY di file .env.local. Ambil kunci "service_role" (secret) dari Supabase Dashboard > Project Settings > API agar server memiliki izin menghapus data pemain dari database.',
+      };
     }
 
-    // 3. Hapus data game dan profil pemain
-    const dbClient = await getEffectiveAdminClient();
-    await dbClient.from('tts_user_progress').delete().eq('user_id', targetUserId);
-    await dbClient.from('tts_leaderboard').delete().eq('user_id', targetUserId);
-    const { error: delErr } = await dbClient.from('profiles').delete().eq('id', targetUserId);
+    const adminAuth = createHubAdminClient();
+
+    // 3. Eksekusi penghapusan akun Auth
+    const { error: authDelErr } = await adminAuth.auth.admin.deleteUser(targetUserId);
+    if (authDelErr) {
+      console.warn('Auth user delete warning:', authDelErr.message);
+    }
+
+    // 4. Hapus data game dan profil pemain dengan hak Service Role (Bypass RLS)
+    await adminAuth.from('tts_user_progress').delete().eq('user_id', targetUserId);
+    await adminAuth.from('tts_leaderboard').delete().eq('user_id', targetUserId);
+    const { data: delResult, error: delErr } = await adminAuth
+      .from('profiles')
+      .delete()
+      .eq('id', targetUserId)
+      .select();
 
     if (delErr) {
       return { success: false, error: delErr.message };
+    }
+
+    if (!delResult || delResult.length === 0) {
+      return {
+        success: false,
+        error: `Gagal menghapus @${targetUsername}: Data pemain tidak ditemukan atau ditolak oleh izin database.`,
+      };
     }
 
     return {

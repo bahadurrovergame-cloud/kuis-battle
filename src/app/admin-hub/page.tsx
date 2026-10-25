@@ -127,7 +127,7 @@ function AdminHubContent() {
   const [creationMode, setCreationMode] = useState<'ai' | 'manual'>('ai');
 
   // AI Generator Form (Minimalis + Pengaturan Lanjutan)
-  const [aiTheme, setAiTheme] = useState('Budaya & Tradisi Nusantara');
+  const [aiTheme, setAiTheme] = useState('');
   const [aiWordCount, setAiWordCount] = useState(4);
   const [showAiAdvanced, setShowAiAdvanced] = useState(false);
   const [aiLevelNumber, setAiLevelNumber] = useState(1);
@@ -1351,6 +1351,7 @@ function AdminHubContent() {
       if (res.success) {
         setStatusMsg({ type: 'success', text: res.message || `✓ Berhasil menghapus pemain @${targetUsername}.` });
         setPlayerToDelete(null);
+        setPlayersList((prev) => prev.filter((p) => p.id !== targetUserId));
         loadPlayers(playerSearch);
         loadLeaderboard();
       } else {
