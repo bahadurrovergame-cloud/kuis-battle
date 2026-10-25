@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, Suspense } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { createHubBrowserClient } from '@/lib/supabase-hub';
 import confetti from 'canvas-confetti';
 import {
@@ -18,9 +18,6 @@ import {
 
 function ResetPasswordContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-  const code = searchParams.get('code'); // Ambil kode rahasia dari URL
-
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -33,51 +30,32 @@ function ResetPasswordContent() {
   const [hasSession, setHasSession] = useState(false);
 
   useEffect(() => {
-    let isMounted = true;
     const supabase = createHubBrowserClient();
 
-    const initializeSession = async () => {
+    const checkInitialSession = async () => {
       try {
-        // 1. Jika ada KODE di URL, tukar dulu jadi Sesi Login (PKCE Flow Browser)
-        if (code) {
-          const { error } = await supabase.auth.exchangeCodeForSession(code);
-          if (error) throw error;
-          
-          // Bersihkan URL dari kode rahasia biar rapi & aman
-          window.history.replaceState(null, '', '/reset-password');
-        }
-
-        // 2. Cek apakah sesi berhasil dibuat (atau memang sudah ada)
         const { data: { session } } = await supabase.auth.getSession();
-        
-        if (isMounted) {
-          if (session) setHasSession(true);
-          setLoading(false);
-        }
+        if (session) setHasSession(true);
       } catch (err) {
-        console.error('[Reset Password] Error initializing session:', err);
-        if (isMounted) setLoading(false);
+        console.error('[Reset Password] Error checking session:', err);
+      } finally {
+        setLoading(false);
       }
     };
 
-    initializeSession();
+    checkInitialSession();
 
-    // 3. Dengarkan event auth (Fallback)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (event === 'PASSWORD_RECOVERY' || session) {
-        if (isMounted) {
-          setHasSession(true);
-          setLoading(false);
-        }
+        setHasSession(true);
+        setLoading(false);
       }
     });
 
     return () => {
-      isMounted = false;
       subscription.unsubscribe();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Sengaja dikosongkan agar hanya jalan sekali saat komponen dimuat
+  }, []);
 
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,9 +75,7 @@ function ResetPasswordContent() {
 
     try {
       const supabase = createHubBrowserClient();
-      const { error } = await supabase.auth.updateUser({
-        password,
-      });
+      const { error } = await supabase.auth.updateUser({ password });
 
       if (error) {
         setErrorMsg(error.message);
@@ -108,19 +84,10 @@ function ResetPasswordContent() {
       }
 
       setSuccess(true);
-
-      // Rayakan dengan konfeti
       try {
-        confetti({
-          particleCount: 80,
-          spread: 70,
-          origin: { y: 0.6 },
-        });
-      } catch {
-        // Abaikan jika confetti gagal di beberapa environment
-      }
+        confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+      } catch {}
 
-      // Alihkan pemain ke The Path setelah 1.5 detik
       setTimeout(() => {
         router.push('/path');
         router.refresh();
@@ -135,7 +102,7 @@ function ResetPasswordContent() {
     return (
       <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4">
         <div className="flex items-center gap-3 bg-[#111726] border-2 border-slate-800 rounded-2xl px-6 py-4 shadow-xl">
-          <Key className="w-5 h-5 text-purple-500 animate-spin" />
+          <Key className="w-5 h-5 text-emerald-400 animate-spin" />
           <span className="text-xs font-black tracking-wider text-slate-300">
             MEMVERIFIKASI TAUTAN PEMULIHAN...
           </span>
@@ -146,19 +113,15 @@ function ResetPasswordContent() {
 
   return (
     <main className="min-h-screen bg-[#090d16] text-slate-100 flex flex-col items-center justify-center p-4 relative select-none">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-purple-500/5 rounded-full blur-3xl pointer-events-none" />
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
 
       <div className="w-full max-w-md bg-[#111726] border-2 border-slate-700 rounded-3xl p-6 sm:p-8 shadow-[0_8px_0_#070a12] relative z-10">
         <div className="text-center mb-6">
           <div className="w-14 h-14 mx-auto mb-3 bg-purple-500 rounded-2xl flex items-center justify-center text-slate-950 font-black border-b-4 border-purple-700 shadow-md">
             <Key className="w-7 h-7" />
           </div>
-          <h1 className="text-2xl font-black tracking-tight text-white uppercase">
-            Setel Kata Sandi Baru
-          </h1>
-          <p className="text-xs text-slate-400 mt-1 font-medium">
-            Masukkan kata sandi baru untuk mengamankan akun Game Hub Anda
-          </p>
+          <h1 className="text-2xl font-black tracking-tight text-white uppercase">Setel Kata Sandi Baru</h1>
+          <p className="text-xs text-slate-400 mt-1 font-medium">Masukkan kata sandi baru untuk mengamankan akun Game Hub Anda</p>
         </div>
 
         {errorMsg && (
@@ -175,86 +138,38 @@ function ResetPasswordContent() {
             </div>
             <div className="space-y-1">
               <h2 className="text-lg font-black text-white">Kata Sandi Berhasil Disimpan!</h2>
-              <p className="text-xs text-slate-400">
-                Akun Anda telah diamankan. Mengalihkan Anda langsung ke The Path...
-              </p>
-            </div>
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={() => router.push('/path')}
-                className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-black text-xs uppercase tracking-wider border-b-4 border-emerald-700 active:translate-y-1 active:border-b-0 transition-all shadow flex items-center justify-center gap-2"
-              >
-                <span>Masuk ke Game Sekarang</span>
-                <ArrowRight className="w-4 h-4" />
-              </button>
+              <p className="text-xs text-slate-400">Akun Anda telah diamankan. Mengalihkan Anda langsung ke The Path...</p>
             </div>
           </div>
         ) : !hasSession ? (
           <div className="text-center py-4 space-y-4">
             <div className="p-4 rounded-2xl bg-amber-950/40 border-2 border-amber-500/40 text-left space-y-2 text-xs text-amber-200">
-              <p className="font-black text-amber-300 flex items-center gap-1.5">
-                <AlertCircle className="w-4 h-4" /> Tautan Tidak Valid atau Kedaluwarsa
-              </p>
-              <p className="text-slate-300 leading-relaxed">
-                Tautan pemulihan kata sandi ini sudah tidak berlaku, telah digunakan sebelumnya, atau Anda membukanya di browser yang berbeda.
-              </p>
+              <p className="font-black text-amber-300 flex items-center gap-1.5"><AlertCircle className="w-4 h-4" /> Tautan Tidak Valid atau Kedaluwarsa</p>
+              <p className="text-slate-300 leading-relaxed">Tautan pemulihan kata sandi ini sudah tidak berlaku, telah digunakan sebelumnya, atau Anda membukanya di browser yang berbeda.</p>
             </div>
-
-            <button
-              type="button"
-              onClick={() => router.push('/login')}
-              className="w-full py-3.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider border-b-4 border-purple-800 active:translate-y-1 active:border-b-0 transition-all shadow flex items-center justify-center gap-2"
-            >
-              <span>Minta Tautan Baru di Login</span>
-              <ArrowRight className="w-4 h-4" />
+            <button type="button" onClick={() => router.push('/login')} className="w-full py-3.5 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider border-b-4 border-purple-800 active:translate-y-1 active:border-b-0 transition-all shadow flex items-center justify-center gap-2">
+              <span>Minta Tautan Baru di Login</span><ArrowRight className="w-4 h-4" />
             </button>
           </div>
         ) : (
           <form onSubmit={handleResetPassword} className="space-y-4">
             <div>
-              <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
-                Kata Sandi Baru
-              </label>
+              <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">Kata Sandi Baru</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Minimal 6 karakter"
-                  className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-purple-400 font-medium transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                >
+                <input type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Minimal 6 karakter" className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-purple-400 font-medium transition-all" />
+                <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
             </div>
 
             <div>
-              <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
-                Konfirmasi Kata Sandi Baru
-              </label>
+              <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">Konfirmasi Kata Sandi Baru</label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  required
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  placeholder="Ulangi kata sandi baru"
-                  className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-purple-400 font-medium transition-all"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300"
-                >
+                <input type={showConfirmPassword ? 'text' : 'password'} required value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Ulangi kata sandi baru" className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-purple-400 font-medium transition-all" />
+                <button type="button" onClick={() => setShowConfirmPassword(!showConfirmPassword)} className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
                   {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
@@ -262,51 +177,24 @@ function ResetPasswordContent() {
 
             <div className="p-3 bg-[#090d16] border border-slate-800 rounded-xl space-y-1 text-[11px]">
               <div className="flex items-center gap-1.5 text-slate-400">
-                <CheckCircle2
-                  className={`w-3.5 h-3.5 ${
-                    password.length >= 6 ? 'text-emerald-400' : 'text-slate-600'
-                  }`}
-                />
-                <span className={password.length >= 6 ? 'text-emerald-300' : ''}>
-                  Minimal 6 karakter
-                </span>
+                <CheckCircle2 className={`w-3.5 h-3.5 ${password.length >= 6 ? 'text-emerald-400' : 'text-slate-600'}`} />
+                <span className={password.length >= 6 ? 'text-emerald-300' : ''}>Minimal 6 karakter</span>
               </div>
               <div className="flex items-center gap-1.5 text-slate-400">
-                <CheckCircle2
-                  className={`w-3.5 h-3.5 ${
-                    password.length > 0 && password === confirmPassword
-                      ? 'text-emerald-400'
-                      : 'text-slate-600'
-                  }`}
-                />
-                <span
-                  className={
-                    password.length > 0 && password === confirmPassword ? 'text-emerald-300' : ''
-                  }
-                >
-                  Kedua kata sandi cocok
-                </span>
+                <CheckCircle2 className={`w-3.5 h-3.5 ${password.length > 0 && password === confirmPassword ? 'text-emerald-400' : 'text-slate-600'}`} />
+                <span className={password.length > 0 && password === confirmPassword ? 'text-emerald-300' : ''}>Kedua kata sandi cocok</span>
               </div>
             </div>
 
-            <button
-              type="submit"
-              disabled={submitting}
-              className="w-full py-3.5 mt-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider border-b-4 border-purple-800 active:translate-y-1 active:border-b-0 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              <span>{submitting ? 'MENYIMPAN KATA SANDI...' : 'SIMPAN KATA SANDI & MULAI BERMAIN'}</span>
-              <ArrowRight className="w-4 h-4" />
+            <button type="submit" disabled={submitting} className="w-full py-3.5 mt-2 rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-black text-xs uppercase tracking-wider border-b-4 border-purple-800 active:translate-y-1 active:border-b-0 transition-all shadow-md disabled:opacity-50 flex items-center justify-center gap-2">
+              <span>{submitting ? 'MENYIMPAN KATA SANDI...' : 'SIMPAN KATA SANDI & MULAI BERMAIN'}</span><ArrowRight className="w-4 h-4" />
             </button>
           </form>
         )}
 
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
-          <a
-            href="/"
-            className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold flex items-center justify-center gap-1"
-          >
-            <Compass className="w-3.5 h-3.5" />
-            <span>Kembali ke Lobi Game Hub</span>
+          <a href="/" className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold flex items-center justify-center gap-1">
+            <Compass className="w-3.5 h-3.5" /><span>Kembali ke Lobi Game Hub</span>
           </a>
         </div>
       </div>
@@ -316,13 +204,7 @@ function ResetPasswordContent() {
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense
-      fallback={
-        <div className="min-h-screen bg-[#090d16] flex items-center justify-center text-slate-400 text-xs font-black">
-          MEMUAT PEMULIHAN KATA SANDI...
-        </div>
-      }
-    >
+    <Suspense fallback={<div className="min-h-screen bg-[#090d16] flex items-center justify-center text-slate-400 text-xs font-black">MEMUAT PEMULIHAN KATA SANDI...</div>}>
       <ResetPasswordContent />
     </Suspense>
   );
