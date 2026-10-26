@@ -899,6 +899,8 @@ function TTSGameContent() {
       victoryData?.score || scoreEarned,
       victoryData?.coins || 20
     );
+    // Force refresh client router cache Next.js agar /path langsung render state terbaru
+    router.refresh();
     router.replace('/path');
   }, [levelId, victoryData, scoreEarned, router]);
 

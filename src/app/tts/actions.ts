@@ -1,5 +1,6 @@
 'use server';
 
+import { revalidatePath } from 'next/cache';
 import {
   createHubServerClient,
   createHubAdminClient,
@@ -733,6 +734,15 @@ export async function completeLevelAction({
       }
     }
 
+    // 10. Revalidasi cache server & route peta di Next.js (Vercel Edge / Node runtime)
+    try {
+      revalidatePath('/path');
+      revalidatePath('/path', 'page');
+      revalidatePath(`/tts/${levelId}`);
+    } catch (revalErr) {
+      console.warn('revalidatePath warning:', revalErr);
+    }
+
     return {
       success: true,
       scoreEarned,
@@ -807,6 +817,15 @@ export async function syncCompletedLevelsAction(): Promise<{ success: boolean; s
           .eq('level_id', prog.level_id);
 
         syncedCount++;
+      }
+    }
+
+    if (syncedCount > 0) {
+      try {
+        revalidatePath('/path');
+        revalidatePath('/path', 'page');
+      } catch (revalErr) {
+        console.warn('revalidatePath warning:', revalErr);
       }
     }
 

@@ -151,13 +151,15 @@ export function updatePathOptimisticCompletion(
 ) {
   const completedAt = new Date().toISOString();
 
-  // 1. Simpan ke Optimistic Record (tetap tersimpan meskipun cache peta belum ada)
-  inMemoryOptimisticCompletions[levelId] = {
+  // 1. Simpan ke Optimistic Record (ambil dulu rekaman sebelumnya agar multi-level tidak ter-reset)
+  const existingOptimistic = getOptimisticCompletions();
+  existingOptimistic[levelId] = {
     levelId,
     score: scoreEarned,
     coins: coinsEarned,
     completedAt,
   };
+  inMemoryOptimisticCompletions = existingOptimistic;
 
   if (typeof window !== 'undefined') {
     try {
@@ -170,10 +172,19 @@ export function updatePathOptimisticCompletion(
     }
   }
 
-  // 2. Jika ada cache peta, perbarui progres dan sumber daya pemain seketika
-  const current = inMemoryPathCache;
+  // 2. Ambil cache peta yang ada (dari memori ATAU sessionStorage)
+  let current = inMemoryPathCache;
+  if (!current && typeof window !== 'undefined') {
+    try {
+      const raw = sessionStorage.getItem(CACHE_STORAGE_KEY);
+      if (raw) current = JSON.parse(raw);
+    } catch {
+      // Abaikan
+    }
+  }
+
   if (current) {
-    const existingProg = current.userProgress[levelId];
+    const existingProg = current.userProgress?.[levelId];
     const updatedProg: TTSUserProgress = {
       id: existingProg?.id || `opt-${levelId}`,
       user_id: current.profile?.id || '',
@@ -189,7 +200,7 @@ export function updatePathOptimisticCompletion(
     };
 
     const updatedProgressMap: Record<string, TTSUserProgress> = {
-      ...current.userProgress,
+      ...(current.userProgress || {}),
       [levelId]: updatedProg,
     };
 

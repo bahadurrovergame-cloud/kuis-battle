@@ -211,9 +211,11 @@ export default function ThePathPage() {
         if (cache.userProgress) setUserProgress(cache.userProgress);
       }
     };
+    const timer = setTimeout(syncFromCache, 0);
     window.addEventListener('path-data-updated', syncFromCache);
     window.addEventListener('focus', syncFromCache);
     return () => {
+      clearTimeout(timer);
       window.removeEventListener('path-data-updated', syncFromCache);
       window.removeEventListener('focus', syncFromCache);
     };
