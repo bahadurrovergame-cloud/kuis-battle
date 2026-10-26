@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, Suspense } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { createHubBrowserClient } from '@/lib/supabase-hub';
 import { checkBannedEmailAction } from '@/app/tts/actions';
@@ -34,16 +35,16 @@ function LoginContent() {
   const [showPassword, setShowPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState(
+    urlError === 'auth_callback_failed'
+      ? 'Tautan verifikasi tidak valid atau telah kedaluwarsa. Silakan coba login atau kirim ulang.'
+      : ''
+  );
   const [successMsg, setSuccessMsg] = useState('');
   const [registrationSent, setRegistrationSent] = useState(false);
   const [resetSent, setResetSent] = useState(false);
 
-  useEffect(() => {
-    if (urlError === 'auth_callback_failed') {
-      setErrorMsg('Tautan verifikasi tidak valid atau telah kedaluwarsa. Silakan coba login atau kirim ulang.');
-    }
-  }, [urlError]);
+
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -559,12 +560,12 @@ function LoginContent() {
 
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
           
-          <a
+          <Link
             href="/"
             className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold"
           >
             ← Kembali ke Lobi Game Hub
-          </a>
+          </Link>
         </div>
       </div>
     </main>
@@ -584,3 +585,4 @@ export default function LoginPage() {
     </Suspense>
   );
 }
+

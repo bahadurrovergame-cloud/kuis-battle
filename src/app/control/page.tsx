@@ -65,11 +65,12 @@ export default function OperatorControlPage() {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
 
   // Helper broadcast state ke channel room secara instan
+  const sessionId = session?.id;
   const broadcastQuizState = useCallback(
     (payload: QuizStateUpdatePayload) => {
-      if (!session?.id) return;
+      if (!sessionId) return;
       try {
-        const ch = channelRef.current || supabase.channel(`room_sync_${session.id}`);
+        const ch = channelRef.current || supabase.channel(`room_sync_${sessionId}`);
         ch.send({
           type: 'broadcast',
           event: 'quiz_state_update',
@@ -79,7 +80,7 @@ export default function OperatorControlPage() {
         console.error('Failed to broadcast quiz state:', err);
       }
     },
-    [session?.id]
+    [sessionId]
   );
 
   // Mekanisme Lock & Debounce Optimistic UI (Cegah visual flickering / rubber-banding)

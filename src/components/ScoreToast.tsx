@@ -26,16 +26,19 @@ interface ScoreToastProps {
  */
 export default function ScoreToast({ event, onDone }: ScoreToastProps) {
   const [phase, setPhase] = useState<'in' | 'hold' | 'out' | 'done'>('done');
-  const [particles, setParticles] = useState<{ id: number; x: number; color: string; size: number; shape: string }[]>([]);
+  const [particles, setParticles] = useState<{ id: number; x: number; color: string; size: number; shape: string; duration: number; delay: number }[]>([]);
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const onDoneRef = useRef(onDone);
-  onDoneRef.current = onDone;
+
+  useEffect(() => {
+    onDoneRef.current = onDone;
+  }, [onDone]);
 
   useEffect(() => {
     if (!event) return;
 
-    // Reset & mulai animasi
-    setPhase('in');
+    // Reset & mulai animasi tanpa cascading synchronous setState
+    requestAnimationFrame(() => setPhase('in'));
 
     // Bunyi sesuai tipe
     if (event.type === 'correct') {
@@ -44,7 +47,7 @@ export default function ScoreToast({ event, onDone }: ScoreToastProps) {
       sounds.playWrong();
     }
 
-    // Confetti hanya untuk correct
+    // Confetti hanya untuk correct (generate angka acak di effect, bukan saat render)
     if (event.type === 'correct') {
       const baseColor = event.teamColor || '#4ade80';
       const palette = [baseColor, '#fbbf24', '#f8fafc', '#a78bfa', '#34d399'];
@@ -54,8 +57,12 @@ export default function ScoreToast({ event, onDone }: ScoreToastProps) {
         color: palette[Math.floor(Math.random() * palette.length)],
         size: 6 + Math.random() * 10,
         shape: Math.random() > 0.5 ? '50%' : '3px',
+        duration: +(1.2 + Math.random() * 0.8).toFixed(2),
+        delay: +(Math.random() * 0.3).toFixed(2),
       }));
-      setParticles(newParticles);
+      requestAnimationFrame(() => {
+        setParticles(newParticles);
+      });
       setTimeout(() => setParticles([]), 2200);
     }
 
@@ -100,7 +107,7 @@ export default function ScoreToast({ event, onDone }: ScoreToastProps) {
         }}
       />
 
-      {/* Confetti Particles */}
+      {/* Confetti Particles (Menggunakan nilai statis yang dihasilkan pada effect) */}
       {particles.map((p) => (
         <div
           key={p.id}
@@ -113,8 +120,8 @@ export default function ScoreToast({ event, onDone }: ScoreToastProps) {
             height: p.size,
             background: p.color,
             borderRadius: p.shape,
-            animation: `scoreConfettiFall ${1.2 + Math.random() * 0.8}s ease-in forwards`,
-            animationDelay: `${Math.random() * 0.3}s`,
+            animation: `scoreConfettiFall ${p.duration}s ease-in forwards`,
+            animationDelay: `${p.delay}s`,
           }}
         />
       ))}

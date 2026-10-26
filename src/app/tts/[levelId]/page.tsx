@@ -15,8 +15,8 @@ import {
   initTTSGameAction,
   submitWordAction,
   saveProgressDebouncedAction,
-  useHintAction,
-  useFreezeAction,
+  useHintAction as executeHintAction,
+  useFreezeAction as executeFreezeAction,
   completeLevelAction,
   triggerAntiCheatExecution,
   deductLifeOnGameOverAction,
@@ -241,6 +241,8 @@ function TTSGameContent() {
   const [shakingWordId, setShakingWordId] = useState<string | null>(null);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const lastInputTimestampRef = useRef<number>(0);
+  const lastInputCharRef = useRef<string>('');
 
   const updateCheatModalType = useCallback((type: 1 | 2 | 3 | null) => {
     cheatModalTypeRef.current = type;
@@ -688,6 +690,14 @@ function TTSGameContent() {
       const clean = char.slice(-1).toUpperCase();
       if (!/^[A-Z]$/.test(clean)) return;
 
+      // Debounce anti-burst input (Mencegah Android Gboard IME loop mengirim huruf kembar cepat seperti 'A A A')
+      const now = Date.now();
+      if (clean === lastInputCharRef.current && now - lastInputTimestampRef.current < 90) {
+        return;
+      }
+      lastInputTimestampRef.current = now;
+      lastInputCharRef.current = clean;
+
       // Bersihkan buffer input seketika agar tidak menumpuk karakter lama
       if (inputRef.current) {
         inputRef.current.value = '';
@@ -700,7 +710,7 @@ function TTSGameContent() {
       // lindungi agar huruf yang sudah diverifikasi benar tidak dirusak!
       const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
 
-      let newGrid = { ...gridState };
+      const newGrid = { ...gridState };
       if (!isCompletedCell) {
         newGrid[cellKey] = clean;
         setGridState(newGrid);
@@ -845,7 +855,7 @@ function TTSGameContent() {
       handleBackspace();
     } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
-      handleArrowNavigation(e.key as any);
+      handleArrowNavigation(e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown');
     }
   };
 
@@ -999,7 +1009,7 @@ function TTSGameContent() {
     setIsPendingHint(true);
 
     try {
-      const res = await useHintAction({ levelId, sessionToken });
+      const res = await executeHintAction({ levelId, sessionToken });
 
       if (res.success && res.newCoins !== undefined) {
         setProfile((prev) => (prev ? { ...prev, coins: res.newCoins ?? prev.coins } : null));
@@ -1049,7 +1059,7 @@ function TTSGameContent() {
     setIsPendingFreeze(true);
 
     try {
-      const res = await useFreezeAction({ levelId, sessionToken });
+      const res = await executeFreezeAction({ levelId, sessionToken });
 
       if (res.success && res.newCoins !== undefined) {
         setProfile((prev) => (prev ? { ...prev, coins: res.newCoins ?? prev.coins } : null));
@@ -1092,17 +1102,31 @@ function TTSGameContent() {
         defaultValue=""
         inputMode="text"
         autoCapitalize="characters"
-        autoComplete="off"
+        autoComplete="one-time-code"
         autoCorrect="off"
         spellCheck="false"
         onPaste={(e) => e.preventDefault()} // ANTI-COPAS MUTLAK
+        onBeforeInput={(e: React.FormEvent<HTMLInputElement>) => {
+          const nativeEvt = e.nativeEvent as InputEvent;
+          if (nativeEvt.inputType === 'deleteContentBackward') {
+            e.preventDefault();
+            handleBackspace();
+            return;
+          }
+          if (nativeEvt.data && /^[a-zA-Z]$/.test(nativeEvt.data)) {
+            e.preventDefault();
+            handleCellInput(nativeEvt.data);
+          }
+        }}
         onChange={(e) => {
           const val = e.target.value;
           e.target.value = '';
-          handleCellInput(val);
+          if (val) {
+            handleCellInput(val);
+          }
         }}
         onKeyDown={handleKeyDown}
-        className="opacity-0 absolute -top-10 left-0 w-1 h-1 pointer-events-none"
+        className="opacity-0 absolute top-0 left-0 w-px h-px pointer-events-none"
         autoFocus
       />
 

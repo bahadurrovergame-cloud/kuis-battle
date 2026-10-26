@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
 import { createHubBrowserClient } from '@/lib/supabase-hub';
 import confetti from 'canvas-confetti';
 import {
@@ -209,9 +210,9 @@ function ResetPasswordContent() {
         )}
 
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
-          <a href="/" className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold flex items-center justify-center gap-1">
+          <Link href="/" className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold flex items-center justify-center gap-1">
             <Compass className="w-3.5 h-3.5" /><span>Kembali ke Lobi Game Hub</span>
-          </a>
+          </Link>
         </div>
       </div>
     </main>

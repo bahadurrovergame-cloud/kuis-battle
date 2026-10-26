@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   supabase,
@@ -334,7 +335,7 @@ export default function AdminHubPage() {
         <div>
           <div className="flex items-center gap-2">
             <span className="px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30 flex items-center gap-1.5">
-              <a href="/" className="hover:underline text-slate-300 mr-1.5 font-bold">← Hub</a>
+              <Link href="/" className="hover:underline text-slate-300 mr-1.5 font-bold">← Hub</Link>
               <Sparkles className="w-3.5 h-3.5" /> Dashboard Pusat Panggung
             </span>
             <div

@@ -10,7 +10,7 @@ import {
   parseSessionMeta,
   buildSessionTitleWithMeta,
 } from '@/lib/supabase';
-import { Palette, Check, Sparkles, X, Sun, Moon, Shield } from 'lucide-react';
+import { Palette, Check, Sparkles, X, Sun, Moon } from 'lucide-react';
 
 interface ThemeSelectorProps {
   session?: GameSession | null;
@@ -30,17 +30,15 @@ export default function ThemeSelector({
   const [saving, setSaving] = useState(false);
   const [statusText, setStatusText] = useState<string | null>(null);
 
-  // Sync theme dari session atau localStorage
+  // Sync theme dari session atau localStorage tanpa synchronous cascading renders
   useEffect(() => {
-    if (session) {
-      const { theme } = parseSessionMeta(session);
-      setCurrentTheme(theme);
-      applyThemeToDom(theme);
-    } else if (typeof window !== 'undefined') {
-      const saved = (localStorage.getItem('app_theme') as ThemeKey) || 'default';
-      setCurrentTheme(saved);
-      applyThemeToDom(saved);
-    }
+    const targetTheme = session
+      ? parseSessionMeta(session).theme
+      : ((typeof window !== 'undefined' ? localStorage.getItem('app_theme') : null) as ThemeKey) || 'default';
+    applyThemeToDom(targetTheme);
+    requestAnimationFrame(() => {
+      setCurrentTheme(targetTheme);
+    });
   }, [session]);
 
   const handleSelectTheme = async (themeKey: ThemeKey) => {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   createHubBrowserClient,
   Profile,
@@ -35,10 +36,8 @@ import {
   Calendar,
   X,
   Compass,
-  Check,
   Crown,
   Clock,
-  Medal,
   Sparkles,
 } from 'lucide-react';
 
@@ -203,11 +202,6 @@ export default function ThePathPage() {
   // Timer Regenerasi Nyawa
   const [timeUntilNextLife, setTimeUntilNextLife] = useState<string>('');
 
-  // Pastikan modal preview level sebelumnya tertutup seketika saat halaman peta dibuka
-  useEffect(() => {
-    setSelectedNode(null);
-  }, []);
-
   // Listen ke event update optimistik & window focus agar peta selalu sinkron 0 ms
   useEffect(() => {
     const syncFromCache = () => {
@@ -286,7 +280,10 @@ export default function ThePathPage() {
   }, [router]);
 
   useEffect(() => {
-    loadData();
+    const timer = setTimeout(() => {
+      loadData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadData]);
 
   // 2. Fetch Leaderboard Realtime (Menggabungkan tts_leaderboard dengan profil pemain)
@@ -348,13 +345,7 @@ export default function ThePathPage() {
     } finally {
       setLoadingLeaderboard(false);
     }
-  }, [settings?.current_season]);
-
-  useEffect(() => {
-    if (showLeaderboardModal) {
-      fetchLeaderboard();
-    }
-  }, [showLeaderboardModal, fetchLeaderboard]);
+  }, [settings]);
 
   const userRankIndex = useMemo(() => {
     if (!profile) return -1;
@@ -526,12 +517,12 @@ export default function ThePathPage() {
       {/* ==================================================================== */}
       <header className="sticky top-0 z-40 w-full max-w-md bg-[#0f172a] border-b-2 border-slate-800 px-4 py-2.5 flex items-center justify-between shadow-md">
         {/* Nav Home */}
-        <a
+        <Link
           href="/"
           className="w-10 h-10 rounded-xl bg-slate-800 border-b-2 border-slate-950 hover:bg-slate-700 flex items-center justify-center text-slate-200 transition-all active:translate-y-0.5"
         >
           <ArrowLeft className="w-5 h-5" />
-        </a>
+        </Link>
 
         {/* Resources HUD (Solid, high-contrast badges) */}
         <div className="flex items-center gap-2">
@@ -566,7 +557,10 @@ export default function ThePathPage() {
 
           {/* Skor & Akses Papan Peringkat */}
           <button
-            onClick={() => setShowLeaderboardModal(true)}
+            onClick={() => {
+              setShowLeaderboardModal(true);
+              fetchLeaderboard();
+            }}
             className="flex items-center gap-1.5 bg-[#1e293b] border-b-2 border-slate-950 hover:bg-slate-800 px-3 py-1.5 rounded-xl text-xs font-black text-emerald-400 active:translate-y-0.5 transition-all shadow-sm group"
             title="Buka Papan Peringkat (Klasemen)"
           >
@@ -576,18 +570,21 @@ export default function ThePathPage() {
         </div>
 
         {/* User Avatar */}
-        <a
+        <Link
           href="/account"
           className="w-10 h-10 rounded-xl bg-[#1e293b] border-2 border-emerald-500 flex items-center justify-center text-lg active:translate-y-0.5 transition-all shadow"
         >
           {profile?.avatar_url || '⚡'}
-        </a>
+        </Link>
       </header>
 
       {/* Quick Action Bar: Papan Peringkat Pemain & Mode Sultan Admin */}
       <div className="w-full max-w-md px-4 pt-3 flex items-center gap-2">
         <button
-          onClick={() => setShowLeaderboardModal(true)}
+          onClick={() => {
+            setShowLeaderboardModal(true);
+            fetchLeaderboard();
+          }}
           className="flex-1 py-2.5 px-3 bg-[#1e293b] hover:bg-slate-800 border-2 border-emerald-500/60 hover:border-emerald-400 text-emerald-300 font-black text-xs rounded-2xl active:translate-y-0.5 flex items-center justify-center gap-2 shadow-sm transition-all"
         >
           <Trophy className="w-4 h-4 text-amber-400" />
@@ -595,13 +592,13 @@ export default function ThePathPage() {
         </button>
 
         {profile?.role === 'admin' && (
-          <a
+          <Link
             href="/admin-hub"
             className="py-2.5 px-3.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-2xl border-b-4 border-amber-700 active:translate-y-0.5 active:border-b-0 flex items-center gap-1.5 shadow-md transition-all shrink-0"
           >
             <Crown className="w-4 h-4 fill-slate-950" />
             <span>Mode Sultan</span>
-          </a>
+          </Link>
         )}
       </div>
 

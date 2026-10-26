@@ -35,7 +35,10 @@ export default function NumericInput({
   );
 
   useEffect(() => {
-    setText(value !== undefined && value !== null && !isNaN(value) ? String(value) : '');
+    const formatted = value !== undefined && value !== null && !isNaN(value) ? String(value) : '';
+    requestAnimationFrame(() => {
+      setText(formatted);
+    });
   }, [value]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

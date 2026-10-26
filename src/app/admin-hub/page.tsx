@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo, Suspense } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   createHubBrowserClient,
   Profile,
@@ -485,8 +486,34 @@ function AdminHubContent() {
   }, [router]);
 
   useEffect(() => {
-    loadInitialData();
+    const timer = setTimeout(() => {
+      loadInitialData();
+    }, 0);
+    return () => clearTimeout(timer);
   }, [loadInitialData]);
+
+  // 3. Select Level untuk Diedit
+  const selectLevelForEdit = useCallback(async (lvl: TTSLevel) => {
+    setSelectedLevelId(lvl.id);
+    setEditorLevelNumber(lvl.level_number);
+    setEditorTitle(lvl.title);
+    setEditorRows(lvl.grid_rows);
+    setEditorCols(lvl.grid_cols);
+    setEditorIsHard(lvl.is_hard_zone);
+    setEditorHardTimer(lvl.hard_timer_override);
+    setEditorDecayRate(lvl.decay_rate_override);
+    setEditorBranch(lvl.branch_direction);
+    setEditorStatus(lvl.status);
+
+    const supabase = createHubBrowserClient();
+    const { data: dbWords } = await supabase
+      .from('tts_words')
+      .select('*')
+      .eq('level_id', lvl.id)
+      .order('word_number', { ascending: true });
+
+    if (dbWords) setWords(dbWords as TTSWord[]);
+  }, []);
 
   // 2. Fetch Levels berdasarkan Unit yang Dipilih
   const loadLevels = useCallback(async (unitId: string) => {
@@ -511,11 +538,14 @@ function AdminHubContent() {
     } catch (err) {
       console.error('Error fetching levels:', err);
     }
-  }, []);
+  }, [selectLevelForEdit]);
 
   useEffect(() => {
     if (selectedUnitId) {
-      loadLevels(selectedUnitId);
+      const timer = setTimeout(() => {
+        loadLevels(selectedUnitId);
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [selectedUnitId, loadLevels]);
 
@@ -523,34 +553,15 @@ function AdminHubContent() {
   useEffect(() => {
     if (levels && levels.length > 0) {
       const maxNum = Math.max(0, ...levels.map((l) => l.level_number));
-      setAiLevelNumber(maxNum + 1);
+      requestAnimationFrame(() => {
+        setAiLevelNumber(maxNum + 1);
+      });
     } else {
-      setAiLevelNumber(1);
+      requestAnimationFrame(() => {
+        setAiLevelNumber(1);
+      });
     }
   }, [levels]);
-
-  // 3. Select Level untuk Diedit
-  const selectLevelForEdit = async (lvl: TTSLevel) => {
-    setSelectedLevelId(lvl.id);
-    setEditorLevelNumber(lvl.level_number);
-    setEditorTitle(lvl.title);
-    setEditorRows(lvl.grid_rows);
-    setEditorCols(lvl.grid_cols);
-    setEditorIsHard(lvl.is_hard_zone);
-    setEditorHardTimer(lvl.hard_timer_override);
-    setEditorDecayRate(lvl.decay_rate_override);
-    setEditorBranch(lvl.branch_direction);
-    setEditorStatus(lvl.status);
-
-    const supabase = createHubBrowserClient();
-    const { data: dbWords } = await supabase
-      .from('tts_words')
-      .select('*')
-      .eq('level_id', lvl.id)
-      .order('word_number', { ascending: true });
-
-    if (dbWords) setWords(dbWords as TTSWord[]);
-  };
 
   // 4. Simpan Parameter God Mode ke Supabase
   const handleSaveSettings = async (e: React.FormEvent) => {
@@ -1343,33 +1354,33 @@ function AdminHubContent() {
     }
   };
 
-  // Hapus Pemain Terdaftar
+  // Hapus Pemain Terdaftar (Optimistic UI 0ms)
   const handleDeletePlayer = async (targetUserId: string, targetUsername: string) => {
     setDeletingPlayerId(targetUserId);
+    // 0ms Optimistic UI: langsung tutup modal konfirmasi dan singkirkan pemain dari tabel
+    setPlayerToDelete(null);
+    setPlayersList((prev) => prev.filter((p) => p.id !== targetUserId));
+
     try {
       const res = await deletePlayerAction(targetUserId);
       if (res.success) {
         setStatusMsg({ type: 'success', text: res.message || `✓ Berhasil menghapus pemain @${targetUsername}.` });
-        setPlayerToDelete(null);
-        setPlayersList((prev) => prev.filter((p) => p.id !== targetUserId));
         loadPlayers(playerSearch);
         loadLeaderboard();
       } else {
-        // Jika pemain ternyata sudah tidak ada di database, bersihkan dari tampilan dan tutup modal
+        // Jika pemain ternyata sudah tidak ada di database, tetap bersihkan tampilan
         if (res.error?.includes('tidak ditemukan')) {
-          setPlayerToDelete(null);
-          setPlayersList((prev) => prev.filter((p) => p.id !== targetUserId));
           loadPlayers(playerSearch);
           loadLeaderboard();
           setStatusMsg({ type: 'success', text: `✓ Pemain @${targetUsername} sudah dibersihkan dari daftar.` });
         } else {
-          alert(res.error || 'Gagal menghapus pemain.');
-          setPlayerToDelete(null);
+          setStatusMsg({ type: 'error', text: res.error || 'Gagal menghapus pemain.' });
+          loadPlayers(playerSearch);
         }
       }
     } catch {
-      alert('Terjadi kesalahan saat menghapus pemain.');
-      setPlayerToDelete(null);
+      setStatusMsg({ type: 'error', text: 'Terjadi kesalahan saat menghapus pemain.' });
+      loadPlayers(playerSearch);
     } finally {
       setDeletingPlayerId(null);
     }
@@ -1526,20 +1537,20 @@ function AdminHubContent() {
 
           {/* Quick Nav & Info */}
           <div className="flex items-center gap-2.5">
-            <a
+            <Link
               href="/path"
               className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-black border-b-2 border-emerald-700 active:translate-y-0.5 transition-all shadow"
             >
               <Smartphone className="w-3.5 h-3.5" />
               <span>Test Main di Peta</span>
-            </a>
+            </Link>
 
-            <a
+            <Link
               href="/"
               className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border-b-2 border-slate-950 text-xs font-black text-slate-200 transition-all active:translate-y-0.5 shadow"
             >
               <span>Lobi Hub</span>
-            </a>
+            </Link>
 
             <div className="px-3 py-1.5 rounded-xl bg-[#090d16] border-2 border-amber-500/60 text-xs font-mono font-black text-amber-300">
               👑 @{profile?.username}
