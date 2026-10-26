@@ -519,12 +519,14 @@ function TTSGameContent() {
   );
 
   // ============================================================================
-  // 7. EVALUASI JAWABAN KATA (SERVER VALIDATION, ANTI-SPEEDHACK & ANTI-REPLAY)
+  // 7. OPTIMISTIC GAMEPLAY UI: EVALUASI JAWABAN KATA
+  // - 0ms Instant Client-Side Validation: Validasi kebenaran jawaban murni di frontend
+  // - 0ms Zero-Latency Visual: Ubah sel jadi hijau, putar audio skor, dan update progres secara sinkron
+  // - Background Sync (Fire-and-Forget): Simpan skor dan progres ke database di latar belakang
   // ============================================================================
   const checkWordSubmission = useCallback(
-    async (word: TTSWord, currentGrid: Record<string, string>) => {
+    (word: TTSWord, currentGrid: Record<string, string>) => {
       if (!sessionToken || isGameOver || isVictory || isAccountTerminated) return;
-      if (evaluatingWordIdsRef.current.has(word.id)) return;
       if (completedWordIdsRef.current.includes(word.id)) return;
 
       // Susun kata dari kotak
@@ -537,94 +539,127 @@ function TTSGameContent() {
         const isCellCompleted = cellInfo && cellInfo.wordIds.some((wid) => completedWordIdsRef.current.includes(wid));
         // Jika kotak sudah menjadi bagian dari kata yang selesai, selalu gunakan huruf asli yang valid
         const char = isCellCompleted ? cellInfo.letter : (currentGrid[key] || '');
-        if (!char) return; // Belum lengkap
+        if (!char) return; // Belum lengkap (pemain masih mengetik)
         assembled += char;
       }
 
-      // Kunci anti-spam submit paralel untuk kata yang sama
-      const submissionKey = `${word.id}:${assembled}`;
-      if (evaluatedSubmissionsRef.current.has(submissionKey)) return;
+      const cleanAssembled = assembled.trim().toUpperCase();
+      const cleanTargetWord = word.word.trim().toUpperCase();
 
-      evaluatingWordIdsRef.current.add(word.id);
-      try {
-        const res = await submitWordAction({
+      // Kunci anti-spam submit paralel untuk kata yang sama persis
+      const submissionKey = `${word.id}:${cleanAssembled}`;
+      if (evaluatedSubmissionsRef.current.has(submissionKey)) return;
+      evaluatedSubmissionsRef.current.add(submissionKey);
+
+      // 1. INSTANT CLIENT-SIDE VALIDATION (0ms)
+      const isWordCorrect = cleanAssembled === cleanTargetWord;
+
+      if (isWordCorrect) {
+        // ======================================================================
+        // 2. ZERO-LATENCY VISUAL UPDATE (0ms Sinkron tanpa menunggu server)
+        // ======================================================================
+        sounds.playScoreUp();
+
+        // Hitung skor & combo lokal seketika
+        const currentCombo = comboMultiplier;
+        const nextCombo = Math.min(3.0, +(currentCombo + 0.2).toFixed(1));
+        setComboMultiplier(nextCombo);
+
+        const earnedPoints = Math.round((word.points || 100) * currentCombo);
+        setScoreEarned((prev) => prev + earnedPoints);
+
+        const currentCompleted = completedWordIdsRef.current;
+        const nextCompleted = currentCompleted.includes(word.id)
+          ? currentCompleted
+          : [...currentCompleted, word.id];
+        completedWordIdsRef.current = nextCompleted;
+        setCompletedWordIds(nextCompleted);
+
+        // Auto-Save background progress seketika
+        queueAutoSave(currentGrid, true);
+
+        // Cek apakah seluruh kata pada level ini telah selesai (Victory 0ms)
+        if (nextCompleted.length === words.length && !isCompletingLevel) {
+          setIsCompletingLevel(true);
+          setIsVictory(true);
+          sounds.playCorrect();
+          confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
+
+          // OPTIMISTIC UPDATE: Update status level tamat di cache Path seketika (0 ms)
+          const optimisticTotalScore = scoreEarned + earnedPoints;
+          updatePathOptimisticCompletion(levelId, optimisticTotalScore, 20);
+
+          // Background complete level action (Fire-and-Forget)
+          completeLevelAction({
+            levelId,
+            sessionToken,
+          })
+            .then((vRes) => {
+              if (vRes.isCheatDetected) {
+                triggerCheatViolation('Integritas skor level tidak valid');
+                return;
+              }
+              if (vRes.success) {
+                setVictoryData({
+                  score: vRes.scoreEarned ?? optimisticTotalScore,
+                  coins: vRes.coinsEarned ?? 20,
+                  nextLevelId: vRes.nextLevelId,
+                });
+                updatePathOptimisticCompletion(
+                  levelId,
+                  vRes.scoreEarned ?? optimisticTotalScore,
+                  vRes.coinsEarned ?? 20
+                );
+              } else if (vRes.error) {
+                showNotice(vRes.error, 'error');
+              }
+            })
+            .catch((err) => console.error('Error completing level in background:', err))
+            .finally(() => {
+              setIsCompletingLevel(false);
+            });
+        }
+
+        // ======================================================================
+        // 3. BACKGROUND SYNC (Fire-and-Forget ke Supabase)
+        // ======================================================================
+        submitWordAction({
           levelId,
           wordId: word.id,
-          submittedWord: assembled,
+          submittedWord: cleanAssembled,
           sessionToken,
-        });
+        })
+          .then((res) => {
+            if (res.isCheatDetected) {
+              triggerCheatViolation();
+              return;
+            }
+            if (res.success) {
+              if (res.newCombo) setComboMultiplier(res.newCombo);
+              if (res.totalScoreNow !== undefined) setScoreEarned(res.totalScoreNow);
+            }
+          })
+          .catch((err) => console.error('Background word submit error:', err));
+      } else {
+        // Jawaban Salah: Efek getar (shake) & audio seketika (0ms)
+        sounds.playWrong();
+        setComboMultiplier(1.0);
+        setShakingWordId(word.id);
+        setTimeout(() => setShakingWordId(null), 600);
 
-        // Deteksi Anomali Cheat / Tampering dari Server
-        if (res.isCheatDetected) {
-          triggerCheatViolation();
-          return;
-        }
-
-        if (res.success && res.isCorrect) {
-          evaluatedSubmissionsRef.current.add(submissionKey);
-          sounds.playScoreUp();
-          if (res.newCombo) setComboMultiplier(res.newCombo);
-          if (res.totalScoreNow !== undefined) setScoreEarned(res.totalScoreNow);
-
-          const currentCompleted = completedWordIdsRef.current;
-          const nextCompleted = currentCompleted.includes(word.id)
-            ? currentCompleted
-            : [...currentCompleted, word.id];
-          completedWordIdsRef.current = nextCompleted;
-          setCompletedWordIds(nextCompleted);
-
-          // Cek apakah seluruh kata pada level ini telah selesai
-          if (nextCompleted.length === words.length && !isCompletingLevel) {
-            setIsCompletingLevel(true);
-            setIsVictory(true);
-            sounds.playCorrect();
-            confetti({ particleCount: 90, spread: 70, origin: { y: 0.6 } });
-
-            // OPTIMISTIC UPDATE: Update status level tamat di cache Path seketika (0 ms)
-            updatePathOptimisticCompletion(levelId, scoreEarned, 20);
-
-            completeLevelAction({
-              levelId,
-              sessionToken,
-            })
-              .then((vRes) => {
-                if (vRes.isCheatDetected) {
-                  triggerCheatViolation('Integritas skor level tidak valid');
-                  return;
-                }
-                if (vRes.success) {
-                  setVictoryData({
-                    score: vRes.scoreEarned ?? 0,
-                    coins: vRes.coinsEarned ?? 20,
-                    nextLevelId: vRes.nextLevelId,
-                  });
-                  updatePathOptimisticCompletion(
-                    levelId,
-                    vRes.scoreEarned ?? scoreEarned,
-                    vRes.coinsEarned ?? 20
-                  );
-                } else if (vRes.error) {
-                  showNotice(vRes.error, 'error');
-                }
-              })
-              .finally(() => {
-                setIsCompletingLevel(false);
-              });
-          }
-
-          // Simpan langsung state kata benar seketika di latar belakang
-          queueAutoSave(currentGrid, true);
-        } else {
-          // Salah: efek shake & suara salah
-          sounds.playWrong();
-          setComboMultiplier(1.0);
-          setShakingWordId(word.id);
-          setTimeout(() => setShakingWordId(null), 600);
-        }
-      } catch (err) {
-        console.error('Error submitting word:', err);
-      } finally {
-        evaluatingWordIdsRef.current.delete(word.id);
+        // Kirim log kata salah ke server di latar belakang (Fire-and-Forget)
+        submitWordAction({
+          levelId,
+          wordId: word.id,
+          submittedWord: cleanAssembled,
+          sessionToken,
+        })
+          .then((res) => {
+            if (res.isCheatDetected) {
+              triggerCheatViolation();
+            }
+          })
+          .catch((err) => console.error('Background wrong word log error:', err));
       }
     },
     [
@@ -635,6 +670,9 @@ function TTSGameContent() {
       isAccountTerminated,
       isCompletingLevel,
       words.length,
+      activeCellsMap,
+      comboMultiplier,
+      scoreEarned,
       queueAutoSave,
       triggerCheatViolation,
       showNotice,
@@ -700,16 +738,42 @@ function TTSGameContent() {
           ? selectedCell.c - currentWord.start_col
           : selectedCell.r - currentWord.start_row;
 
+      let advanced = false;
       for (let step = 1; idxInWord + step < currentWord.word.length; step++) {
         const nextR = currentWord.direction === 'across' ? selectedCell.r : selectedCell.r + step;
         const nextC = currentWord.direction === 'across' ? selectedCell.c + step : selectedCell.c;
         const nextKey = `${nextR},${nextC}`;
         const nextData = activeCellsMap[nextKey];
-        const isNextCompleted = nextData && nextData.wordIds.some((wid) => completedWordIds.includes(wid));
+        const isNextCompleted = nextData && nextData.wordIds.some((wid) => completedWordIdsRef.current.includes(wid));
 
         setSelectedCell({ r: nextR, c: nextC });
         if (!isNextCompleted) {
+          advanced = true;
           break; // Berhenti di kotak kosong/belum selesai berikutnya
+        }
+      }
+
+      // Jika kata aktif ini sudah selesai/terisi penuh dan tidak ada sel kosong berikutnya,
+      // otomatis pindahkan kursor ke kata lain yang belum selesai (0 ms transition)
+      if (!advanced) {
+        const remainingWord = words.find((w) => !completedWordIdsRef.current.includes(w.id));
+        if (remainingWord && remainingWord.id !== currentWord.id) {
+          let targetR = remainingWord.start_row;
+          let targetC = remainingWord.start_col;
+          for (let step = 0; step < remainingWord.word.length; step++) {
+            const checkR = remainingWord.direction === 'across' ? remainingWord.start_row : remainingWord.start_row + step;
+            const checkC = remainingWord.direction === 'across' ? remainingWord.start_col + step : remainingWord.start_col;
+            const checkKey = `${checkR},${checkC}`;
+            const checkData = activeCellsMap[checkKey];
+            const isCompleted = checkData && checkData.wordIds.some((wid) => completedWordIdsRef.current.includes(wid));
+            if (!isCompleted && !newGrid[checkKey]) {
+              targetR = checkR;
+              targetC = checkC;
+              break;
+            }
+          }
+          setSelectedWordId(remainingWord.id);
+          setSelectedCell({ r: targetR, c: targetC });
         }
       }
     },
