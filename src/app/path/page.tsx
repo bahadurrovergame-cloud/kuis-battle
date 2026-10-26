@@ -226,9 +226,18 @@ export default function ThePathPage() {
     try {
       const res = await getPathDataAction();
       if (!res.success) {
+        if (res.isBanned) {
+          router.replace('/banned');
+          return;
+        }
         if (res.error?.includes('Unauthorized')) {
           router.push('/login?redirect=/path');
         }
+        return;
+      }
+
+      if (res.profile?.is_banned && res.profile?.role !== 'admin') {
+        router.replace('/banned');
         return;
       }
 

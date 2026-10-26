@@ -82,9 +82,15 @@ function LoginContent() {
       if (data.user) {
         const { data: prof } = await supabase
           .from('profiles')
-          .select('role')
+          .select('role, is_banned')
           .eq('id', data.user.id)
           .maybeSingle();
+
+        if (prof?.is_banned && prof?.role !== 'admin') {
+          router.push('/banned');
+          router.refresh();
+          return;
+        }
 
         if (explicitRedirect) {
           router.push(explicitRedirect);

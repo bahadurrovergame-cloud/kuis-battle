@@ -1969,7 +1969,14 @@ function AdminHubContent() {
                               <div className="flex items-center gap-2">
                                 <span className="text-base">{p.avatar_url || '⚡'}</span>
                                 <div>
-                                  <span className="font-bold text-white block">@{p.username}</span>
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="font-bold text-white block">@{p.username}</span>
+                                    {p.is_banned && (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">
+                                        BANNED
+                                      </span>
+                                    )}
+                                  </div>
                                   {isMe && <span className="text-[10px] text-amber-400 font-bold">(Akun Anda)</span>}
                                 </div>
                               </div>
@@ -2173,7 +2180,18 @@ function AdminHubContent() {
                             />
                           </td>
                           <td className="py-2.5 px-4 font-mono font-bold text-rose-300">
-                            {b.email}
+                            <div className="flex flex-col">
+                              <span>
+                                {b.username
+                                  ? `@${b.username}`
+                                  : b.email.includes('@player.kuisbattle.com')
+                                  ? `@${b.email.replace('@player.kuisbattle.com', '')}`
+                                  : b.email}
+                              </span>
+                              {b.username && (
+                                <span className="text-[10px] text-slate-500 font-sans">{b.email}</span>
+                              )}
+                            </div>
                           </td>
                           <td className="py-2.5 px-4 text-slate-300 text-[11px]">
                             {b.reason || 'Terdeteksi manipulasi game/pindah layar 3x'}

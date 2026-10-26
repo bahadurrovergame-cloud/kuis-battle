@@ -30,6 +30,9 @@ export interface Profile {
   max_lives: number;
   last_life_regen: string;
   badges: string[];
+  is_banned?: boolean;
+  banned_reason?: string | null;
+  banned_at?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -141,6 +144,7 @@ export interface BannedUser {
   id: string;
   email: string;
   user_id: string | null;
+  username?: string | null;
   reason: string;
   banned_at: string;
 }

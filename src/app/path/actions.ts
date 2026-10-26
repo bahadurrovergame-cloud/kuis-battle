@@ -18,6 +18,7 @@ export async function getPathDataAction(): Promise<{
   units?: TTSUnit[];
   levels?: TTSLevel[];
   userProgress?: Record<string, TTSUserProgress>;
+  isBanned?: boolean;
   error?: string;
 }> {
   try {
@@ -54,6 +55,11 @@ export async function getPathDataAction(): Promise<{
     ]);
 
     const prof = (profRes.data as Profile) || null;
+
+    // CEK STATUS BANNED: Jika akun diblokir, hentikan akses ke peta dan lempar ke /banned
+    if (prof?.is_banned && prof?.role !== 'admin') {
+      return { success: false, isBanned: true, error: 'Akun Anda sedang diblokir oleh sistem Anti-Cheat.' };
+    }
     const setts = (settsRes.data as GameSettings) || null;
 
     // Kalkulasi regenerasi nyawa otomatis secara instan in-memory

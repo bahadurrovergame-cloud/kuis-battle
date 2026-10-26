@@ -22,7 +22,7 @@ export async function middleware(request: NextRequest) {
   }
 
   // 2. Perbarui sesi cookie Supabase Hub (sb-hub-auth-token) secara aman
-  let response = NextResponse.next({
+  const response = NextResponse.next({
     request: {
       headers: request.headers,
     },
@@ -60,6 +60,40 @@ export async function middleware(request: NextRequest) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('redirect', pathname);
     return NextResponse.redirect(loginUrl);
+  }
+
+  // 4. Proteksi Pemain Terkena Banned Anti-Cheat: Arahkan ke /banned
+  if (user && (pathname.startsWith('/path') || pathname.startsWith('/tts'))) {
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('is_banned, role')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (prof?.is_banned && prof?.role !== 'admin') {
+        return NextResponse.redirect(new URL('/banned', request.url));
+      }
+    } catch {
+      // Abaikan jika terjadi kegagalan query sementara di edge runtime
+    }
+  }
+
+  // Jika akun tidak dibanned mencoba membuka halaman /banned, arahkan ke /path
+  if (pathname === '/banned' && user) {
+    try {
+      const { data: prof } = await supabase
+        .from('profiles')
+        .select('is_banned')
+        .eq('id', user.id)
+        .maybeSingle();
+
+      if (prof && !prof.is_banned) {
+        return NextResponse.redirect(new URL('/path', request.url));
+      }
+    } catch {
+      // Abaikan
+    }
   }
 
   return response;

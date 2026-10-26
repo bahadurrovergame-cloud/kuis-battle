@@ -21,6 +21,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     max_lives INTEGER NOT NULL DEFAULT 5,
     last_life_regen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     badges JSONB NOT NULL DEFAULT '[]'::jsonb,
+    is_banned BOOLEAN NOT NULL DEFAULT FALSE,
+    banned_reason TEXT DEFAULT NULL,
+    banned_at TIMESTAMPTZ DEFAULT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -28,6 +31,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
 -- Indeks untuk pencarian cepat & leaderboard
 CREATE INDEX IF NOT EXISTS idx_profiles_username ON public.profiles(username);
 CREATE INDEX IF NOT EXISTS idx_profiles_total_score ON public.profiles(total_score DESC);
+CREATE INDEX IF NOT EXISTS idx_profiles_is_banned ON public.profiles(is_banned);
 
 -- 3. TABEL: GAME_SETTINGS (God Mode Parameters)
 -- Menyimpan parameter global yang dapat diatur via Admin Hub tanpa coding.
@@ -374,7 +378,7 @@ CREATE POLICY "Allow server and admin to manage banned users"
     USING (true)
     WITH CHECK (true);
 
--- Fungsi Khusus Super-User untuk Eksekusi Pemusnahan Akun Seketika (Cascade Delete)
+-- Fungsi Khusus Super-User untuk Eksekusi Pemblokiran Akun Seketika (Anti-Cheat Flagging)
 CREATE OR REPLACE FUNCTION public.execute_anti_cheat_ban(target_user_id UUID, target_email TEXT, ban_reason TEXT)
 RETURNS BOOLEAN AS $$
 BEGIN
@@ -384,13 +388,17 @@ BEGIN
     ON CONFLICT (email) DO UPDATE 
     SET reason = EXCLUDED.reason, banned_at = NOW();
 
-    -- 2. Hapus data game pemain
+    -- 2. Flag status profil pemain sebagai BANNED
+    UPDATE public.profiles
+    SET is_banned = TRUE,
+        banned_reason = ban_reason,
+        banned_at = NOW(),
+        updated_at = NOW()
+    WHERE id = target_user_id;
+
+    -- 3. Hapus data game dan klasemen pemain agar tidak mengacaukan ranking
     DELETE FROM public.tts_user_progress WHERE user_id = target_user_id;
     DELETE FROM public.tts_leaderboard WHERE user_id = target_user_id;
-    DELETE FROM public.profiles WHERE id = target_user_id;
-
-    -- 3. Hapus langsung dari auth.users secara tuntas (memerlukan SECURITY DEFINER)
-    DELETE FROM auth.users WHERE id = target_user_id;
 
     RETURN TRUE;
 END;

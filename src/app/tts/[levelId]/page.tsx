@@ -241,8 +241,7 @@ function TTSGameContent() {
   const [shakingWordId, setShakingWordId] = useState<string | null>(null);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const lastInputTimestampRef = useRef<number>(0);
-  const lastInputCharRef = useRef<string>('');
+  const inputProcessedRef = useRef<boolean>(false);
 
   const updateCheatModalType = useCallback((type: 1 | 2 | 3 | null) => {
     cheatModalTypeRef.current = type;
@@ -448,8 +447,8 @@ function TTSGameContent() {
           console.error('[Anti-Cheat Client] Gagal mengeksekusi pemusnahan akun:', err);
         } finally {
           setTimeout(() => {
-            router.push('/login?error=account_terminated');
-          }, 3500);
+            router.push('/banned');
+          }, 3000);
         }
       }
     },
@@ -690,14 +689,6 @@ function TTSGameContent() {
       const clean = char.slice(-1).toUpperCase();
       if (!/^[A-Z]$/.test(clean)) return;
 
-      // Debounce anti-burst input (Mencegah Android Gboard IME loop mengirim huruf kembar cepat seperti 'A A A')
-      const now = Date.now();
-      if (clean === lastInputCharRef.current && now - lastInputTimestampRef.current < 90) {
-        return;
-      }
-      lastInputTimestampRef.current = now;
-      lastInputCharRef.current = clean;
-
       // Bersihkan buffer input seketika agar tidak menumpuk karakter lama
       if (inputRef.current) {
         inputRef.current.value = '';
@@ -852,10 +843,18 @@ function TTSGameContent() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Backspace') {
       e.preventDefault();
+      inputProcessedRef.current = true;
       handleBackspace();
     } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
       handleArrowNavigation(e.key as 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown');
+    } else if (/^[a-zA-Z]$/.test(e.key)) {
+      e.preventDefault();
+      inputProcessedRef.current = true;
+      handleCellInput(e.key.toUpperCase());
+      if (inputRef.current) {
+        inputRef.current.value = '';
+      }
     }
   };
 
@@ -1093,7 +1092,7 @@ function TTSGameContent() {
 
   return (
     <main
-      className={`min-h-screen bg-slate-950 text-slate-100 flex flex-col items-center justify-start relative overflow-hidden select-none pb-2 transition-colors duration-500 ${
+      className={`min-h-[100dvh] bg-slate-950 text-slate-100 flex flex-col items-center justify-start relative overflow-x-hidden overflow-y-auto select-none pb-2 transition-colors duration-500 ${
         freezeRemaining > 0 ? 'ring-8 ring-cyan-500/40 ring-inset bg-slate-950' : ''
       }`}
     >
@@ -1104,7 +1103,7 @@ function TTSGameContent() {
         defaultValue=""
         inputMode="text"
         autoCapitalize="characters"
-        autoComplete="one-time-code"
+        autoComplete="off"
         autoCorrect="off"
         spellCheck="false"
         onPaste={(e) => e.preventDefault()} // ANTI-COPAS MUTLAK
@@ -1112,19 +1111,34 @@ function TTSGameContent() {
           const nativeEvt = e.nativeEvent as InputEvent;
           if (nativeEvt.inputType === 'deleteContentBackward') {
             e.preventDefault();
+            inputProcessedRef.current = true;
             handleBackspace();
             return;
           }
-          if (nativeEvt.data && /^[a-zA-Z]$/.test(nativeEvt.data)) {
-            e.preventDefault();
-            handleCellInput(nativeEvt.data);
+          if (nativeEvt.data) {
+            const char = nativeEvt.data.slice(-1);
+            if (/^[a-zA-Z]$/.test(char)) {
+              e.preventDefault();
+              inputProcessedRef.current = true;
+              handleCellInput(char);
+              if (inputRef.current) {
+                inputRef.current.value = '';
+              }
+            }
           }
         }}
         onChange={(e) => {
           const val = e.target.value;
           e.target.value = '';
+          if (inputProcessedRef.current) {
+            inputProcessedRef.current = false;
+            return;
+          }
           if (val) {
-            handleCellInput(val);
+            const char = val.slice(-1);
+            if (/^[a-zA-Z]$/.test(char)) {
+              handleCellInput(char);
+            }
           }
         }}
         onKeyDown={handleKeyDown}
@@ -1393,26 +1407,25 @@ function TTSGameContent() {
       {/* MODAL 3: EKSEKUSI PEMUSNAHAN AKUN OTOMATIS (CASCADE DELETE EXECUTED) */}
       {/* ==================================================================== */}
       {cheatModalType === 3 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl">
-          <div className="w-full max-w-sm rounded-3xl p-6 bg-slate-950 border-2 border-rose-700 shadow-2xl text-center">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-in fade-in">
+          <div className="w-full max-w-sm rounded-3xl p-6 bg-slate-950 border-2 border-rose-600 shadow-2xl text-center">
             <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-rose-950 border-2 border-rose-600 flex items-center justify-center text-3xl animate-pulse">
-              💀
+              🚨
             </div>
 
             <h3 className="text-xl font-black text-rose-400 uppercase tracking-wider">
-              Akun Dimusnahkan
+              Akun Anda Telah Diblokir
             </h3>
             <p className="text-xs text-slate-300 mt-2 leading-relaxed">
               Anda terdeteksi melakukan kecurangan sebanyak 3 kali (berpindah layar / tab).
               <br />
               <b className="text-rose-400 block mt-2">
-                Seluruh data profil, skor, koin, dan email Anda telah dihapus permanen dari sistem
-                untuk menghemat memori.
+                Akses bermain Anda telah dibekukan oleh sistem Anti-Cheat. Skor Anda telah dikeluarkan dari klasemen.
               </b>
             </p>
 
             <div className="mt-5 text-[11px] text-slate-500 font-mono">
-              Mengalihkan ke halaman login...
+              Mengalihkan ke halaman pemblokiran...
             </div>
           </div>
         </div>
