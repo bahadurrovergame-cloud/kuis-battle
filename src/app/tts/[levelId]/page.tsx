@@ -207,8 +207,8 @@ function TTSGameContent() {
   const [victoryData, setVictoryData] = useState<{ score: number; coins: number; nextLevelId?: string } | null>(null);
 
   // Anti-Cheat Cryptographic Session Token & Execution Locks (Spam-Click Defense)
+  const sessionTokenRef = useRef<string>('');
   const [sessionToken, setSessionToken] = useState<string>('');
-  const [isEvaluatingWord, setIsEvaluatingWord] = useState(false);
   const evaluatingWordIdsRef = useRef<Set<string>>(new Set());
   const [isPendingHint, setIsPendingHint] = useState(false);
   const [isPendingFreeze, setIsPendingFreeze] = useState(false);
@@ -546,7 +546,6 @@ function TTSGameContent() {
       if (evaluatedSubmissionsRef.current.has(submissionKey)) return;
 
       evaluatingWordIdsRef.current.add(word.id);
-      setIsEvaluatingWord(evaluatingWordIdsRef.current.size > 0);
       try {
         const res = await submitWordAction({
           levelId,
@@ -626,7 +625,6 @@ function TTSGameContent() {
         console.error('Error submitting word:', err);
       } finally {
         evaluatingWordIdsRef.current.delete(word.id);
-        setIsEvaluatingWord(evaluatingWordIdsRef.current.size > 0);
       }
     },
     [
@@ -853,8 +851,9 @@ function TTSGameContent() {
   useEffect(() => {
     const onGlobalKeyDown = (e: KeyboardEvent) => {
       if (isGameOver || isVictory || isAccountTerminated || cheatModalType || showCoinModal) return;
-      if (e.target instanceof HTMLInputElement && e.target !== inputRef.current) return;
-      if (e.target instanceof HTMLTextAreaElement) return;
+      // Jika inputRef sedang aktif, biarkan elemen input menanganinya langsung tanpa duplikasi
+      if (e.target === inputRef.current) return;
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
 
       if (e.key === 'Backspace') {
         e.preventDefault();
