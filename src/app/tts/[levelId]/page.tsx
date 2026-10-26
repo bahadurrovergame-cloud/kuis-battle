@@ -237,6 +237,11 @@ function TTSGameContent() {
   const lastViolationTimeRef = useRef(0);
   const isExecutingTerminationRef = useRef(false);
 
+  // Anti-Cheat Instant Blackout Overlay State & Level Start Timestamp (Tahap 3)
+  const [isScreenCovered, setIsScreenCovered] = useState(false);
+  const isScreenCoveredRef = useRef(false);
+  const levelStartTimeRef = useRef<number>(0);
+
   // Visual Effects
   const [shakingWordId, setShakingWordId] = useState<string | null>(null);
   const autoSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -280,6 +285,7 @@ function TTSGameContent() {
         const actualWords = res.words && res.words.length > 0 ? res.words : FALLBACK_WORDS;
         setWords(actualWords);
         wordsRef.current = actualWords;
+        levelStartTimeRef.current = Date.now(); // Catat waktu mulai asli untuk proteksi speedhack
         if (actualWords.length > 0) {
           setSelectedWordId(actualWords[0].id);
           setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
@@ -456,18 +462,61 @@ function TTSGameContent() {
   );
 
   useEffect(() => {
-    // HANYA gunakan document.visibilitychange (document.hidden === true).
-    // JANGAN gunakan window.onblur karena dialog/alert, klik ekstensi, atau popup browser
-    // akan memicu window.blur secara salah (false positive).
+    // 1. PAGE VISIBILITY & WINDOW BLUR API (ANTI-SCREENSHOT & ANTI-TAB SWITCH)
     const handleVisibilityChange = () => {
+      if (
+        loading ||
+        isGameOver ||
+        isVictory ||
+        isAccountTerminated ||
+        isExecutingTerminationRef.current
+      ) {
+        return;
+      }
+
       if (document.hidden) {
-        triggerCheatViolation('Pindah tab / membuka aplikasi lain saat bermain');
+        // REAKSI INSTAN: Seketika tutup seluruh layar dengan blackout overlay pekat
+        isScreenCoveredRef.current = true;
+        setIsScreenCovered(true);
+      } else {
+        // Pemain kembali ke tab / layar
+        if (isScreenCoveredRef.current) {
+          isScreenCoveredRef.current = false;
+          setIsScreenCovered(false);
+          triggerCheatViolation('Terdeteksi meninggalkan layar pengerjaan kuis / beralih tab');
+        }
+      }
+    };
+
+    const handleWindowBlur = () => {
+      if (
+        loading ||
+        isGameOver ||
+        isVictory ||
+        isAccountTerminated ||
+        cheatModalTypeRef.current !== null ||
+        isExecutingTerminationRef.current
+      ) {
+        return;
+      }
+      // REAKSI INSTAN: Window kehilangan fokus (split-screen / tangkapan layar / notification drawer)
+      isScreenCoveredRef.current = true;
+      setIsScreenCovered(true);
+    };
+
+    const handleWindowFocus = () => {
+      if (isScreenCoveredRef.current) {
+        isScreenCoveredRef.current = false;
+        setIsScreenCovered(false);
+        triggerCheatViolation('Terdeteksi meninggalkan layar pengerjaan kuis / kehilangan fokus layar');
       }
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
 
-    // Aktifkan Console Guardian & Anti-DevTools
+    // 2. Aktifkan Console Guardian & Anti-DevTools
     const cleanupGuardian = setupConsoleGuardian({
       onDevToolsDetected: (reason) => {
         triggerCheatViolation(reason);
@@ -477,9 +526,11 @@ function TTSGameContent() {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
       cleanupGuardian();
     };
-  }, [triggerCheatViolation]);
+  }, [loading, isGameOver, isVictory, isAccountTerminated, triggerCheatViolation]);
 
   // ============================================================================
   // 6. DEBOUNCED CLOUD AUTO-SAVE (ANTI-SPAM DATABASE DENGAN TOKEN SESI)
@@ -581,6 +632,17 @@ function TTSGameContent() {
 
         // Cek apakah seluruh kata pada level ini telah selesai (Victory 0ms)
         if (nextCompleted.length === words.length && !isCompletingLevel) {
+          // SPEEDHACK BARRIER (TAHAP 3): Validasi Durasi Pengerjaan Level
+          const elapsedSeconds = (Date.now() - levelStartTimeRef.current) / 1000;
+          if (elapsedSeconds < 3.0) {
+            showNotice(
+              `🚨 Anomali Kecepatan (Speedhack): Waktu penyelesaian (${elapsedSeconds.toFixed(1)}s) tidak wajar! Skor ditolak.`,
+              'error'
+            );
+            triggerCheatViolation(`Speedhack terdeteksi: Menyelesaikan level dalam ${elapsedSeconds.toFixed(1)} detik`);
+            return;
+          }
+
           setIsCompletingLevel(true);
           setIsVictory(true);
           sounds.playCorrect();
@@ -1092,10 +1154,33 @@ function TTSGameContent() {
 
   return (
     <main
+      onContextMenu={(e) => e.preventDefault()}
+      style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
       className={`min-h-[100dvh] bg-slate-950 text-slate-100 flex flex-col items-center justify-start relative overflow-x-hidden overflow-y-auto select-none pb-2 transition-colors duration-500 ${
         freezeRemaining > 0 ? 'ring-8 ring-cyan-500/40 ring-inset bg-slate-950' : ''
       }`}
     >
+      {/* ==================================================================== */}
+      {/* 1. INSTANT BLACKOUT OVERLAY (ANTI-SCREENSHOT & ANTI-TAB SWITCH)       */}
+      {/* Menutup seketika layar tanpa celah saat pemain beralih tab/screenshot */}
+      {/* ==================================================================== */}
+      {isScreenCovered && (
+        <div className="fixed inset-0 z-[9999] bg-black flex flex-col items-center justify-center p-6 text-center select-none cursor-not-allowed animate-in fade-in duration-75">
+          <div className="w-20 h-20 rounded-3xl bg-rose-950/90 border-2 border-rose-500 flex items-center justify-center text-4xl mb-4 shadow-2xl shadow-rose-950 animate-pulse">
+            🚫
+          </div>
+          <h2 className="text-xl sm:text-2xl font-black text-rose-500 uppercase tracking-widest font-mono mb-2">
+            LAYAR DIKUNCI (ANTI-CHEAT)
+          </h2>
+          <p className="text-xs sm:text-sm font-bold text-slate-300 max-w-sm mb-4 leading-relaxed">
+            Terdeteksi meninggalkan layar pengerjaan kuis, membuka panel lain, atau mencoba tangkapan layar.
+          </p>
+          <div className="px-4 py-2 rounded-xl bg-rose-900/40 border border-rose-500/40 text-xs font-mono font-bold text-rose-300">
+            🔒 Soal dan grid disembunyikan demi menjaga integritas kompetisi.
+          </div>
+        </div>
+      )}
+
       {/* Invisible Input untuk Menangkap Karakter Mobile & Desktop tanpa Mengganggu Layout */}
       <input
         ref={inputRef}
@@ -1364,38 +1449,37 @@ function TTSGameContent() {
       {/* MODAL 1 & 2: PERINGATAN KECURANGAN PINDAH LAYAR (SENSOR ANTI-CHEAT)   */}
       {/* ==================================================================== */}
       {cheatModalType && cheatModalType < 3 && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/85 backdrop-blur-md">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-xl animate-in fade-in duration-150">
           <div className="w-full max-w-sm rounded-3xl p-6 bg-slate-900 border-2 border-rose-600 shadow-2xl text-center animate-in zoom-in-95">
             <div className="w-16 h-16 mx-auto mb-3 rounded-2xl bg-rose-500/20 border-2 border-rose-500 flex items-center justify-center text-rose-400 text-3xl">
               ⚠️
             </div>
 
-            <h3 className="text-xl font-black text-white">
+            <h3 className="text-xl font-black text-rose-400 font-mono tracking-wide">
               {cheatModalType === 1 ? 'Peringatan Curang (1/3)' : 'Peringatan Terakhir (2/3)'}
             </h3>
 
-            <p className="text-xs text-rose-200 mt-2 leading-relaxed">
+            <p className="text-xs text-rose-200 mt-2.5 leading-relaxed">
               {cheatModalType === 1 ? (
                 <>
-                  Anda terdeteksi <b>berpindah tab / keluar dari aplikasi</b>. Dilarang mencari
-                  jawaban menggunakan AI atau browser lain!
+                  <b className="text-white block mb-1">Terdeteksi meninggalkan layar! (Peringatan 1/3)</b>
+                  Anda terdeteksi berpindah tab, keluar dari aplikasi, atau mencoba tangkapan layar. Dilarang mencari jawaban di luar game!
                   <br />
-                  <span className="text-rose-400 font-bold block mt-2">
-                    Tersisa 2 kesempatan sebelum akun dan data Anda dimusnahkan permanen.
+                  <span className="text-amber-400 font-bold block mt-2">
+                    Tersisa 2 kesempatan sebelum akun Anda diblokir (BANNED) dan skor di-reset.
                   </span>
                 </>
               ) : (
                 <>
-                  <b className="text-rose-400 block font-black">🚨 PERINGATAN KERAS!</b>
-                  Ini adalah peringatan terakhir Anda. <b>Satu kali lagi</b> Anda keluar dari layar
-                  permainan, akun beserta email Anda akan langsung <b>dihapus otomatis</b>!
+                  <b className="text-white block mb-1 font-black">🚨 PERINGATAN KERAS! (Peringatan 2/3)</b>
+                  Ini adalah peringatan terakhir Anda. <b>Satu kali lagi</b> Anda keluar dari layar permainan atau mencoba tangkapan layar, akun Anda akan langsung <b>DIBLOKIR (BANNED)</b> seketika!
                 </>
               )}
             </p>
 
             <button
               onClick={() => updateCheatModalType(null)}
-              className="w-full mt-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all shadow-lg shadow-rose-600/40"
+              className="w-full mt-5 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all shadow-lg shadow-rose-600/40 active:translate-y-0.5"
             >
               Saya Mengerti & Lanjut Bermain
             </button>
@@ -1404,7 +1488,7 @@ function TTSGameContent() {
       )}
 
       {/* ==================================================================== */}
-      {/* MODAL 3: EKSEKUSI PEMUSNAHAN AKUN OTOMATIS (CASCADE DELETE EXECUTED) */}
+      {/* MODAL 3: EKSEKUSI PEMBLOKIRAN AKUN OTOMATIS (BANNED)                 */}
       {/* ==================================================================== */}
       {cheatModalType === 3 && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/95 backdrop-blur-xl animate-in fade-in">
@@ -1413,14 +1497,14 @@ function TTSGameContent() {
               🚨
             </div>
 
-            <h3 className="text-xl font-black text-rose-400 uppercase tracking-wider">
-              Akun Anda Telah Diblokir
+            <h3 className="text-xl font-black text-rose-400 uppercase tracking-wider font-mono">
+              Akun Anda Telah Diblokir (3/3)
             </h3>
             <p className="text-xs text-slate-300 mt-2 leading-relaxed">
-              Anda terdeteksi melakukan kecurangan sebanyak 3 kali (berpindah layar / tab).
+              Anda terdeteksi melakukan pelanggaran layar sebanyak 3 kali (berpindah tab / tangkapan layar).
               <br />
               <b className="text-rose-400 block mt-2">
-                Akses bermain Anda telah dibekukan oleh sistem Anti-Cheat. Skor Anda telah dikeluarkan dari klasemen.
+                Akses bermain Anda telah dibekukan secara permanen oleh sistem Anti-Cheat. Seluruh skor dan progres telah di-reset.
               </b>
             </p>
 

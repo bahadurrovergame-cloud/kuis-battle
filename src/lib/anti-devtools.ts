@@ -54,7 +54,7 @@ export function setupConsoleGuardian({
     return false;
   };
 
-  // 3. Blokir Shortcut Keyboard DevTools
+  // 3. Blokir Shortcut Keyboard DevTools & Copy/Paste
   const handleKeyDown = (e: KeyboardEvent) => {
     // F12
     if (e.key === 'F12' || e.keyCode === 123) {
@@ -73,8 +73,7 @@ export function setupConsoleGuardian({
     if (
       (isCtrlOrMeta && isShiftOrAlt && (e.key === 'I' || e.key === 'i' || e.keyCode === 73)) ||
       (isCtrlOrMeta && isShiftOrAlt && (e.key === 'J' || e.key === 'j' || e.keyCode === 74)) ||
-      (isCtrlOrMeta && isShiftOrAlt && (e.key === 'C' || e.key === 'c' || e.keyCode === 67)) ||
-      (isCtrlOrMeta && (e.key === 'U' || e.key === 'u' || e.keyCode === 85)) // View Source
+      (isCtrlOrMeta && isShiftOrAlt && (e.key === 'C' || e.key === 'c' || e.keyCode === 67))
     ) {
       e.preventDefault();
       e.stopPropagation();
@@ -82,6 +81,21 @@ export function setupConsoleGuardian({
       onDevToolsDetected?.('Membuka DevTools via shortcut keyboard');
       return false;
     }
+
+    // Cegah Ctrl+C, Ctrl+V, Ctrl+X (Copy/Paste), Ctrl+U (View Source), Ctrl+S (Save), Ctrl+P (Print)
+    const lowerKey = e.key.toLowerCase();
+    if (isCtrlOrMeta && ['c', 'v', 'x', 's', 'p', 'u'].includes(lowerKey)) {
+      e.preventDefault();
+      e.stopPropagation();
+      displayAntiCheatBanner();
+      return false;
+    }
+  };
+
+  // Cegah event Clipboard API langsung
+  const handleClipboard = (e: ClipboardEvent) => {
+    e.preventDefault();
+    return false;
   };
 
   // 4. Deteksi DevTools via Perubahan Dimensi Window (Docked DevTools)
@@ -133,10 +147,13 @@ export function setupConsoleGuardian({
     }
   }, 2500);
 
-  // Pasang Event Listeners
+  // Pasang Event Listeners (Security & Anti-Exploit)
   window.addEventListener('contextmenu', handleContextMenu);
   window.addEventListener('keydown', handleKeyDown, true);
   window.addEventListener('resize', checkDevToolsDimensions);
+  window.addEventListener('copy', handleClipboard);
+  window.addEventListener('cut', handleClipboard);
+  window.addEventListener('paste', handleClipboard);
 
   // Return Cleanup Function
   return () => {
@@ -144,6 +161,9 @@ export function setupConsoleGuardian({
     window.removeEventListener('contextmenu', handleContextMenu);
     window.removeEventListener('keydown', handleKeyDown, true);
     window.removeEventListener('resize', checkDevToolsDimensions);
+    window.removeEventListener('copy', handleClipboard);
+    window.removeEventListener('cut', handleClipboard);
+    window.removeEventListener('paste', handleClipboard);
   };
 }
 
