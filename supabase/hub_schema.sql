@@ -404,3 +404,45 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql SECURITY DEFINER;
 
+
+
+-- ==============================================================================
+-- TAHAP 2: TABEL POINT_HISTORY & RLS POLICIES (TRANSPARANSI SKOR PEMAIN)
+-- ==============================================================================
+
+CREATE TABLE IF NOT EXISTS public.point_history (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+    amount INTEGER NOT NULL,
+    description TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Indeks untuk query performa tinggi per pemain terurut dari terbaru
+CREATE INDEX IF NOT EXISTS idx_point_history_user_created 
+    ON public.point_history(user_id, created_at DESC);
+
+-- Aktifkan RLS
+ALTER TABLE public.point_history ENABLE ROW LEVEL SECURITY;
+
+-- 1. Pemain dapat membaca riwayat poin milik mereka sendiri (atau Admin dapat membaca semua)
+DROP POLICY IF EXISTS "Users can read their own point history" ON public.point_history;
+CREATE POLICY "Users can read their own point history"
+    ON public.point_history FOR SELECT
+    TO authenticated
+    USING (auth.uid() = user_id OR public.is_admin());
+
+-- 2. Pemain dan Service Role dapat meng-insert riwayat poin
+DROP POLICY IF EXISTS "Users and server can insert point history" ON public.point_history;
+CREATE POLICY "Users and server can insert point history"
+    ON public.point_history FOR INSERT
+    TO authenticated
+    WITH CHECK (auth.uid() = user_id OR public.is_admin());
+
+-- 3. Admin dapat mengelola seluruh riwayat
+DROP POLICY IF EXISTS "Admins can manage point history" ON public.point_history;
+CREATE POLICY "Admins can manage point history"
+    ON public.point_history FOR ALL
+    TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());

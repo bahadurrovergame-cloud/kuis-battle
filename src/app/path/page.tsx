@@ -39,7 +39,9 @@ import {
   Crown,
   Clock,
   Sparkles,
+  History,
 } from 'lucide-react';
+import { PointHistoryModal } from '@/components/PointHistoryModal';
 
 const DEFAULT_UNITS: TTSUnit[] = [
   {
@@ -192,6 +194,7 @@ export default function ThePathPage() {
 
   const [showNoLivesModal, setShowNoLivesModal] = useState(false);
   const [showCoinModal, setShowCoinModal] = useState(false);
+  const [showPointHistoryModal, setShowPointHistoryModal] = useState(false);
   const [refillingLives, setRefillingLives] = useState(false);
 
   // Leaderboard Modal State
@@ -572,11 +575,22 @@ export default function ThePathPage() {
               setShowLeaderboardModal(true);
               fetchLeaderboard();
             }}
-            className="flex items-center gap-1.5 bg-[#1e293b] border-b-2 border-slate-950 hover:bg-slate-800 px-3 py-1.5 rounded-xl text-xs font-black text-emerald-400 active:translate-y-0.5 transition-all shadow-sm group"
+            className="flex items-center gap-1.5 bg-[#1e293b] border-b-2 border-slate-950 hover:bg-slate-800 px-2.5 py-1.5 rounded-xl text-xs font-black text-emerald-400 active:translate-y-0.5 transition-all shadow-sm group"
             title="Buka Papan Peringkat (Klasemen)"
           >
             <Trophy className="w-4 h-4 text-emerald-400 group-hover:scale-110 transition-transform" />
             <span>{profile?.total_score ?? 0}</span>
+          </button>
+
+          {/* Riwayat Poin (Tahap 2: Transparansi Skor) */}
+          <button
+            type="button"
+            onClick={() => setShowPointHistoryModal(true)}
+            className="flex items-center gap-1 bg-[#1e293b] border-b-2 border-slate-950 hover:bg-slate-800 px-2 py-1.5 rounded-xl text-xs font-black text-emerald-400 active:translate-y-0.5 transition-all shadow-sm group"
+            title="Riwayat Perolehan Poin"
+          >
+            <History className="w-4 h-4 text-emerald-400 group-hover:rotate-[-20deg] transition-transform" />
+            <span className="text-[10px] hidden sm:inline">Riwayat</span>
           </button>
         </div>
 
@@ -589,7 +603,7 @@ export default function ThePathPage() {
         </Link>
       </header>
 
-      {/* Quick Action Bar: Papan Peringkat Pemain & Mode Sultan Admin */}
+      {/* Quick Action Bar: Papan Peringkat Pemain, Riwayat Poin, & Mode Sultan Admin */}
       <div className="w-full max-w-md px-4 pt-3 flex items-center gap-2">
         <button
           onClick={() => {
@@ -599,7 +613,17 @@ export default function ThePathPage() {
           className="flex-1 py-2.5 px-3 bg-[#1e293b] hover:bg-slate-800 border-2 border-emerald-500/60 hover:border-emerald-400 text-emerald-300 font-black text-xs rounded-2xl active:translate-y-0.5 flex items-center justify-center gap-2 shadow-sm transition-all"
         >
           <Trophy className="w-4 h-4 text-amber-400" />
-          <span>Lihat Papan Peringkat (Klasemen)</span>
+          <span>Papan Peringkat</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowPointHistoryModal(true)}
+          className="py-2.5 px-3 bg-[#1e293b] hover:bg-slate-800 border-2 border-slate-700 hover:border-emerald-500/50 text-slate-200 font-black text-xs rounded-2xl active:translate-y-0.5 flex items-center justify-center gap-1.5 shadow-sm transition-all shrink-0"
+          title="Lihat Riwayat Poin Transparan"
+        >
+          <History className="w-4 h-4 text-emerald-400" />
+          <span>Riwayat Poin</span>
         </button>
 
         {profile?.role === 'admin' && (
@@ -1237,6 +1261,15 @@ export default function ThePathPage() {
           </div>
         </div>
       )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 5: RIWAYAT PEROLEHAN POIN (TRANSPARANSI SKOR PEMAIN TAHAP 2)   */}
+      {/* ==================================================================== */}
+      <PointHistoryModal
+        isOpen={showPointHistoryModal}
+        onClose={() => setShowPointHistoryModal(false)}
+        currentTotalScore={profile?.total_score}
+      />
     </main>
   );
 }

@@ -149,6 +149,14 @@ export interface BannedUser {
   banned_at: string;
 }
 
+export interface PointHistory {
+  id: string;
+  user_id: string;
+  amount: number;
+  description: string;
+  created_at: string;
+}
+
 // ============================================================================
 // FACTORY FUNCTION: KLIEN BROWSER SUPABASE HUB (CLIENT COMPONENT SAFE)
 // ============================================================================

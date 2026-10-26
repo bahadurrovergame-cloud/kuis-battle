@@ -505,6 +505,15 @@ export async function unbanMultipleEmailsAction(emails: string[]): Promise<{
         await supabaseAdmin.from('tts_user_progress').delete().eq('user_id', targetUserId);
         await supabaseAdmin.from('tts_leaderboard').delete().eq('user_id', targetUserId);
         await supabaseAdmin.from('banned_users').delete().or(`email.eq.${email},user_id.eq.${targetUserId}`);
+
+        // Catat ke point_history (Tahap 2)
+        try {
+          await supabaseAdmin.from('point_history').insert({
+            user_id: targetUserId,
+            amount: 0,
+            description: 'Buka Blokir & Hard Reset Skor oleh Admin',
+          });
+        } catch {}
       } else {
         await supabaseAdmin.from('banned_users').delete().eq('email', email);
       }
@@ -621,6 +630,18 @@ export async function adjustPlayerResourcesAction(payload: {
 
     if (updErr || !updatedProf) {
       return { success: false, error: updErr?.message || 'Gagal menyimpan perubahan pemain.' };
+    }
+
+    // Catat ke point_history jika ada penyesuaian skor oleh Admin (Tahap 2)
+    const diffScore = newScore - (prof.total_score || 0);
+    if (diffScore !== 0) {
+      try {
+        await supabaseAdmin.from('point_history').insert({
+          user_id: payload.userId,
+          amount: diffScore,
+          description: `Penyesuaian Skor oleh Admin (${diffScore > 0 ? '+' : ''}${diffScore})`,
+        });
+      } catch {}
     }
 
     // 3. Sinkronisasi ke tts_leaderboard jika skor berubah (HANYA UNTUK NON-ADMIN)

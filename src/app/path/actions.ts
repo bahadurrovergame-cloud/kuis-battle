@@ -1,7 +1,7 @@
 'use server';
 
 import { createHubServerClient } from '@/lib/supabase-hub-server';
-import { Profile, GameSettings, TTSUnit, TTSLevel, TTSUserProgress } from '@/lib/supabase-hub';
+import { Profile, GameSettings, TTSUnit, TTSLevel, TTSUserProgress, PointHistory } from '@/lib/supabase-hub';
 
 /**
  * Mengambil seluruh data peta The Path dalam SATU roundtrip paralel:
@@ -108,4 +108,45 @@ export async function getPathDataAction(): Promise<{
     return { success: false, error: msg };
   }
 }
+
+/**
+ * Mengambil daftar riwayat perolehan & penyesuaian poin pemain (Tahap 2 Transparansi Skor)
+ */
+export async function getUserPointHistoryAction(): Promise<{
+  success: boolean;
+  history?: PointHistory[];
+  error?: string;
+}> {
+  try {
+    const supabase = await createHubServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      return { success: false, error: 'Unauthorized: Sesi tidak valid' };
+    }
+
+    const { data, error } = await supabase
+      .from('point_history')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error('Error fetching point history:', error);
+      return { success: false, error: error.message };
+    }
+
+    return {
+      success: true,
+      history: (data as PointHistory[]) || [],
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal mengambil riwayat poin.';
+    return { success: false, error: msg };
+  }
+}
+
 

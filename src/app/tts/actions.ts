@@ -597,12 +597,22 @@ export async function completeLevelAction({
       };
     }
 
-    // 5. Ambil Pengaturan Game
-    const { data: setts } = await supabase
-      .from('game_settings')
-      .select('coins_per_level, current_season')
-      .eq('id', 1)
-      .maybeSingle();
+    // 5. Ambil Pengaturan Game & Detail Level
+    const [settsRes, currentLvlRes] = await Promise.all([
+      supabase
+        .from('game_settings')
+        .select('coins_per_level, current_season')
+        .eq('id', 1)
+        .maybeSingle(),
+      supabase
+        .from('tts_levels')
+        .select('id, level_number, unit_id, is_hard_zone')
+        .eq('id', levelId)
+        .maybeSingle(),
+    ]);
+
+    const setts = settsRes.data;
+    const currentLvl = currentLvlRes.data;
 
     const coinsReward = setts?.coins_per_level || 20;
     const currentSeason = setts?.current_season || 1;
@@ -645,6 +655,17 @@ export async function completeLevelAction({
           updated_at: new Date().toISOString(),
         })
         .eq('id', user.id);
+
+      // PENCATATAN POINT HISTORY (TAHAP 2: Transparansi Skor)
+      try {
+        await dbClient.from('point_history').insert({
+          user_id: user.id,
+          amount: scoreEarned,
+          description: `Menyelesaikan Level ${currentLvl?.level_number || 1}${currentLvl?.is_hard_zone ? ' (Zona Hard 🔥)' : ''}`,
+        });
+      } catch (histErr) {
+        console.error('Non-blocking: Gagal mencatat point_history saat complete level:', histErr);
+      }
     }
 
     // 8. Update Klasemen Realtime (tts_leaderboard) jika penyelesaian baru (HANYA UNTUK NON-ADMIN)
@@ -685,11 +706,6 @@ export async function completeLevelAction({
 
     // 9. Cari Next Level ID untuk navigasi langsung ke level selanjutnya
     let nextLevelId: string | null = null;
-    const { data: currentLvl } = await dbClient
-      .from('tts_levels')
-      .select('id, level_number, unit_id')
-      .eq('id', levelId)
-      .maybeSingle();
 
     if (currentLvl) {
       // Cari level berikutnya di unit yang sama
@@ -1032,7 +1048,7 @@ export async function triggerAntiCheatExecution(reason = 'Terdeteksi manipulasi 
     // Ambil profil pemain untuk mencatat username & data identitas
     const { data: prof } = await dbClient
       .from('profiles')
-      .select('id, username')
+      .select('id, username, total_score')
       .eq('id', userId)
       .maybeSingle();
 
@@ -1063,6 +1079,15 @@ export async function triggerAntiCheatExecution(reason = 'Terdeteksi manipulasi 
           updated_at: new Date().toISOString(),
         })
         .eq('id', userId);
+
+      // Catat penalti ke point_history (Tahap 2)
+      if ((prof?.total_score || 0) > 0) {
+        await dbClient.from('point_history').insert({
+          user_id: userId,
+          amount: -(prof?.total_score || 0),
+          description: `Penalti Anti-Cheat: ${reason}`,
+        });
+      }
     } catch (profErr) {
       console.warn('[Anti-Cheat] Gagal update profiles.is_banned:', profErr);
     }
@@ -1222,6 +1247,17 @@ export async function unbanEmailAction(email: string): Promise<{
       // HARD RESET PROGRESS: Hapus seluruh progres level & klasemen pemain
       await dbClient.from('tts_user_progress').delete().eq('user_id', targetUserId);
       await dbClient.from('tts_leaderboard').delete().eq('user_id', targetUserId);
+
+      // Catat ke point_history (Tahap 2)
+      try {
+        await dbClient.from('point_history').insert({
+          user_id: targetUserId,
+          amount: 0,
+          description: 'Buka Blokir & Hard Reset Skor oleh Admin',
+        });
+      } catch {
+        // Non-blocking
+      }
     }
 
     // 3. Hapus dari tabel banned_users
