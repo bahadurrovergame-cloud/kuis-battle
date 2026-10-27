@@ -132,14 +132,14 @@ const CrosswordCell = memo(
   }: CrosswordCellProps) {
     if (!cellData) {
       return (
-        <div className="w-full h-full bg-[#070a12] rounded-lg pointer-events-none" />
+        <div className="w-full h-full aspect-square bg-[#070a12]/70 rounded-lg pointer-events-none" />
       );
     }
 
     return (
       <div
         onClick={() => onClick(r, c)}
-        className={`w-full h-full rounded-xl relative flex items-center justify-center font-mono font-black text-xs sm:text-base cursor-pointer transition-all select-none ${
+        className={`w-full h-full aspect-square rounded-lg sm:rounded-xl relative flex items-center justify-center font-mono font-black text-xs sm:text-base cursor-pointer transition-all select-none ${
           isShaking
             ? 'bg-rose-600 border-2 border-rose-800 text-white shadow-[0_3px_0_#881337] animate-bounce'
             : isWordCompleted
@@ -152,7 +152,7 @@ const CrosswordCell = memo(
         }`}
       >
         {cellData.startNumber && (
-          <span className="absolute top-0.5 left-1 text-[8px] font-mono font-black text-slate-300 pointer-events-none">
+          <span className="absolute top-0.5 left-1 text-[8px] sm:text-[9px] font-mono font-black text-slate-300 pointer-events-none">
             {cellData.startNumber}
           </span>
         )}
@@ -1173,7 +1173,7 @@ function TTSGameContent() {
     <main
       onContextMenu={(e) => e.preventDefault()}
       style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
-      className={`h-[100dvh] max-h-[100dvh] w-full bg-slate-950 text-slate-100 flex flex-col items-center justify-between relative overflow-hidden select-none transition-colors duration-500 ${
+      className={`h-[100dvh] max-h-[100dvh] w-full bg-slate-950 text-slate-100 flex flex-col items-center justify-start relative overflow-hidden select-none transition-colors duration-500 ${
         freezeRemaining > 0 ? 'ring-8 ring-cyan-500/40 ring-inset bg-slate-950' : ''
       }`}
     >
@@ -1420,18 +1420,16 @@ function TTSGameContent() {
       </div>
 
       {/* ==================================================================== */}
-      {/* TTS BOARD GRID (RESPONSIF MOBILE-FIRST)                              */}
+      {/* TTS BOARD GRID (RESPONSIF MOBILE-FIRST & PROPORTIONAL SQUARE CELLS)  */}
       {/* ==================================================================== */}
-      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 relative min-h-0 overflow-hidden">
+      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 sm:p-3 relative min-h-0 overflow-hidden">
         <div
-          className="grid gap-1 sm:gap-1.5 p-2 sm:p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_4px_0_#070a12] relative select-none"
+          className="grid gap-1 sm:gap-1.5 p-2 sm:p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_4px_0_#070a12] relative select-none w-full"
           style={{
-            gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+            maxWidth: 'min(380px, 92vw, calc(100dvh - 230px))',
             aspectRatio: `${gridCols}/${gridRows}`,
-            maxHeight: '100%',
-            maxWidth: '100%',
-            height: 'auto',
-            width: 'auto',
+            gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
+            gridTemplateRows: `repeat(${gridRows}, minmax(0, 1fr))`,
           }}
         >
           {Array.from({ length: gridRows }).map((_, r) =>
