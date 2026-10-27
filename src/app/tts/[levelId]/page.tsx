@@ -22,9 +22,9 @@ import {
   deductLifeOnGameOverAction,
 } from '../actions';
 import { updatePathOptimisticCompletion, invalidatePathCache } from '@/lib/path-store';
+import { useAntiCheat } from '@/hooks/useAntiCheat';
 import { sounds } from '@/lib/sound';
 import confetti from 'canvas-confetti';
-import { setupConsoleGuardian } from '@/lib/anti-devtools';
 import { buildCrosswordLayout } from '@/lib/crossword-generator';
 import {
   ArrowLeft,
@@ -231,15 +231,12 @@ function TTSGameContent() {
   }, []);
 
   const [cheatModalType, setCheatModalType] = useState<1 | 2 | 3 | null>(null);
+  const [cheatViolationReason, setCheatViolationReason] = useState<string>('');
   const [isAccountTerminated, setIsAccountTerminated] = useState(false);
   const cheatViolationRef = useRef(0);
   const cheatModalTypeRef = useRef<1 | 2 | 3 | null>(null);
   const lastViolationTimeRef = useRef(0);
   const isExecutingTerminationRef = useRef(false);
-
-  // Anti-Cheat Instant Blackout Overlay State & Level Start Timestamp (Tahap 3)
-  const [isScreenCovered, setIsScreenCovered] = useState(false);
-  const isScreenCoveredRef = useRef(false);
   const levelStartTimeRef = useRef<number>(0);
 
   // Visual Effects
@@ -431,6 +428,10 @@ function TTSGameContent() {
       }
       lastViolationTimeRef.current = now;
 
+      if (reason) {
+        setCheatViolationReason(reason);
+      }
+
       cheatViolationRef.current += 1;
       const currentCount = cheatViolationRef.current;
       setCheatViolationCount(currentCount);
@@ -463,76 +464,17 @@ function TTSGameContent() {
     [loading, isGameOver, isVictory, isAccountTerminated, router, updateCheatModalType]
   );
 
-  useEffect(() => {
-    // 1. PAGE VISIBILITY & WINDOW BLUR API (ANTI-SCREENSHOT & ANTI-TAB SWITCH)
-    const handleVisibilityChange = () => {
-      if (
-        loading ||
-        isGameOver ||
-        isVictory ||
-        isAccountTerminated ||
-        isExecutingTerminationRef.current
-      ) {
-        return;
-      }
-
-      if (document.hidden) {
-        // REAKSI INSTAN: Seketika tutup seluruh layar dengan blackout overlay pekat
-        isScreenCoveredRef.current = true;
-        setIsScreenCovered(true);
-      } else {
-        // Pemain kembali ke tab / layar
-        if (isScreenCoveredRef.current) {
-          isScreenCoveredRef.current = false;
-          setIsScreenCovered(false);
-          triggerCheatViolation('Terdeteksi meninggalkan layar pengerjaan kuis / beralih tab');
-        }
-      }
-    };
-
-    const handleWindowBlur = () => {
-      if (
-        loading ||
-        isGameOver ||
-        isVictory ||
-        isAccountTerminated ||
-        cheatModalTypeRef.current !== null ||
-        isExecutingTerminationRef.current
-      ) {
-        return;
-      }
-      // REAKSI INSTAN: Window kehilangan fokus (split-screen / tangkapan layar / notification drawer)
-      isScreenCoveredRef.current = true;
-      setIsScreenCovered(true);
-    };
-
-    const handleWindowFocus = () => {
-      if (isScreenCoveredRef.current) {
-        isScreenCoveredRef.current = false;
-        setIsScreenCovered(false);
-        triggerCheatViolation('Terdeteksi meninggalkan layar pengerjaan kuis / kehilangan fokus layar');
-      }
-    };
-
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('blur', handleWindowBlur);
-    window.addEventListener('focus', handleWindowFocus);
-
-    // 2. Aktifkan Console Guardian & Anti-DevTools
-    const cleanupGuardian = setupConsoleGuardian({
-      onDevToolsDetected: (reason) => {
-        triggerCheatViolation(reason);
-      },
-      strictMode: false,
-    });
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('blur', handleWindowBlur);
-      window.removeEventListener('focus', handleWindowFocus);
-      cleanupGuardian();
-    };
-  }, [loading, isGameOver, isVictory, isAccountTerminated, triggerCheatViolation]);
+  // ============================================================================
+  // SENSOR ANTI-CHEAT HEURISTIK LANJUTAN:
+  // - Shortcut Screenshot (PrintScreen, Snipping Tool, Mac OS Cmd+Shift+3/4/5)
+  // - Shortcut Print / Save to PDF (Ctrl+P / Cmd+P)
+  // - Window Blur & Page Visibility Sensitivity (Mobile Screenshot & Tab Switch)
+  // - DevTools & Console Guardian
+  // ============================================================================
+  const { isScreenCovered } = useAntiCheat({
+    isEnabled: !loading && !isGameOver && !isVictory && !isAccountTerminated && cheatModalType === null,
+    onViolation: triggerCheatViolation,
+  });
 
   // ============================================================================
   // 6. DEBOUNCED CLOUD AUTO-SAVE (ANTI-SPAM DATABASE DENGAN TOKEN SESI)
@@ -1479,8 +1421,10 @@ function TTSGameContent() {
             <p className="text-xs text-rose-200 mt-2.5 leading-relaxed">
               {cheatModalType === 1 ? (
                 <>
-                  <b className="text-white block mb-1">Terdeteksi meninggalkan layar! (Peringatan 1/3)</b>
-                  Anda terdeteksi berpindah tab, keluar dari aplikasi, atau mencoba tangkapan layar. Dilarang mencari jawaban di luar game!
+                  <b className="text-white block mb-1">
+                    {cheatViolationReason ? `🚨 ${cheatViolationReason}` : 'Terdeteksi pelanggaran layar! (Peringatan 1/3)'}
+                  </b>
+                  Anda terdeteksi berpindah tab, keluar dari aplikasi, atau mencoba tangkapan layar (screenshot). Dilarang mencari jawaban di luar game!
                   <br />
                   <span className="text-amber-400 font-bold block mt-2">
                     Tersisa 2 kesempatan sebelum akun Anda diblokir (BANNED) dan skor di-reset.
@@ -1488,7 +1432,9 @@ function TTSGameContent() {
                 </>
               ) : (
                 <>
-                  <b className="text-white block mb-1 font-black">🚨 PERINGATAN KERAS! (Peringatan 2/3)</b>
+                  <b className="text-white block mb-1 font-black">
+                    {cheatViolationReason ? `🚨 ${cheatViolationReason}` : '🚨 PERINGATAN KERAS! (Peringatan 2/3)'}
+                  </b>
                   Ini adalah peringatan terakhir Anda. <b>Satu kali lagi</b> Anda keluar dari layar permainan atau mencoba tangkapan layar, akun Anda akan langsung <b>DIBLOKIR (BANNED)</b> seketika!
                 </>
               )}

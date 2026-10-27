@@ -611,3 +611,40 @@ input[type=number]::-webkit-outer-spin-button {
 input[type=number] {
   -moz-appearance: textfield;
 }
+
+/* ========================================================================== */
+/* ANTI-CHEAT & ANTI-SCREENSHOT: PRINT MEDIA DEFENSE                          */
+/* Mencegah ekspor halaman kuis menjadi dokumen cetak atau Save as PDF        */
+/* ========================================================================== */
+@media print {
+  html, body {
+    background: #000000 !important;
+    color: #ffffff !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+  }
+
+  body * {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  body::after {
+    content: "⚠️ TINDAKAN DILARANG! Halaman permainan kuis dilindungi oleh sistem Anti-Cheat. Dilarang mencetak atau menyimpan dokumen demi menjaga integritas kompetisi.";
+    display: flex !important;
+    visibility: visible !important;
+    position: fixed !important;
+    inset: 0 !important;
+    background: #000000 !important;
+    color: #ef4444 !important;
+    font-size: 20pt !important;
+    font-weight: 900 !important;
+    font-family: monospace, sans-serif !important;
+    text-align: center !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 2.5rem !important;
+    z-index: 9999999 !important;
+  }
+}
+
