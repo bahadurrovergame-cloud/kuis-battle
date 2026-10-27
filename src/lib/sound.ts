@@ -3,17 +3,73 @@
 
 class SoundManager {
   private audioCtx: AudioContext | null = null;
+  private isPrewarmed: boolean = false;
 
   private initCtx() {
     if (typeof window === 'undefined') return;
     if (!this.audioCtx) {
-      const AudioCtxClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtxClass =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (AudioCtxClass) {
         this.audioCtx = new AudioCtxClass();
       }
     }
     if (this.audioCtx && this.audioCtx.state === 'suspended') {
-      this.audioCtx.resume();
+      this.audioCtx.resume().catch(() => {});
+    }
+  }
+
+  /**
+   * Pre-warm AudioContext on component mount and first user gesture
+   * Eliminates 1-2s mobile audio unlock latency (0ms instant playback)
+   */
+  prewarm() {
+    if (typeof window === 'undefined' || this.isPrewarmed) return;
+    this.isPrewarmed = true;
+
+    const unlock = () => {
+      this.initCtx();
+      if (this.audioCtx && this.audioCtx.state === 'running') {
+        ['click', 'touchstart', 'keydown'].forEach((evt) => {
+          window.removeEventListener(evt, unlock);
+        });
+      }
+    };
+
+    ['click', 'touchstart', 'keydown'].forEach((evt) => {
+      window.addEventListener(evt, unlock, { once: true, passive: true });
+    });
+
+    this.initCtx();
+  }
+
+  /**
+   * Ultra-fast tactile keypress audio for TTS cell typing (0ms latency)
+   * Subtle pleasant mechanical click (sine tone @ 1100Hz -> 320Hz, 25ms)
+   */
+  playKeyClick() {
+    try {
+      this.initCtx();
+      if (!this.audioCtx) return;
+      const now = this.audioCtx.currentTime;
+      const osc = this.audioCtx.createOscillator();
+      const gain = this.audioCtx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(1100, now);
+      osc.frequency.exponentialRampToValueAtTime(320, now + 0.025);
+
+      gain.gain.setValueAtTime(0.12, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.025);
+
+      osc.connect(gain);
+      gain.connect(this.audioCtx.destination);
+
+      osc.start(now);
+      osc.stop(now + 0.025);
+    } catch {
+      // Quiet fail
     }
   }
 
@@ -152,8 +208,6 @@ class SoundManager {
       // Quiet fail
     }
   }
-
-
 
   // Correct answer / Reveal chime
   playCorrect() {

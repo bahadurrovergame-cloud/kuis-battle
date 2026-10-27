@@ -21,7 +21,7 @@ import {
   triggerAntiCheatExecution,
   deductLifeOnGameOverAction,
 } from '../actions';
-import { updatePathOptimisticCompletion } from '@/lib/path-store';
+import { updatePathOptimisticCompletion, invalidatePathCache } from '@/lib/path-store';
 import { sounds } from '@/lib/sound';
 import confetti from 'canvas-confetti';
 import { setupConsoleGuardian } from '@/lib/anti-devtools';
@@ -258,6 +258,7 @@ function TTSGameContent() {
 
   // 1. Fetch Inisialisasi Data Level & User (High-Speed Unified Action)
   useEffect(() => {
+    sounds.prewarm();
     let isMounted = true;
 
     const init = async () => {
@@ -446,6 +447,7 @@ function TTSGameContent() {
         sounds.playTimeUp();
         updateCheatModalType(3);
         setIsAccountTerminated(true);
+        invalidatePathCache(); // Bersihkan seluruh cache & bintang optimistik peta agar pemain banned tidak memiliki status 'selesai'
 
         try {
           await triggerAntiCheatExecution(reason || 'Terdeteksi manipulasi game/pindah layar 3x');
@@ -751,6 +753,9 @@ function TTSGameContent() {
       const clean = char.slice(-1).toUpperCase();
       if (!/^[A-Z]$/.test(clean)) return;
 
+      // 0ms Tactile Keyclick Sound
+      sounds.playKeyClick();
+
       // Bersihkan buffer input seketika agar tidak menumpuk karakter lama
       if (inputRef.current) {
         inputRef.current.value = '';
@@ -845,14 +850,22 @@ function TTSGameContent() {
 
   const handleBackspace = useCallback(() => {
     if (!selectedCell || !currentWord) return;
+    if (inputRef.current) {
+      inputRef.current.value = '';
+      inputRef.current.focus({ preventScroll: true });
+    }
+    inputProcessedRef.current = false;
+
     const cellKey = `${selectedCell.r},${selectedCell.c}`;
     const cellData = activeCellsMap[cellKey];
     const isCompletedCell = cellData && cellData.wordIds.some((wid) => completedWordIds.includes(wid));
 
     if (gridState[cellKey] && !isCompletedCell) {
-      const newGrid = { ...gridState, [cellKey]: '' };
-      setGridState(newGrid);
-      queueAutoSave(newGrid);
+      setGridState((prev) => {
+        const next = { ...prev, [cellKey]: '' };
+        queueAutoSave(next);
+        return next;
+      });
     } else {
       // Mundur ke kotak sebelumnya yang belum completed lalu kosongkan
       const idxInWord =
@@ -869,9 +882,11 @@ function TTSGameContent() {
 
         if (!isPrevCompleted) {
           setSelectedCell({ r: prevR, c: prevC });
-          const newGrid = { ...gridState, [prevKey]: '' };
-          setGridState(newGrid);
-          queueAutoSave(newGrid);
+          setGridState((prev) => {
+            const next = { ...prev, [prevKey]: '' };
+            queueAutoSave(next);
+            return next;
+          });
           break;
         }
       }
@@ -905,7 +920,7 @@ function TTSGameContent() {
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Backspace') {
       e.preventDefault();
-      inputProcessedRef.current = true;
+      inputProcessedRef.current = false;
       handleBackspace();
     } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       e.preventDefault();
@@ -947,7 +962,7 @@ function TTSGameContent() {
 
       if (inputRef.current) {
         inputRef.current.value = '';
-        inputRef.current.focus();
+        inputRef.current.focus({ preventScroll: true });
       }
     },
     [activeCellsMap]
@@ -955,15 +970,17 @@ function TTSGameContent() {
 
   // Transisi Peta Optimistik (0 ms) & Force Clear Modal Level
   const handleReturnToPath = useCallback(() => {
-    updatePathOptimisticCompletion(
-      levelId,
-      victoryData?.score || scoreEarned,
-      victoryData?.coins || 20
-    );
+    if (isVictory) {
+      updatePathOptimisticCompletion(
+        levelId,
+        victoryData?.score || scoreEarned,
+        victoryData?.coins || 20
+      );
+    }
     // Force refresh client router cache Next.js agar /path langsung render state terbaru
     router.refresh();
     router.replace('/path');
-  }, [levelId, victoryData, scoreEarned, router]);
+  }, [isVictory, levelId, victoryData, scoreEarned, router]);
 
   // Navigasi Soal Sebelumnya / Selanjutnya
   const handleCycleClue = useCallback(
@@ -978,7 +995,7 @@ function TTSGameContent() {
       setSelectedCell({ r: nextWord.start_row, c: nextWord.start_col });
       if (inputRef.current) {
         inputRef.current.value = '';
-        inputRef.current.focus();
+        inputRef.current.focus({ preventScroll: true });
       }
     },
     [words, selectedWordId]
@@ -1156,7 +1173,7 @@ function TTSGameContent() {
     <main
       onContextMenu={(e) => e.preventDefault()}
       style={{ WebkitUserSelect: 'none', userSelect: 'none', WebkitTouchCallout: 'none' }}
-      className={`min-h-[100dvh] bg-slate-950 text-slate-100 flex flex-col items-center justify-start relative overflow-x-hidden overflow-y-auto select-none pb-2 transition-colors duration-500 ${
+      className={`h-[100dvh] max-h-[100dvh] w-full bg-slate-950 text-slate-100 flex flex-col items-center justify-between relative overflow-hidden select-none transition-colors duration-500 ${
         freezeRemaining > 0 ? 'ring-8 ring-cyan-500/40 ring-inset bg-slate-950' : ''
       }`}
     >
@@ -1196,7 +1213,7 @@ function TTSGameContent() {
           const nativeEvt = e.nativeEvent as InputEvent;
           if (nativeEvt.inputType === 'deleteContentBackward') {
             e.preventDefault();
-            inputProcessedRef.current = true;
+            inputProcessedRef.current = false;
             handleBackspace();
             return;
           }
@@ -1234,10 +1251,10 @@ function TTSGameContent() {
       {/* ==================================================================== */}
       {/* TOP HUD: BACK, LEVEL INFO, TIMER/DECAY, STATS                        */}
       {/* ==================================================================== */}
-      <header className="w-full max-w-md bg-[#0f172a] border-b-2 border-slate-800 px-4 py-2.5 flex items-center justify-between shadow-md sticky top-0 z-30">
+      <header className="w-full max-w-md bg-[#0f172a] border-b-2 border-slate-800 px-3 py-2 flex items-center justify-between shadow-md shrink-0 z-30">
         <button
           onClick={handleReturnToPath}
-          className="w-9 h-9 rounded-xl bg-slate-800 border-b-2 border-slate-950 hover:bg-slate-700 flex items-center justify-center text-slate-200 active:translate-y-0.5 transition-all"
+          className="w-8 h-8 rounded-xl bg-slate-800 border-b-2 border-slate-950 hover:bg-slate-700 flex items-center justify-center text-slate-200 active:translate-y-0.5 transition-all"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
@@ -1271,7 +1288,7 @@ function TTSGameContent() {
         {/* Combo Multiplier & Stats */}
         <div className="flex items-center gap-2">
           {comboMultiplier > 1.0 && (
-            <div className="px-2 py-1 rounded-xl bg-amber-500 text-slate-950 text-[10px] font-mono font-black shadow-sm">
+            <div className="px-2 py-0.5 rounded-xl bg-amber-500 text-slate-950 text-[10px] font-mono font-black shadow-sm">
               🔥 x{comboMultiplier.toFixed(1)}
             </div>
           )}
@@ -1279,7 +1296,7 @@ function TTSGameContent() {
           <button
             type="button"
             onClick={() => setShowCoinModal(true)}
-            className="flex items-center gap-1.5 bg-[#1e293b] hover:bg-slate-800 border-b-2 border-slate-950 px-3 py-1.5 rounded-xl text-xs font-mono font-black text-amber-400 active:translate-y-0.5 transition-all cursor-pointer group"
+            className="flex items-center gap-1 bg-[#1e293b] hover:bg-slate-800 border-b-2 border-slate-950 px-2.5 py-1 rounded-xl text-xs font-mono font-black text-amber-400 active:translate-y-0.5 transition-all cursor-pointer group"
             title="Klik untuk melihat info koin & cara mendapatkannya"
           >
             <Coins className="w-3.5 h-3.5 fill-amber-400 group-hover:scale-110 transition-transform" />
@@ -1331,25 +1348,25 @@ function TTSGameContent() {
       {/* ==================================================================== */}
       {/* CLUE CARD & POWER-UPS BAR (DI ATAS PAPAN - ANTI KETUTUP KEYBOARD HP) */}
       {/* ==================================================================== */}
-      <div className="w-full max-w-md px-3 pt-2 pb-1 flex flex-col gap-2 shrink-0 z-20">
+      <div className="w-full max-w-md px-3 pt-1.5 pb-1 flex flex-col gap-1.5 shrink-0 z-20">
         {/* Floating Clue Box */}
         {currentWord && (
-          <div className="w-full bg-[#111726] border-2 border-slate-700 rounded-2xl p-2.5 sm:p-3 shadow-[0_3px_0_#070a12] flex items-center justify-between gap-2.5">
+          <div className="w-full bg-[#111726] border-2 border-slate-700 rounded-xl p-2 sm:p-2.5 shadow-[0_2px_0_#070a12] flex items-center justify-between gap-2">
             <button
               type="button"
               onClick={() => handleCycleClue('prev')}
-              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all shrink-0"
+              className="p-1.5 sm:p-2 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all shrink-0"
               title="Soal Sebelumnya"
             >
-              <ArrowLeft className="w-4 h-4" />
+              <ArrowLeft className="w-3.5 h-3.5" />
             </button>
 
             <div className="flex-1 text-center min-w-0">
-              <div className="flex items-center justify-center gap-1.5 mb-1">
-                <span className="text-[10px] font-mono font-black uppercase px-2 py-0.5 rounded-md bg-emerald-500 text-slate-950 shrink-0">
+              <div className="flex items-center justify-center gap-1.5 mb-0.5">
+                <span className="text-[9px] font-mono font-black uppercase px-1.5 py-0.5 rounded bg-emerald-500 text-slate-950 shrink-0">
                   {currentWord.word_number} {currentWord.direction === 'across' ? 'Mendatar' : 'Menurun'}
                 </span>
-                <span className="text-[10px] text-slate-300 font-mono font-bold shrink-0">
+                <span className="text-[9px] text-slate-300 font-mono font-bold shrink-0">
                   ({currentWord.word.length} Huruf)
                 </span>
               </div>
@@ -1361,25 +1378,25 @@ function TTSGameContent() {
             <button
               type="button"
               onClick={() => handleCycleClue('next')}
-              className="p-2 sm:p-2.5 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all shrink-0"
+              className="p-1.5 sm:p-2 rounded-xl bg-slate-800 border-b-2 border-slate-950 text-slate-200 hover:bg-slate-700 active:translate-y-0.5 transition-all shrink-0"
               title="Soal Selanjutnya"
             >
-              <ArrowRight className="w-4 h-4" />
+              <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         )}
 
         {/* Power-Ups Buttons Bar (Chunky physical game buttons) */}
         <div className="flex items-center justify-between gap-2 px-0.5">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               type="button"
               onClick={handleUseHint}
               disabled={isGameOver || isVictory || isPendingHint}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs font-black border-b-2 border-amber-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 text-[11px] font-black border-b-2 border-amber-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
               title={`Buka 1 huruf acak di kata ini (${settings?.hint_price_coins || 15} Koin)`}
             >
-              <Lightbulb className="w-3.5 h-3.5 fill-current" />
+              <Lightbulb className="w-3 h-3 fill-current" />
               <span>{isPendingHint ? 'Membuka...' : `Hint (${settings?.hint_price_coins || 15}🪙)`}</span>
             </button>
 
@@ -1387,16 +1404,16 @@ function TTSGameContent() {
               type="button"
               onClick={handleUseFreeze}
               disabled={isGameOver || isVictory || freezeRemaining > 0 || isPendingFreeze}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-xs font-black border-b-2 border-cyan-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
+              className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-cyan-500 hover:bg-cyan-400 text-slate-950 text-[11px] font-black border-b-2 border-cyan-700 active:translate-y-0.5 active:border-b-0 transition-all shadow disabled:opacity-50"
               title={`Bekukan waktu & pembusukan skor selama ${settings?.freeze_duration_seconds || 10} detik (${settings?.freeze_price_coins || 25} Koin)`}
             >
-              <Snowflake className="w-3.5 h-3.5 fill-current" />
+              <Snowflake className="w-3 h-3 fill-current" />
               <span>{isPendingFreeze ? 'Membekukan...' : `Freeze (${settings?.freeze_price_coins || 25}🪙)`}</span>
             </button>
           </div>
 
           {/* Progress Indicator */}
-          <span className="text-xs font-mono font-black text-slate-300 bg-[#111726] px-2.5 py-1 rounded-xl border border-slate-700 shrink-0">
+          <span className="text-[11px] font-mono font-black text-slate-300 bg-[#111726] px-2 py-0.5 rounded-xl border border-slate-700 shrink-0">
             {completedWordIds.length}/{words.length} Kata
           </span>
         </div>
@@ -1405,14 +1422,16 @@ function TTSGameContent() {
       {/* ==================================================================== */}
       {/* TTS BOARD GRID (RESPONSIF MOBILE-FIRST)                              */}
       {/* ==================================================================== */}
-      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 relative min-h-0">
+      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 relative min-h-0 overflow-hidden">
         <div
-          className="grid gap-1 sm:gap-1.5 p-2 sm:p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_4px_0_#070a12] relative max-h-[46svh] sm:max-h-[56svh]"
+          className="grid gap-1 sm:gap-1.5 p-2 sm:p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_4px_0_#070a12] relative select-none"
           style={{
             gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
-            width: '100%',
-            maxWidth: '360px',
             aspectRatio: `${gridCols}/${gridRows}`,
+            maxHeight: '100%',
+            maxWidth: '100%',
+            height: 'auto',
+            width: 'auto',
           }}
         >
           {Array.from({ length: gridRows }).map((_, r) =>
