@@ -62,8 +62,14 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  // 4. Proteksi Pemain Terkena Banned Anti-Cheat: Arahkan ke /banned
-  if (user && (pathname.startsWith('/path') || pathname.startsWith('/tts'))) {
+  // 4. KUNCI RUTE PERMAINAN UNTUK AKUN BANNED: Paksa redirect ke /ban
+  const isGameRoute =
+    pathname.startsWith('/path') ||
+    pathname.startsWith('/tts') ||
+    pathname.startsWith('/play') ||
+    pathname.startsWith('/account');
+
+  if (user && isGameRoute) {
     try {
       const { data: prof } = await supabase
         .from('profiles')
@@ -72,15 +78,15 @@ export async function middleware(request: NextRequest) {
         .maybeSingle();
 
       if (prof?.is_banned && prof?.role !== 'admin') {
-        return NextResponse.redirect(new URL('/banned', request.url));
+        return NextResponse.redirect(new URL('/ban', request.url));
       }
     } catch {
       // Abaikan jika terjadi kegagalan query sementara di edge runtime
     }
   }
 
-  // Jika akun tidak dibanned mencoba membuka halaman /banned, arahkan ke /path
-  if (pathname === '/banned' && user) {
+  // Jika akun yang TIDAK dibanned mencoba membuka halaman /ban atau /banned, arahkan ke /path
+  if ((pathname === '/ban' || pathname === '/banned') && user) {
     try {
       const { data: prof } = await supabase
         .from('profiles')

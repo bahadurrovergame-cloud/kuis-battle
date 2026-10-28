@@ -31,6 +31,7 @@ export interface Profile {
   last_life_regen: string;
   badges: string[];
   is_banned?: boolean;
+  ban_count?: number;
   banned_reason?: string | null;
   banned_at?: string | null;
   created_at: string;
@@ -145,6 +146,8 @@ export interface BannedUser {
   email: string;
   user_id: string | null;
   username?: string | null;
+  total_score?: number;
+  ban_count?: number;
   reason: string;
   banned_at: string;
 }

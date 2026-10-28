@@ -456,7 +456,7 @@ function TTSGameContent() {
           console.error('[Anti-Cheat Client] Gagal mengeksekusi pemusnahan akun:', err);
         } finally {
           setTimeout(() => {
-            router.push('/banned');
+            router.push('/ban');
           }, 3000);
         }
       }

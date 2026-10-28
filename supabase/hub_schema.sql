@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     last_life_regen TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     badges JSONB NOT NULL DEFAULT '[]'::jsonb,
     is_banned BOOLEAN NOT NULL DEFAULT FALSE,
+    ban_count INTEGER NOT NULL DEFAULT 0,
     banned_reason TEXT DEFAULT NULL,
     banned_at TIMESTAMPTZ DEFAULT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -388,9 +389,11 @@ BEGIN
     ON CONFLICT (email) DO UPDATE 
     SET reason = EXCLUDED.reason, banned_at = NOW();
 
-    -- 2. Flag status profil pemain sebagai BANNED
+    -- 2. Flag status profil pemain sebagai BANNED, reset skor ke 0, dan increment ban_count
     UPDATE public.profiles
     SET is_banned = TRUE,
+        total_score = 0,
+        ban_count = COALESCE(ban_count, 0) + 1,
         banned_reason = ban_reason,
         banned_at = NOW(),
         updated_at = NOW()

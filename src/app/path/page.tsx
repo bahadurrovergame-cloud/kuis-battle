@@ -40,6 +40,7 @@ import {
   Clock,
   Sparkles,
   History,
+  ShieldAlert,
 } from 'lucide-react';
 import { PointHistoryModal } from '@/components/PointHistoryModal';
 
@@ -230,7 +231,7 @@ export default function ThePathPage() {
       const res = await getPathDataAction();
       if (!res.success) {
         if (res.isBanned) {
-          router.replace('/banned');
+          router.replace('/ban');
           return;
         }
         if (res.error?.includes('Unauthorized')) {
@@ -240,7 +241,7 @@ export default function ThePathPage() {
       }
 
       if (res.profile?.is_banned && res.profile?.role !== 'admin') {
-        router.replace('/banned');
+        router.replace('/ban');
         return;
       }
 
@@ -636,6 +637,21 @@ export default function ThePathPage() {
           </Link>
         )}
       </div>
+
+      {/* Peringatan Akun Jika Pernah Terkena Sanksi Banned */}
+      {(profile?.ban_count ?? 0) > 0 && (
+        <div className="w-full max-w-md px-4 pt-2">
+          <div className="px-3 py-1.5 bg-rose-950/40 border border-rose-800/60 rounded-xl flex items-center justify-between text-xs text-rose-300 shadow-sm">
+            <span className="flex items-center gap-1.5 font-bold text-[11px]">
+              <ShieldAlert className="w-3.5 h-3.5 text-rose-400 shrink-0" />
+              <span>Peringatan Sportivitas</span>
+            </span>
+            <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-mono font-black text-[10px] border border-rose-500/30">
+              Jumlah Banned: {profile?.ban_count}
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* ==================================================================== */}
       {/* TABS: THE PATH VS EVENT AKHIR PEKAN                                  */}
@@ -1043,6 +1059,11 @@ export default function ThePathPage() {
                           <span className="text-[10px] font-mono font-black text-amber-400 mt-1">
                             {leaderboardList[1].total_score} Pts
                           </span>
+                          {(leaderboardList[1].profiles?.ban_count ?? 0) > 0 && (
+                            <span className="text-[9px] font-bold text-rose-400 mt-1 bg-rose-950/80 px-1.5 py-0.5 rounded border border-rose-800 flex items-center gap-0.5">
+                              ⚠️ Jumlah Banned: {leaderboardList[1].profiles?.ban_count}
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="order-1" />
@@ -1058,6 +1079,11 @@ export default function ThePathPage() {
                         <span className="text-xs font-mono font-black text-amber-400 mt-1">
                           {leaderboardList[0].total_score} Pts
                         </span>
+                        {(leaderboardList[0].profiles?.ban_count ?? 0) > 0 && (
+                          <span className="text-[9px] font-bold text-rose-400 mt-1 bg-rose-950/80 px-1.5 py-0.5 rounded border border-rose-800 flex items-center gap-0.5">
+                            ⚠️ Jumlah Banned: {leaderboardList[0].profiles?.ban_count}
+                          </span>
+                        )}
                       </div>
 
                       {/* Juara 3 (Perunggu) */}
@@ -1071,6 +1097,11 @@ export default function ThePathPage() {
                           <span className="text-[10px] font-mono font-black text-amber-400 mt-1">
                             {leaderboardList[2].total_score} Pts
                           </span>
+                          {(leaderboardList[2].profiles?.ban_count ?? 0) > 0 && (
+                            <span className="text-[9px] font-bold text-rose-400 mt-1 bg-rose-950/80 px-1.5 py-0.5 rounded border border-rose-800 flex items-center gap-0.5">
+                              ⚠️ Jumlah Banned: {leaderboardList[2].profiles?.ban_count}
+                            </span>
+                          )}
                         </div>
                       ) : (
                         <div className="order-3" />
@@ -1115,9 +1146,16 @@ export default function ThePathPage() {
                                   </span>
                                 )}
                               </span>
-                              <span className="text-[10px] text-slate-400">
-                                {entry.levels_completed || 0} Level Selesai
-                              </span>
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="text-[10px] text-slate-400">
+                                  {entry.levels_completed || 0} Level Selesai
+                                </span>
+                                {(entry.profiles?.ban_count ?? 0) > 0 && (
+                                  <span className="text-[9px] font-bold text-rose-400 bg-rose-950/80 border border-rose-800/80 px-1.5 py-0.5 rounded flex items-center gap-0.5">
+                                    ⚠️ Jumlah Banned: {entry.profiles?.ban_count}
+                                  </span>
+                                )}
+                              </div>
                             </div>
                           </div>
 

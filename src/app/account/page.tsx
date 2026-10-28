@@ -5,7 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { createHubBrowserClient, Profile } from '@/lib/supabase-hub';
 import {
   User,
-  Shield,
+  ShieldAlert,
   Key,
   Coins,
   Heart,
@@ -223,11 +223,17 @@ function AccountContent() {
             </div>
 
             <div className="flex-1">
-              <div className="flex items-center justify-center sm:justify-start gap-2">
+              <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
                 <h1 className="text-2xl font-black text-white">@{profile?.username || 'Pemain'}</h1>
                 <span className="text-[10px] font-black px-2.5 py-0.5 rounded-lg bg-emerald-500 text-slate-950 uppercase tracking-wider">
                   {profile?.role || 'PLAYER'}
                 </span>
+                {(profile?.ban_count ?? 0) > 0 && (
+                  <span className="text-[10px] font-black px-2.5 py-0.5 rounded-lg bg-rose-500/20 text-rose-400 border border-rose-500/40 flex items-center gap-1 shadow-sm">
+                    <ShieldAlert className="w-3 h-3 text-rose-400" />
+                    <span>Jumlah Banned: {profile?.ban_count}</span>
+                  </span>
+                )}
               </div>
               <p className="text-xs text-slate-400 mt-1 font-medium">
                 Akun Terverifikasi • Bergabung sejak{' '}

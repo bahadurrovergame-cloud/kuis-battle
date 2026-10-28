@@ -87,7 +87,7 @@ function LoginContent() {
           .maybeSingle();
 
         if (prof?.is_banned && prof?.role !== 'admin') {
-          router.push('/banned');
+          router.push('/ban');
           router.refresh();
           return;
         }

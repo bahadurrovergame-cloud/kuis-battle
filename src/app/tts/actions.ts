@@ -1024,40 +1024,47 @@ export async function saveProgressDebouncedAction({
 
 // ==============================================================================
 // 7. SENSOR CURANG KE-3: PEMBLOKIRAN AKUN & HARD RESET PROGRES (ANTI-CHEAT)
-// Mengubah status akun menjadi BANNED, mencatat ke banned_users, & membersihkan leaderboard
+// Mengubah status akun menjadi BANNED, mereset poin = 0, increment ban_count, & membersihkan leaderboard
 // ==============================================================================
-export async function triggerAntiCheatExecution(reason = 'Terdeteksi manipulasi game/pindah layar 3x') {
-  try {
-    const supabaseServer = await createHubServerClient();
-    const {
-      data: { user },
-    } = await supabaseServer.auth.getUser();
 
-    if (!user) {
-      return { success: false, error: 'User tidak ditemukan' };
+/**
+ * Server Action: triggerBanUser(userId, reason)
+ * Membekukan akun secara permanen di database:
+ * 1. Mengubah is_banned = true
+ * 2. Mereset total_score = 0
+ * 3. Menambahkan ban_count = ban_count + 1
+ */
+export async function triggerBanUser(
+  userId: string,
+  reason: string = 'Terdeteksi manipulasi game/pindah layar 3x'
+): Promise<{ success: boolean; isBanned?: boolean; error?: string }> {
+  try {
+    if (!userId) {
+      return { success: false, error: 'User ID tidak valid' };
     }
 
-    const userId = user.id;
-    const userEmail = user.email?.trim().toLowerCase();
-
-    // Client Admin (Service Role) untuk bypass RLS agar mutasi status anti-cheat 100% tereksekusi
-    const dbClient = isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)
+    const supabaseServer = await createHubServerClient();
+    const serviceRoleKey = process.env.SUPABASE_HUB_SERVICE_ROLE_KEY;
+    const dbClient = isRealServiceRoleKey(serviceRoleKey)
       ? createHubAdminClient()
       : supabaseServer;
 
-    // Ambil profil pemain untuk mencatat username & data identitas
+    // Ambil profil pemain saat ini untuk mengetahui username, total_score, dan ban_count
     const { data: prof } = await dbClient
       .from('profiles')
-      .select('id, username, total_score')
+      .select('id, username, total_score, ban_count')
       .eq('id', userId)
       .maybeSingle();
 
     const username = prof?.username || 'pemain';
-    const effectiveEmail = userEmail || `${username.toLowerCase()}@player.kuisbattle.com`;
+    const effectiveEmail = `${username.toLowerCase()}@player.kuisbattle.com`;
+    const previousScore = prof?.total_score || 0;
+    const currentBanCount = Number(prof?.ban_count) || 0;
+    const nextBanCount = currentBanCount + 1;
 
-    console.warn(`[Anti-Cheat Zero-Tolerance] Memblokir akun ${username} (${userId}). Alasan: ${reason}`);
+    console.warn(`[Anti-Cheat triggerBanUser] Memblokir akun ${username} (${userId}). Total ban: ${nextBanCount}. Alasan: ${reason}`);
 
-    // 1. Eksekusi RPC jika tersedia di Supabase
+    // 1. Eksekusi RPC jika tersedia di Supabase (Security Definer)
     try {
       await dbClient.rpc('execute_anti_cheat_ban', {
         target_user_id: userId,
@@ -1068,31 +1075,53 @@ export async function triggerAntiCheatExecution(reason = 'Terdeteksi manipulasi 
       // Abaikan jika RPC belum di-deploy di Supabase
     }
 
-    // 2. FLAG PROFIL SEBAGAI BANNED (Tidak dihapus!)
-    try {
-      await dbClient
-        .from('profiles')
-        .update({
-          is_banned: true,
-          banned_reason: reason,
-          banned_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', userId);
+    // 2. EKSEKUSI TIGA HAL SEKALIGUS KE PROFILES:
+    // a) is_banned = true
+    // b) total_score = 0 (reset skor)
+    // c) ban_count = ban_count + 1
+    const { error: updateProfErr } = await dbClient
+      .from('profiles')
+      .update({
+        is_banned: true,
+        total_score: 0,
+        ban_count: nextBanCount,
+        banned_reason: reason,
+        banned_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
 
-      // Catat penalti ke point_history (Tahap 2)
-      if ((prof?.total_score || 0) > 0) {
-        await dbClient.from('point_history').insert({
-          user_id: userId,
-          amount: -(prof?.total_score || 0),
-          description: `Penalti Anti-Cheat: ${reason}`,
-        });
+    if (updateProfErr) {
+      console.warn('[Anti-Cheat triggerBanUser] Fallback update with session client:', updateProfErr);
+      if (dbClient !== supabaseServer) {
+        await supabaseServer
+          .from('profiles')
+          .update({
+            is_banned: true,
+            total_score: 0,
+            ban_count: nextBanCount,
+            banned_reason: reason,
+            banned_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', userId);
       }
-    } catch (profErr) {
-      console.warn('[Anti-Cheat] Gagal update profiles.is_banned:', profErr);
     }
 
-    // 3. CATAT KE TABEL BANNED_USERS (Agar muncul di Dashboard Admin)
+    // 3. Catat penalti ke point_history (Tahap 2: Transparansi Skor)
+    if (previousScore > 0) {
+      try {
+        await dbClient.from('point_history').insert({
+          user_id: userId,
+          amount: -previousScore,
+          description: `Penalti Anti-Cheat (Ban #${nextBanCount}): ${reason}`,
+        });
+      } catch (histErr) {
+        console.warn('[Anti-Cheat triggerBanUser] Catat point_history skipped:', histErr);
+      }
+    }
+
+    // 4. CATAT KE TABEL BANNED_USERS (Agar muncul di Dashboard Admin)
     try {
       await dbClient.from('banned_users').upsert(
         {
@@ -1104,37 +1133,57 @@ export async function triggerAntiCheatExecution(reason = 'Terdeteksi manipulasi 
         { onConflict: 'email' }
       );
     } catch (tableErr) {
-      console.warn('[Anti-Cheat] Catat banned_users skipped:', tableErr);
+      console.warn('[Anti-Cheat triggerBanUser] Catat banned_users skipped:', tableErr);
     }
 
-    // 4. BERSIHKAN DARI KLASEMEN (Leaderboard) AGAR RANKING TIDAK RUSAK
+    // 5. BERSIHKAN DARI KLASEMEN (Leaderboard) AGAR RANKING TIDAK RUSAK
     try {
       await dbClient.from('tts_leaderboard').delete().eq('user_id', userId);
     } catch (lbErr) {
-      console.warn('[Anti-Cheat] Gagal bersihkan leaderboard:', lbErr);
+      console.warn('[Anti-Cheat triggerBanUser] Gagal bersihkan leaderboard:', lbErr);
     }
 
-    // 5. RESET PROGRES LEVEL AKTIF
+    // 6. RESET PROGRES LEVEL AKTIF
     try {
       await dbClient.from('tts_user_progress').delete().eq('user_id', userId);
     } catch (progErr) {
-      console.warn('[Anti-Cheat] Gagal bersihkan progress:', progErr);
+      console.warn('[Anti-Cheat triggerBanUser] Gagal bersihkan progress:', progErr);
     }
 
-    // 6. Invalidate server cache
+    // 7. Invalidate server cache Next.js
     try {
       revalidatePath('/path');
+      revalidatePath('/path', 'page');
       revalidatePath('/admin-hub');
+      revalidatePath('/admin-hub', 'page');
+      revalidatePath('/ban');
       revalidatePath('/banned');
     } catch (revalErr) {
-      console.warn('[Anti-Cheat] revalidatePath warning:', revalErr);
+      console.warn('[Anti-Cheat triggerBanUser] revalidatePath warning:', revalErr);
     }
 
     return {
       success: true,
       isBanned: true,
-      message: 'Akun Anda telah diblokir karena terdeteksi melakukan kecurangan.',
     };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal trigger ban user';
+    return { success: false, error: msg };
+  }
+}
+
+export async function triggerAntiCheatExecution(reason = 'Terdeteksi manipulasi game/pindah layar 3x') {
+  try {
+    const supabaseServer = await createHubServerClient();
+    const {
+      data: { user },
+    } = await supabaseServer.auth.getUser();
+
+    if (!user) {
+      return { success: false, error: 'User tidak ditemukan' };
+    }
+
+    return await triggerBanUser(user.id, reason);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Gagal mengeksekusi anti-cheat';
     return { success: false, error: msg };
@@ -1273,7 +1322,10 @@ export async function unbanEmailAction(email: string): Promise<{
     // 4. Invalidate cache agar UI Admin & Path langsung ter-update seketika
     try {
       revalidatePath('/admin-hub');
+      revalidatePath('/admin-hub', 'page');
       revalidatePath('/path');
+      revalidatePath('/path', 'page');
+      revalidatePath('/ban');
       revalidatePath('/banned');
     } catch {}
 
@@ -1285,6 +1337,13 @@ export async function unbanEmailAction(email: string): Promise<{
     const msg = err instanceof Error ? err.message : 'Gagal unban email';
     return { success: false, error: msg };
   }
+}
+
+/**
+ * Buka blokir pemain berdasarkan User ID (Admin Panel Action)
+ */
+export async function unbanUser(userId: string) {
+  return await unbanEmailAction(userId);
 }
 
 // ==============================================================================

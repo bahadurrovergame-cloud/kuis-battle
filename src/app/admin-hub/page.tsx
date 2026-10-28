@@ -64,6 +64,7 @@ import {
   reorderUnitsAction,
   getBannedUsersAction,
   unbanMultipleEmailsAction,
+  unbanUserAction,
   getPlayersListAction,
   adjustPlayerResourcesAction,
   getExistingWordsStatsAction,
@@ -283,7 +284,28 @@ function AdminHubContent() {
     }
   }, []);
 
-  // Unban Single User
+  // Buka Banned per User ID (Task 3)
+  const handleUnbanUser = async (userId: string, label?: string) => {
+    if (!userId) return;
+    if (!confirm(`Buka blokir untuk ${label || 'akun ini'}? Status akan kembali bersih dan data progres di-reset ke Level 1.`)) return;
+    setUnbanningEmail(true);
+    try {
+      const res = await unbanUserAction(userId);
+      if (res.success) {
+        setStatusMsg({ text: res.message || 'Berhasil membuka blokir akun.', type: 'success' });
+        loadBannedUsers();
+        loadPlayers();
+      } else {
+        setStatusMsg({ text: res.error || 'Gagal membuka blokir.', type: 'error' });
+      }
+    } catch {
+      setStatusMsg({ text: 'Terjadi kesalahan sistem saat membuka blokir.', type: 'error' });
+    } finally {
+      setUnbanningEmail(false);
+    }
+  };
+
+  // Unban Single User via Email
   const handleUnbanSingle = async (email: string) => {
     if (!email) return;
     setUnbanningEmail(true);
@@ -1969,11 +1991,16 @@ function AdminHubContent() {
                               <div className="flex items-center gap-2">
                                 <span className="text-base">{p.avatar_url || '⚡'}</span>
                                 <div>
-                                  <div className="flex items-center gap-1.5">
+                                  <div className="flex items-center gap-1.5 flex-wrap">
                                     <span className="font-bold text-white block">@{p.username}</span>
                                     {p.is_banned && (
                                       <span className="px-1.5 py-0.5 rounded text-[9px] font-black bg-rose-500/20 text-rose-400 border border-rose-500/40">
                                         BANNED
+                                      </span>
+                                    )}
+                                    {(p.ban_count ?? 0) > 0 && (
+                                      <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-rose-950/60 text-rose-400 border border-rose-800/60">
+                                        Jumlah Banned: {p.ban_count}
                                       </span>
                                     )}
                                   </div>
@@ -2068,7 +2095,7 @@ function AdminHubContent() {
           </div>
 
           {/* ================================================================ */}
-          {/* 🚫 DAFTAR PEMAIN DIBLOKIR & BUKA BLOKIR (ANTI-CHEAT)            */}
+          {/* 🚫 DAFTAR AKUN BANNED & BUKA BANNED (ANTI-CHEAT)                */}
           {/* ================================================================ */}
           <div className="mt-6 bg-[#111726] border-2 border-rose-500/40 rounded-3xl p-6 sm:p-8 shadow-[0_6px_0_#070a12] space-y-5">
             {/* Header */}
@@ -2076,17 +2103,16 @@ function AdminHubContent() {
               <div>
                 <h2 className="text-xl font-black text-white flex items-center gap-2">
                   <ShieldAlert className="w-5 h-5 text-rose-500" />
-                  <span>Daftar Pemain yang Diblokir (Anti-Cheat)</span>
+                  <span>Daftar Akun Banned</span>
                 </h2>
                 <p className="text-xs text-slate-400 mt-1 font-medium">
-                  Pemain yang terdeteksi berpindah tab atau curang 3x otomatis dimusnahkan dan masuk ke daftar ini.
-                  Centang pemain di bawah untuk membuka blokiran (unban) massal atau klik buka blokir perorangan.
+                  Daftar akun pemain dengan status pemblokiran aktif (<code className="text-rose-400 font-mono">is_banned = true</code>). Skor otomatis di-reset ke 0 saat terdeteksi pelanggaran.
                 </p>
               </div>
 
               <div className="flex items-center gap-2 shrink-0">
                 <span className="px-3 py-1.5 rounded-xl bg-rose-500/20 border border-rose-500/40 text-xs font-mono font-black text-rose-400">
-                  {bannedUsers.length} Pemain Diblokir
+                  {bannedUsers.length} Akun Banned
                 </span>
                 <button
                   type="button"
@@ -2127,33 +2153,34 @@ function AdminHubContent() {
                   <Check className="w-4 h-4" />
                   <span>
                     {unbanningBulk
-                      ? 'Membuka Blokir...'
-                      : `Buka Blokir Terpilih (${selectedBannedEmails.length})`}
+                      ? 'Membuka Banned...'
+                      : `Buka Banned Terpilih (${selectedBannedEmails.length})`}
                   </span>
                 </button>
               </div>
             )}
 
-            {/* Tabel Daftar Pemain Banned */}
+            {/* Tabel Daftar Akun Banned */}
             <div className="overflow-x-auto rounded-2xl border border-slate-800 bg-slate-950/60">
               <table className="w-full text-left border-collapse text-xs">
                 <thead>
                   <tr className="bg-slate-900/90 text-slate-400 font-bold border-b border-slate-800 text-[11px] uppercase tracking-wider">
                     <th className="py-2.5 px-3 w-10 text-center">Pilih</th>
-                    <th className="py-2.5 px-4">Email Pemain</th>
-                    <th className="py-2.5 px-4">Alasan Pemblokiran</th>
-                    <th className="py-2.5 px-3">Waktu Diblokir</th>
+                    <th className="py-2.5 px-4">Nama Akun</th>
+                    <th className="py-2.5 px-3 text-center">Poin</th>
+                    <th className="py-2.5 px-3 text-center">Total Pelanggaran</th>
+                    <th className="py-2.5 px-4">Alasan & Waktu</th>
                     <th className="py-2.5 px-4 text-right">Aksi</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
                   {bannedUsers.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="text-center py-8 text-slate-400 text-xs">
+                      <td colSpan={6} className="text-center py-8 text-slate-400 text-xs">
                         <div className="flex flex-col items-center justify-center gap-2">
                           <span className="text-2xl">🎉</span>
                           <span className="font-bold text-slate-300">
-                            Tidak ada pemain yang diblokir saat ini.
+                            Tidak ada akun yang dibanned saat ini.
                           </span>
                           <span className="text-[11px] text-slate-500">
                             Semua akun pemain berada dalam status bersih.
@@ -2181,40 +2208,55 @@ function AdminHubContent() {
                           </td>
                           <td className="py-2.5 px-4 font-mono font-bold text-rose-300">
                             <div className="flex flex-col">
-                              <span>
+                              <span className="text-white text-xs font-black">
                                 {b.username
                                   ? `@${b.username}`
                                   : b.email.includes('@player.kuisbattle.com')
                                   ? `@${b.email.replace('@player.kuisbattle.com', '')}`
                                   : b.email}
                               </span>
-                              {b.username && (
-                                <span className="text-[10px] text-slate-500 font-sans">{b.email}</span>
-                              )}
+                              <span className="text-[10px] text-slate-500 font-sans">{b.email}</span>
                             </div>
                           </td>
-                          <td className="py-2.5 px-4 text-slate-300 text-[11px]">
-                            {b.reason || 'Terdeteksi manipulasi game/pindah layar 3x'}
+                          <td className="py-2.5 px-3 text-center font-mono font-black text-emerald-400">
+                            {b.total_score ?? 0} Pts
                           </td>
-                          <td className="py-2.5 px-3 text-slate-400 font-mono text-[11px] whitespace-nowrap">
-                            {b.banned_at
-                              ? new Date(b.banned_at).toLocaleString('id-ID', {
-                                  day: '2-digit',
-                                  month: 'short',
-                                  year: 'numeric',
-                                  hour: '2-digit',
-                                  minute: '2-digit',
-                                })
-                              : '-'}
+                          <td className="py-2.5 px-3 text-center">
+                            <span className="px-2 py-0.5 rounded-md bg-rose-500/20 text-rose-400 border border-rose-500/40 font-mono font-black text-[11px]">
+                              {b.ban_count ?? 1}x Ban
+                            </span>
+                          </td>
+                          <td className="py-2.5 px-4 text-slate-300 text-[11px]">
+                            <span className="block font-medium text-slate-200">
+                              {b.reason || 'Terdeteksi manipulasi game/pindah layar 3x'}
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono">
+                              {b.banned_at
+                                ? new Date(b.banned_at).toLocaleString('id-ID', {
+                                    day: '2-digit',
+                                    month: 'short',
+                                    year: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                  })
+                                : '-'}
+                            </span>
                           </td>
                           <td className="py-2.5 px-4 text-right">
                             <button
                               type="button"
-                              onClick={() => handleUnbanSingle(b.email)}
+                              onClick={() => {
+                                if (b.user_id) {
+                                  handleUnbanUser(b.user_id, b.username ? `@${b.username}` : b.email);
+                                } else {
+                                  handleUnbanSingle(b.email);
+                                }
+                              }}
                               disabled={unbanningEmail}
-                              className="px-3 py-1.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all active:translate-y-0.5 shadow disabled:opacity-50"
+                              className="px-3 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-black text-xs transition-all active:translate-y-0.5 shadow-md flex items-center gap-1.5 ml-auto disabled:opacity-50"
                             >
-                              Buka Blokir (Unban)
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Buka Banned</span>
                             </button>
                           </td>
                         </tr>

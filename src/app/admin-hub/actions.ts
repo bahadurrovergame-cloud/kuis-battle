@@ -394,47 +394,69 @@ export async function getBannedUsersAction(): Promise<{
   try {
     const supabaseAdmin = await getEffectiveAdminClient();
 
-    // 1. Ambil dari tabel banned_users
+    // 1. Ambil dari tabel profiles yang ter-flag is_banned = true (Sumber utama status blokir)
+    let bannedProfiles: Array<{
+      id: string;
+      username: string;
+      total_score?: number;
+      ban_count?: number;
+      banned_reason?: string;
+      banned_at?: string;
+    }> = [];
+
+    try {
+      const { data: profs } = await supabaseAdmin
+        .from('profiles')
+        .select('id, username, total_score, ban_count, banned_reason, banned_at')
+        .eq('is_banned', true)
+        .order('banned_at', { ascending: false });
+      if (profs) bannedProfiles = profs;
+    } catch (profQueryErr) {
+      console.warn('Gagal membaca profiles.is_banned:', profQueryErr);
+    }
+
+    // 2. Ambil dari tabel banned_users (Log audit pemblokiran)
     const { data: bannedRows } = await supabaseAdmin
       .from('banned_users')
       .select('*')
       .order('banned_at', { ascending: false });
 
-    // 2. Ambil dari tabel profiles yang ter-flag is_banned = true
-    let bannedProfiles: Array<{ id: string; username: string; banned_reason?: string; banned_at?: string }> = [];
-    try {
-      const { data: profs } = await supabaseAdmin
-        .from('profiles')
-        .select('id, username, banned_reason, banned_at')
-        .eq('is_banned', true);
-      if (profs) bannedProfiles = profs;
-    } catch {
-      // Abaikan jika kolom is_banned belum ada di remote
-    }
-
     const mergedMap = new Map<string, BannedUser>();
 
-    (bannedRows || []).forEach((b) => {
-      mergedMap.set(b.email.toLowerCase(), {
-        id: b.id,
-        email: b.email,
-        user_id: b.user_id,
-        reason: b.reason,
-        banned_at: b.banned_at,
+    // Masukkan data dari profiles terlebih dahulu karena memuat total_score dan ban_count aktual
+    bannedProfiles.forEach((p) => {
+      const syntheticEmail = `${p.username.toLowerCase()}@player.kuisbattle.com`;
+      mergedMap.set(p.id, {
+        id: p.id,
+        email: syntheticEmail,
+        user_id: p.id,
+        username: p.username,
+        total_score: p.total_score ?? 0,
+        ban_count: p.ban_count ?? 1,
+        reason: p.banned_reason || 'Terdeteksi manipulasi game 3x (Anti-Cheat)',
+        banned_at: p.banned_at || new Date().toISOString(),
       });
     });
 
-    (bannedProfiles || []).forEach((p) => {
-      const syntheticEmail = `${p.username.toLowerCase()}@player.kuisbattle.com`;
-      const alreadyHas = Array.from(mergedMap.values()).some((item) => item.user_id === p.id);
-      if (!alreadyHas) {
-        mergedMap.set(syntheticEmail, {
-          id: p.id,
-          email: syntheticEmail,
-          user_id: p.id,
-          username: p.username,
-          reason: p.banned_reason || 'Terdeteksi kecurangan 3x (Anti-Cheat)',
-          banned_at: p.banned_at || new Date().toISOString(),
+    // Sinkronkan atau tambahkan jika ada entri di banned_users yang belum ada di map
+    (bannedRows || []).forEach((b) => {
+      const key = b.user_id || b.email.toLowerCase();
+      const existing = b.user_id ? mergedMap.get(b.user_id) : undefined;
+
+      if (existing) {
+        if (!existing.reason && b.reason) existing.reason = b.reason;
+        if (b.banned_at) existing.banned_at = b.banned_at;
+      } else {
+        const usernameGuess = b.email.replace('@player.kuisbattle.com', '').replace(/^@/, '');
+        mergedMap.set(key, {
+          id: b.id,
+          email: b.email,
+          user_id: b.user_id,
+          username: usernameGuess,
+          total_score: 0,
+          ban_count: 1,
+          reason: b.reason || 'Terdeteksi manipulasi game 3x (Anti-Cheat)',
+          banned_at: b.banned_at || new Date().toISOString(),
         });
       }
     });
@@ -449,6 +471,94 @@ export async function getBannedUsersAction(): Promise<{
     return { success: false, error: msg };
   }
 }
+
+/**
+ * Buka blokir satu pemain oleh Admin berdasarkan User ID:
+ * 1. Mengubah is_banned = false di database.
+ * 2. Hard Reset Skor: total_score = 0, coins = 0, lives = 5.
+ * 3. Tetap mempertahankan ban_count (audit pelanggaran).
+ * 4. Hapus user dari tts_user_progress, tts_leaderboard, dan banned_users.
+ */
+export async function unbanUserAction(userId: string): Promise<{
+  success: boolean;
+  message?: string;
+  error?: string;
+}> {
+  try {
+    if (!userId) {
+      return { success: false, error: 'User ID tidak valid.' };
+    }
+
+    const supabaseAdmin = await getEffectiveAdminClient();
+
+    // 1. Ambil profil pemain
+    const { data: prof } = await supabaseAdmin
+      .from('profiles')
+      .select('id, username')
+      .eq('id', userId)
+      .maybeSingle();
+
+    const username = prof?.username || 'pemain';
+    const email = `${username.toLowerCase()}@player.kuisbattle.com`;
+
+    // 2. Eksekusi Unban & Hard Reset
+    const { error: updateErr } = await supabaseAdmin
+      .from('profiles')
+      .update({
+        is_banned: false,
+        banned_reason: null,
+        banned_at: null,
+        total_score: 0,
+        coins: 0,
+        lives: 5,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', userId);
+
+    if (updateErr) {
+      return { success: false, error: `Gagal memperbarui profil: ${updateErr.message}` };
+    }
+
+    // 3. Hapus progres & klasemen
+    await supabaseAdmin.from('tts_user_progress').delete().eq('user_id', userId);
+    await supabaseAdmin.from('tts_leaderboard').delete().eq('user_id', userId);
+
+    // 4. Hapus dari banned_users
+    await supabaseAdmin
+      .from('banned_users')
+      .delete()
+      .or(`user_id.eq.${userId},email.eq.${email}`);
+
+    // 5. Catat riwayat poin
+    try {
+      await supabaseAdmin.from('point_history').insert({
+        user_id: userId,
+        amount: 0,
+        description: 'Buka Blokir & Hard Reset Skor oleh Admin',
+      });
+    } catch {}
+
+    // 6. Invalidate server cache Next.js
+    try {
+      revalidatePath('/admin-hub');
+      revalidatePath('/admin-hub', 'page');
+      revalidatePath('/path');
+      revalidatePath('/path', 'page');
+      revalidatePath('/ban');
+      revalidatePath('/banned');
+    } catch {}
+
+    return {
+      success: true,
+      message: `Akun @${username} berhasil dibuka blokirnya.`,
+    };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal membuka blokir user.';
+    return { success: false, error: msg };
+  }
+}
+
+export const unbanUser = unbanUserAction;
 
 /**
  * Buka blokir beberapa pemain sekaligus (Bulk Unban).
