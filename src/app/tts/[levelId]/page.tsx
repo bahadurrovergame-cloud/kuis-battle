@@ -139,27 +139,27 @@ const CrosswordCell = memo(
   }: CrosswordCellProps) {
     if (!cellData) {
       return (
-        <div className="w-full h-full aspect-square bg-[#070a12]/70 rounded-lg pointer-events-none" />
+        <div className="w-full h-full aspect-square rounded-md sm:rounded-lg bg-slate-800/40 border border-slate-700/50 pointer-events-none" />
       );
     }
 
     return (
       <div
         onClick={() => onClick(r, c)}
-        className={`w-full h-full aspect-square rounded-lg sm:rounded-xl relative flex items-center justify-center font-mono font-black text-xs sm:text-base cursor-pointer transition-all select-none ${
+        className={`w-full h-full aspect-square rounded-md sm:rounded-lg relative flex items-center justify-center font-mono font-black text-sm sm:text-lg md:text-xl cursor-pointer transition-all select-none ${
           isShaking
             ? 'bg-rose-600 border-2 border-rose-800 text-white shadow-[0_3px_0_#881337] animate-bounce'
             : isWordCompleted
-            ? 'bg-emerald-600 border-2 border-emerald-500 text-white shadow-[0_2px_0_#065f46]'
+            ? 'bg-emerald-500 border-2 border-emerald-300 text-white shadow-[0_2px_0_#047857] drop-shadow-[0_1px_2px_rgba(0,0,0,0.7)]'
             : isSelectedCell
-            ? 'bg-amber-400 text-slate-950 border-2 border-amber-600 shadow-[0_3px_0_#92400e] scale-105 z-10'
+            ? 'bg-amber-400 text-slate-950 border-2 border-amber-300 shadow-[0_3px_0_#b45309] scale-105 z-10'
             : isSelectedWord
-            ? 'bg-[#064e3b] border-2 border-emerald-500 text-white shadow-[0_2px_0_#022c22]'
-            : 'bg-[#1a2336] border-2 border-slate-700 text-white hover:bg-[#222e46] shadow-[0_2px_0_#0b101b]'
+            ? 'bg-emerald-950/90 border-2 border-emerald-400/80 text-emerald-100 shadow-[0_2px_0_#064e3b]'
+            : 'bg-[#1e293b] border-2 border-slate-600 text-white hover:bg-[#334155] shadow-[0_2px_0_#0f172a]'
         }`}
       >
         {cellData.startNumber && (
-          <span className="absolute top-0.5 left-1 text-[8px] sm:text-[9px] font-mono font-black text-slate-300 pointer-events-none">
+          <span className="absolute top-0.5 left-1 text-[8px] sm:text-[10px] font-mono font-black text-slate-300 pointer-events-none leading-none">
             {cellData.startNumber}
           </span>
         )}
@@ -1528,11 +1528,11 @@ function TTSGameContent() {
       {/* ==================================================================== */}
       {/* TTS BOARD GRID (RESPONSIF MOBILE-FIRST & PROPORTIONAL SQUARE CELLS)  */}
       {/* ==================================================================== */}
-      <section className="flex-1 w-full max-w-md flex flex-col items-center justify-center p-2 sm:p-3 relative min-h-0 overflow-hidden">
+      <section className="flex-1 w-full max-w-lg flex flex-col items-center justify-center px-1 sm:px-3 py-1 relative min-h-0 overflow-hidden">
         <div
-          className="grid gap-1 sm:gap-1.5 p-2 sm:p-3 bg-[#111726] rounded-2xl border-2 border-slate-800 shadow-[0_4px_0_#070a12] relative select-none w-full"
+          className="grid gap-1 sm:gap-1.5 p-1.5 sm:p-2.5 bg-[#111726] rounded-2xl border-2 border-slate-800/90 shadow-[0_4px_0_#070a12] relative select-none w-full"
           style={{
-            maxWidth: 'min(380px, 92vw, calc(100dvh - 230px))',
+            maxWidth: 'min(440px, 98vw, calc(100dvh - 210px))',
             aspectRatio: `${gridCols}/${gridRows}`,
             gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))`,
             gridTemplateRows: `repeat(${gridRows}, minmax(0, 1fr))`,
