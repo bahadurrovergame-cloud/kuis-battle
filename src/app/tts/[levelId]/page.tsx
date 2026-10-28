@@ -267,6 +267,8 @@ function TTSGameContent() {
   const lastViolationTimeRef = useRef(0);
   const isExecutingTerminationRef = useRef(false);
   const levelStartTimeRef = useRef<number>(0);
+  const freezeBonusSecondsRef = useRef<number>(0);
+  const freezeActiveUntilRef = useRef<number | null>(null);
 
   // Visual Effects
   const [shakingWordId, setShakingWordId] = useState<string | null>(null);
@@ -414,41 +416,92 @@ function TTSGameContent() {
     return { gridRows: rows, gridCols: cols, activeCellsMap: map };
   }, [level, words]);
 
-  // 4. Timer Loop: Elapsed Seconds, Hard Timer & Freeze Countdown
+  // Parameter Game Global & Level Dinamis (Transparansi Skor Tahap 2)
+  const effectiveDecayRate = useMemo(() => {
+    let rate = level?.decay_rate_override || settings?.decay_rate_per_sec || 2;
+    if (level?.is_hard_zone) {
+      rate = Math.max(rate, 4); // Zona Hard: Minimal 4 poin/detik
+    }
+    return rate;
+  }, [level, settings]);
+
+  const maxLevelTime = useMemo(() => {
+    if (level?.is_hard_zone) {
+      return level.hard_timer_override || settings?.hard_timer_seconds || 60;
+    }
+    return null;
+  }, [level, settings]);
+
+  // Estimasi Poin Live Kata Aktif (Sinkron dengan formula kalkulasi server)
+  const currentWordEstimatedScore = useMemo(() => {
+    if (!currentWord) return 0;
+    const basePoints = currentWord.points || settings?.base_points_per_word || 100;
+    const pointsLost = Math.floor(elapsedSeconds * effectiveDecayRate);
+    const netPoints = Math.max(20, basePoints - pointsLost);
+    return Math.round(netPoints * comboMultiplier);
+  }, [currentWord, settings, elapsedSeconds, effectiveDecayRate, comboMultiplier]);
+
+  // 4. Timer Absolut Wall-Clock (Anti Time-Freeze & Anti-Background Exploit)
+  const syncAbsoluteTimer = useCallback(() => {
+    if (loading || isGameOver || isVictory || isAccountTerminated || !levelStartTimeRef.current) return;
+
+    const now = Date.now();
+
+    // a) Evaluasi Countdown Freeze Aktif
+    if (freezeActiveUntilRef.current) {
+      if (freezeActiveUntilRef.current > now) {
+        setFreezeRemaining(Math.ceil((freezeActiveUntilRef.current - now) / 1000));
+      } else {
+        setFreezeRemaining(0);
+        freezeActiveUntilRef.current = null;
+      }
+    }
+
+    // b) Hitung Waktu Elapsed Absolut (Wall-Clock Reference)
+    const effectiveElapsedMs = Math.max(
+      0,
+      now - levelStartTimeRef.current - (freezeBonusSecondsRef.current * 1000)
+    );
+    const currentElapsedSec = Math.floor(effectiveElapsedMs / 1000);
+    setElapsedSeconds(currentElapsedSec);
+
+    // c) Evaluasi Hard Timer Countdown (Zona Hard)
+    if (maxLevelTime !== null) {
+      const remainingHardTime = Math.max(0, maxLevelTime - currentElapsedSec);
+      setHardTimerRemaining(remainingHardTime);
+
+      if (remainingHardTime <= 0) {
+        setIsGameOver(true);
+        sounds.playTimeUp();
+        deductLifeOnGameOverAction().catch((err) =>
+          console.error('Failed to deduct life on game over:', err)
+        );
+      } else if (remainingHardTime <= 10) {
+        sounds.playTick(true);
+      }
+    }
+  }, [loading, isGameOver, isVictory, isAccountTerminated, maxLevelTime]);
+
   useEffect(() => {
     if (loading || isGameOver || isVictory || isAccountTerminated) return;
 
-    const interval = setInterval(() => {
-      // Jika Freeze aktif, bekukan waktu dan penyusutan poin
-      if (freezeRemaining > 0) {
-        setFreezeRemaining((prev) => prev - 1);
-        return;
-      }
+    syncAbsoluteTimer();
+    const interval = setInterval(syncAbsoluteTimer, 1000);
 
-      // Ticker Waktu Bermain
-      setElapsedSeconds((prev) => prev + 1);
+    // Seketika resinkronisasi waktu absolut saat pemain kembali dari background/screenshot
+    const handleVisibilityOrFocus = () => {
+      syncAbsoluteTimer();
+    };
 
-      // Hard Timer Countdown (Khusus Zona Hard)
-      if (hardTimerRemaining !== null) {
-        if (hardTimerRemaining <= 1) {
-          // Waktu habis -> GAME OVER!
-          setIsGameOver(true);
-          sounds.playTimeUp();
-          deductLifeOnGameOverAction().catch((err) =>
-            console.error('Failed to deduct life on game over:', err)
-          );
-          setHardTimerRemaining(0);
-        } else {
-          if (hardTimerRemaining <= 10) {
-            sounds.playTick(true);
-          }
-          setHardTimerRemaining((prev) => (prev !== null ? prev - 1 : null));
-        }
-      }
-    }, 1000);
+    document.addEventListener('visibilitychange', handleVisibilityOrFocus);
+    window.addEventListener('focus', handleVisibilityOrFocus);
 
-    return () => clearInterval(interval);
-  }, [loading, isGameOver, isVictory, isAccountTerminated, freezeRemaining, hardTimerRemaining]);
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener('visibilitychange', handleVisibilityOrFocus);
+      window.removeEventListener('focus', handleVisibilityOrFocus);
+    };
+  }, [loading, isGameOver, isVictory, isAccountTerminated, syncAbsoluteTimer]);
 
   // ============================================================================
   // 5. TRIO ANTI-CHEAT: SENSOR PINDAH LAYAR / KELUAR TAB (ZERO-TOLERANCE)
@@ -1132,8 +1185,11 @@ function TTSGameContent() {
       const res = await executeFreezeAction({ levelId, sessionToken });
 
       if (res.success && res.newCoins !== undefined) {
+        const duration = res.durationSeconds || settings?.freeze_duration_seconds || 10;
         setProfile((prev) => (prev ? { ...prev, coins: res.newCoins ?? prev.coins } : null));
-        setFreezeRemaining(res.durationSeconds || 10);
+        freezeBonusSecondsRef.current += duration;
+        freezeActiveUntilRef.current = Date.now() + duration * 1000;
+        setFreezeRemaining(duration);
         sounds.playScoreUp();
       } else {
         showNotice(res.error || 'Gagal membekukan waktu.', 'warning');
@@ -1269,9 +1325,12 @@ function TTSGameContent() {
               }`}
             >
               ⏱️ {hardTimerRemaining}s
+              <span className="text-[10px] text-slate-400 ml-1 font-normal font-sans">
+                / {maxLevelTime || 60}s
+              </span>
             </div>
           ) : (
-            <span className="text-xs font-mono font-bold text-slate-400">{elapsedSeconds}s</span>
+            <span className="text-xs font-mono font-bold text-slate-300">⏱️ {elapsedSeconds}s</span>
           )}
         </div>
 
@@ -1295,6 +1354,57 @@ function TTSGameContent() {
           </button>
         </div>
       </header>
+
+      {/* ==================================================================== */}
+      {/* GAME PARAMETERS BAR: TRANSPARANSI SKOR, DECAY & BATAS WAKTU (TAHAP 2)*/}
+      {/* ==================================================================== */}
+      <div className="w-full max-w-md px-3 pt-2 pb-0.5 flex items-center justify-between text-[10px] font-mono shrink-0 z-20">
+        {/* Poin Dasar & Live Estimated Score */}
+        <div
+          className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-[#111726] border border-slate-800 text-slate-300 shadow-sm"
+          title={`Poin dasar kata ini: ${currentWord?.points || 100} Pts. Nilai kata menyusut seiring waktu.`}
+        >
+          <span className="text-amber-400 font-black">🎯 Poin:</span>
+          <span className="font-bold text-emerald-400 text-xs">{currentWordEstimatedScore}</span>
+          <span className="text-slate-500 text-[9px]">/ {currentWord?.points || 100}</span>
+        </div>
+
+        {/* Nilai Pembusukan (Decay) per Detik */}
+        <div
+          className={`flex items-center gap-1 px-2.5 py-1 rounded-xl border text-[10px] font-bold shadow-sm ${
+            freezeRemaining > 0
+              ? 'bg-cyan-950/80 border-cyan-500/60 text-cyan-300'
+              : level?.is_hard_zone
+              ? 'bg-rose-950/80 border-rose-800 text-rose-300'
+              : 'bg-[#111726] border-slate-800 text-slate-300'
+          }`}
+          title={
+            freezeRemaining > 0
+              ? 'Pembusukan skor dibekukan sementara!'
+              : `Pengurangan skor: ${effectiveDecayRate} poin setiap detik.`
+          }
+        >
+          <span>📉 Decay:</span>
+          <span className={freezeRemaining > 0 ? 'line-through text-slate-400' : 'text-rose-400 font-black'}>
+            -{effectiveDecayRate}/s
+          </span>
+        </div>
+
+        {/* Batas Waktu Maksimal */}
+        <div
+          className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-[#111726] border border-slate-800 text-slate-300 shadow-sm"
+          title={
+            maxLevelTime
+              ? `Batas waktu maksimal pengerjaan level ini: ${maxLevelTime} detik.`
+              : 'Waktu bermain berjalan santai tanpa batas maksimal.'
+          }
+        >
+          <span className="text-cyan-400 font-black">⏱️ Max:</span>
+          <span className="font-bold text-white">
+            {maxLevelTime ? `${maxLevelTime}s` : 'Bebas'}
+          </span>
+        </div>
+      </div>
 
       {/* ==================================================================== */}
       {/* IN-GAME FLOATING TOAST NOTIFICATION (MENGGANTIKAN ALERT JENDELA)     */}
@@ -1358,6 +1468,12 @@ function TTSGameContent() {
                 </span>
                 <span className="text-[9px] text-slate-300 font-mono font-bold shrink-0">
                   ({currentWord.word.length} Huruf)
+                </span>
+                <span
+                  className="text-[9px] font-mono font-black text-amber-300 bg-amber-500/20 border border-amber-500/40 px-1.5 py-0.5 rounded shrink-0"
+                  title={`Estimasi poin saat ini (Poin dasar: ${currentWord.points || 100})`}
+                >
+                  +{currentWordEstimatedScore} Pts
                 </span>
               </div>
               <p className="text-xs sm:text-sm font-bold text-white leading-snug line-clamp-2">

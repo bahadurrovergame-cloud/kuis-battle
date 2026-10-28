@@ -436,9 +436,20 @@ export async function submitWordAction({
 
     const { data: levelData } = await supabase
       .from('tts_levels')
-      .select('decay_rate_override, is_hard_zone')
+      .select('decay_rate_override, is_hard_zone, hard_timer_override')
       .eq('id', levelId)
       .maybeSingle();
+
+    // Validasi Batas Waktu Zona Hard (Anti Time-Freeze Exploit)
+    if (levelData?.is_hard_zone) {
+      const maxAllowed = levelData.hard_timer_override || setts?.hard_timer_seconds || 60;
+      if (serverElapsedSeconds > maxAllowed + 5) {
+        return {
+          success: false,
+          error: 'Waktu pengerjaan Zona Hard telah habis.',
+        };
+      }
+    }
 
     const basePoints = wordData.points || 100;
     let decayRate = levelData?.decay_rate_override || setts?.decay_rate_per_sec || 2;
@@ -601,18 +612,29 @@ export async function completeLevelAction({
     const [settsRes, currentLvlRes] = await Promise.all([
       supabase
         .from('game_settings')
-        .select('coins_per_level, current_season')
+        .select('coins_per_level, current_season, hard_timer_seconds')
         .eq('id', 1)
         .maybeSingle(),
       supabase
         .from('tts_levels')
-        .select('id, level_number, unit_id, is_hard_zone')
+        .select('id, level_number, unit_id, is_hard_zone, hard_timer_override')
         .eq('id', levelId)
         .maybeSingle(),
     ]);
 
     const setts = settsRes.data;
     const currentLvl = currentLvlRes.data;
+
+    // VALIDASI INTEGRITAS 4: Batas Waktu Zona Hard (Anti Time-Freeze Exploit)
+    if (currentLvl?.is_hard_zone) {
+      const maxAllowed = currentLvl.hard_timer_override || setts?.hard_timer_seconds || 60;
+      if (realElapsedSeconds > maxAllowed + 5) {
+        return {
+          success: false,
+          error: `Waktu pengerjaan Zona Hard telah habis (${realElapsedSeconds}s / ${maxAllowed}s).`,
+        };
+      }
+    }
 
     const coinsReward = setts?.coins_per_level || 20;
     const currentSeason = setts?.current_season || 1;
