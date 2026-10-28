@@ -336,7 +336,8 @@ function AdminHubContent() {
       if (res.success) {
         setStatusMsg({ text: res.message || 'Pemain terpilih berhasil dibuka blokirnya.', type: 'success' });
         setSelectedBannedEmails([]);
-        loadBannedUsers();
+        await loadBannedUsers();
+        await loadPlayers();
       } else {
         setStatusMsg({ text: res.error || 'Gagal membuka blokir pemain.', type: 'error' });
       }
@@ -352,14 +353,14 @@ function AdminHubContent() {
     if (selectedBannedEmails.length === bannedUsers.length) {
       setSelectedBannedEmails([]);
     } else {
-      setSelectedBannedEmails(bannedUsers.map((u) => u.email));
+      setSelectedBannedEmails(bannedUsers.map((u) => u.user_id || u.id || u.email));
     }
   };
 
   // Toggle Single Checkbox
-  const handleToggleBannedEmail = (email: string) => {
+  const handleToggleBannedEmail = (identifier: string) => {
     setSelectedBannedEmails((prev) =>
-      prev.includes(email) ? prev.filter((e) => e !== email) : [...prev, email]
+      prev.includes(identifier) ? prev.filter((e) => e !== identifier) : [...prev, identifier]
     );
   };
 
@@ -2190,10 +2191,11 @@ function AdminHubContent() {
                     </tr>
                   ) : (
                     bannedUsers.map((b) => {
-                      const isSelected = selectedBannedEmails.includes(b.email);
+                      const userKey = b.user_id || b.id || b.email;
+                      const isSelected = selectedBannedEmails.includes(userKey);
                       return (
                         <tr
-                          key={b.id || b.email}
+                          key={userKey}
                           className={`hover:bg-slate-900/40 transition-colors ${
                             isSelected ? 'bg-rose-950/20' : ''
                           }`}
@@ -2202,7 +2204,7 @@ function AdminHubContent() {
                             <input
                               type="checkbox"
                               checked={isSelected}
-                              onChange={() => handleToggleBannedEmail(b.email)}
+                              onChange={() => handleToggleBannedEmail(userKey)}
                               className="w-4 h-4 accent-rose-500 rounded cursor-pointer"
                             />
                           </td>

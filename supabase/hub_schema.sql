@@ -195,6 +195,12 @@ CREATE POLICY "Users can update their own profile"
     USING (auth.uid() = id)
     WITH CHECK (auth.uid() = id);
 
+CREATE POLICY "Admins can update all profiles"
+    ON public.profiles FOR UPDATE
+    TO authenticated
+    USING (public.is_admin())
+    WITH CHECK (public.is_admin());
+
 -- Game Settings:
 CREATE POLICY "Game settings can be viewed by anyone"
     ON public.game_settings FOR SELECT

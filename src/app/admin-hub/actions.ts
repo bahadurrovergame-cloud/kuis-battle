@@ -560,46 +560,58 @@ export async function unbanUserAction(userId: string): Promise<{
 
 export const unbanUser = unbanUserAction;
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Buka blokir beberapa pemain sekaligus (Bulk Unban).
+ * Menerima list user_id atau email pemain.
  * Melakukan Hard Reset Skor (total_score=0, coins=0, lives=5) dan Hard Reset Progres (kembali ke level 1).
  */
-export async function unbanMultipleEmailsAction(emails: string[]): Promise<{
+export async function unbanMultipleEmailsAction(identifiers: string[]): Promise<{
   success: boolean;
   count?: number;
   message?: string;
   error?: string;
 }> {
   try {
-    const cleanEmails = emails.map((e) => e.trim().toLowerCase()).filter(Boolean);
-    if (cleanEmails.length === 0) {
+    const cleanList = identifiers.map((e) => e.trim()).filter(Boolean);
+    if (cleanList.length === 0) {
       return { success: false, error: 'Pilih minimal satu pemain untuk dibuka blokirnya.' };
     }
 
     const supabaseAdmin = await getEffectiveAdminClient();
+    let unbannedCount = 0;
+    const errors: string[] = [];
 
-    for (const email of cleanEmails) {
-      // 1. Cari user_id
-      const { data: bRow } = await supabaseAdmin
-        .from('banned_users')
-        .select('user_id')
-        .eq('email', email)
-        .maybeSingle();
+    for (const item of cleanList) {
+      const isUuid = UUID_REGEX.test(item);
+      let targetUserId: string | null = isUuid ? item : null;
+      let cleanEmail = item.toLowerCase();
 
-      let targetUserId = bRow?.user_id;
+      // 1. Jika bukan UUID, cari user_id dari banned_users atau profiles
       if (!targetUserId) {
-        const usernameClean = email.replace('@player.kuisbattle.com', '').replace(/^@/, '');
-        const { data: profRow } = await supabaseAdmin
-          .from('profiles')
-          .select('id')
-          .or(`username.ilike.${usernameClean},id.eq.${email}`)
+        const { data: bRow } = await supabaseAdmin
+          .from('banned_users')
+          .select('user_id')
+          .eq('email', cleanEmail)
           .maybeSingle();
-        if (profRow) targetUserId = profRow.id;
+
+        if (bRow?.user_id) {
+          targetUserId = bRow.user_id;
+        } else {
+          const usernameClean = cleanEmail.replace('@player.kuisbattle.com', '').replace(/^@/, '');
+          const { data: profRow } = await supabaseAdmin
+            .from('profiles')
+            .select('id')
+            .ilike('username', usernameClean)
+            .maybeSingle();
+          if (profRow) targetUserId = profRow.id;
+        }
       }
 
       // 2. Eksekusi Unban & Hard Reset
       if (targetUserId) {
-        await supabaseAdmin
+        const { data: updatedRows, error: updateErr } = await supabaseAdmin
           .from('profiles')
           .update({
             is_banned: false,
@@ -610,13 +622,27 @@ export async function unbanMultipleEmailsAction(emails: string[]): Promise<{
             lives: 5,
             updated_at: new Date().toISOString(),
           })
-          .eq('id', targetUserId);
+          .eq('id', targetUserId)
+          .select('id');
+
+        if (updateErr) {
+          errors.push(`Gagal update profil (${item}): ${updateErr.message}`);
+          continue;
+        }
+
+        if (!updatedRows || updatedRows.length === 0) {
+          errors.push(`Profil (${item}) tidak ter-update. Periksa izin RLS Admin Supabase.`);
+          continue;
+        }
 
         await supabaseAdmin.from('tts_user_progress').delete().eq('user_id', targetUserId);
         await supabaseAdmin.from('tts_leaderboard').delete().eq('user_id', targetUserId);
-        await supabaseAdmin.from('banned_users').delete().or(`email.eq.${email},user_id.eq.${targetUserId}`);
+        await supabaseAdmin
+          .from('banned_users')
+          .delete()
+          .or(`user_id.eq.${targetUserId},email.eq.${cleanEmail}`);
 
-        // Catat ke point_history (Tahap 2)
+        // Catat ke point_history
         try {
           await supabaseAdmin.from('point_history').insert({
             user_id: targetUserId,
@@ -624,22 +650,32 @@ export async function unbanMultipleEmailsAction(emails: string[]): Promise<{
             description: 'Buka Blokir & Hard Reset Skor oleh Admin',
           });
         } catch {}
+
+        unbannedCount++;
       } else {
-        await supabaseAdmin.from('banned_users').delete().eq('email', email);
+        // Jika tidak ada di profiles, hapus dari banned_users
+        await supabaseAdmin.from('banned_users').delete().eq('email', cleanEmail);
       }
     }
 
     // 3. Revalidasi cache rute
     try {
       revalidatePath('/admin-hub');
+      revalidatePath('/admin-hub', 'page');
       revalidatePath('/path');
+      revalidatePath('/path', 'page');
+      revalidatePath('/ban');
       revalidatePath('/banned');
     } catch {}
 
+    if (unbannedCount === 0 && errors.length > 0) {
+      return { success: false, error: errors.join('; ') };
+    }
+
     return {
       success: true,
-      count: cleanEmails.length,
-      message: `${cleanEmails.length} pemain berhasil dibuka blokirnya dan data di-reset murni ke Level 1.`,
+      count: unbannedCount,
+      message: `${unbannedCount} pemain berhasil dibuka blokirnya dan data di-reset murni ke Level 1.${errors.length > 0 ? ` (${errors.length} peringatan: ${errors.join(', ')})` : ''}`,
     };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : 'Gagal membuka blokir pemain.';
