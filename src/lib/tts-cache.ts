@@ -4,6 +4,8 @@ import type { TTSLevel, TTSWord, TTSUserProgress, Profile, GameSettings } from '
 export type TTSGameInitResult = {
   success: boolean;
   sessionToken?: string;
+  startedAtMs?: number;
+  serverElapsedSeconds?: number;
   profile?: Profile;
   settings?: GameSettings;
   level?: TTSLevel;

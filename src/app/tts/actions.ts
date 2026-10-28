@@ -117,6 +117,8 @@ export async function startLevelSessionAction({ levelId }: { levelId: string }):
 export async function initTTSGameAction({ levelId }: { levelId: string }): Promise<{
   success: boolean;
   sessionToken?: string;
+  startedAtMs?: number;
+  serverElapsedSeconds?: number;
   profile?: Profile;
   settings?: GameSettings;
   level?: TTSLevel;
@@ -203,10 +205,47 @@ export async function initTTSGameAction({ levelId }: { levelId: string }): Promi
       }
     }
 
-    // 3. Buat Cryptographic HMAC Token
-    const sessionToken = createGameSessionToken(user.id, levelId);
+    // 3. Resolusi Sesi Waktu Absolut Server (Anti-F5 Reset & Cross-Session Sync)
+    const nowMs = Date.now();
+    let sessionStartedAtMs = nowMs;
 
-    // 4. Resolusi Kata & Susunan Grid (Skema 1: Bank Kosakata Dinamis)
+    const maxAllowedTime = lvl.is_hard_zone
+      ? (lvl.hard_timer_override || setts?.hard_timer_seconds || 60)
+      : 180;
+
+    if (prog && prog.status === 'in_progress') {
+      const rawStartedAt = (prog.grid_state as any)?._session_started_at;
+      let parsedStartedAt: number | null = null;
+      if (typeof rawStartedAt === 'number' && Number.isFinite(rawStartedAt)) {
+        parsedStartedAt = rawStartedAt;
+      } else if (typeof rawStartedAt === 'string') {
+        const t = new Date(rawStartedAt).getTime();
+        if (!isNaN(t)) parsedStartedAt = t;
+      }
+
+      if (parsedStartedAt) {
+        const diffSec = Math.floor((nowMs - parsedStartedAt) / 1000);
+        // Jika sesi ditinggalkan sangat lama (> waktu maksimal + 60 detik), reset ke sesi baru
+        if (diffSec > maxAllowedTime + 60) {
+          sessionStartedAtMs = nowMs;
+        } else {
+          sessionStartedAtMs = parsedStartedAt;
+        }
+      } else if (prog.time_taken_seconds && prog.time_taken_seconds > 0) {
+        sessionStartedAtMs = Math.max(nowMs - (prog.time_taken_seconds * 1000), nowMs - (maxAllowedTime * 1000));
+      } else {
+        sessionStartedAtMs = nowMs;
+      }
+    } else {
+      sessionStartedAtMs = nowMs;
+    }
+
+    const serverElapsedSeconds = Math.max(0, Math.floor((nowMs - sessionStartedAtMs) / 1000));
+
+    // 4. Buat Cryptographic HMAC Token Menggunakan Waktu Sesi Asli Server
+    const sessionToken = createGameSessionToken(user.id, levelId, sessionStartedAtMs);
+
+    // 5. Resolusi Kata & Susunan Grid (Skema 1: Bank Kosakata Dinamis)
     let actualWords: TTSWord[] = [];
     const savedActiveWords = (prog?.grid_state as any)?._active_words;
 
@@ -241,6 +280,7 @@ export async function initTTSGameAction({ levelId }: { levelId: string }): Promi
 
         const updatedGridState = {
           ...(prog?.grid_state || {}),
+          _session_started_at: sessionStartedAtMs,
           _active_words: actualWords,
           _active_word_ids: actualWords.map((w) => w.id),
         };
@@ -253,6 +293,7 @@ export async function initTTSGameAction({ levelId }: { levelId: string }): Promi
               level_id: levelId,
               status: prog?.status || 'in_progress',
               grid_state: updatedGridState,
+              time_taken_seconds: serverElapsedSeconds,
               updated_at: new Date().toISOString(),
             },
             { onConflict: 'user_id,level_id' }
@@ -268,23 +309,59 @@ export async function initTTSGameAction({ levelId }: { levelId: string }): Promi
       actualWords = dbWords.length > 0 ? dbWords : [];
     }
 
-    // 5. Inisialisasi progress awal jika belum ada
+    // 6. Inisialisasi progress awal jika belum ada
     if (!prog) {
+      const initialGridState = {
+        _session_started_at: sessionStartedAtMs,
+        ...(actualWords.length > 0
+          ? {
+              _active_words: actualWords,
+              _active_word_ids: actualWords.map((w) => w.id),
+            }
+          : {}),
+      };
       const { data: newProg } = await supabase
         .from('tts_user_progress')
         .insert({
           user_id: user.id,
           level_id: levelId,
           status: 'in_progress',
+          grid_state: initialGridState,
+          time_taken_seconds: serverElapsedSeconds,
           updated_at: new Date().toISOString(),
         })
         .select()
         .maybeSingle();
       if (newProg) prog = newProg as TTSUserProgress;
-    } else if (prog.status !== 'completed' && prog.status !== 'in_progress') {
+    } else if (prog.status === 'in_progress') {
+      // Pastikan _session_started_at tersimpan jika belum tercatat
+      if (!(prog.grid_state as any)?._session_started_at) {
+        const nextGridState = {
+          ...(prog.grid_state || {}),
+          _session_started_at: sessionStartedAtMs,
+        };
+        await supabase
+          .from('tts_user_progress')
+          .update({
+            grid_state: nextGridState,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .eq('level_id', levelId);
+        prog.grid_state = nextGridState;
+      }
+    } else if (prog.status !== 'completed') {
+      const nextGridState = {
+        ...(prog.grid_state || {}),
+        _session_started_at: sessionStartedAtMs,
+      };
       await supabase
         .from('tts_user_progress')
-        .update({ status: 'in_progress', updated_at: new Date().toISOString() })
+        .update({
+          status: 'in_progress',
+          grid_state: nextGridState,
+          updated_at: new Date().toISOString(),
+        })
         .eq('user_id', user.id)
         .eq('level_id', levelId);
     }
@@ -292,6 +369,8 @@ export async function initTTSGameAction({ levelId }: { levelId: string }): Promi
     return {
       success: true,
       sessionToken,
+      startedAtMs: sessionStartedAtMs,
+      serverElapsedSeconds,
       profile: prof || undefined,
       settings: setts || undefined,
       level: lvl,
@@ -469,11 +548,17 @@ export async function submitWordAction({
     const currentTotalScore = (existingProg?.score_earned || 0) + finalEarnedScore;
     const targetStatus = existingProg?.status === 'completed' ? 'completed' : 'in_progress';
 
+    const gridToKeep = {
+      ...(existingProg?.grid_state || {}),
+      _session_started_at: tokenVerify.startedAt,
+    };
+
     await supabase.from('tts_user_progress').upsert(
       {
         user_id: user.id,
         level_id: levelId,
         status: targetStatus,
+        grid_state: gridToKeep,
         completed_words: completedWords,
         score_earned: currentTotalScore,
         combo_multiplier: newCombo,
@@ -1026,11 +1111,16 @@ export async function saveProgressDebouncedAction({
       Math.floor((Date.now() - tokenVerify.startedAt) / 1000)
     );
 
+    const mergedGridState = {
+      ...gridState,
+      _session_started_at: tokenVerify.startedAt,
+    };
+
     await supabase.from('tts_user_progress').upsert(
       {
         user_id: user.id,
         level_id: levelId,
-        grid_state: gridState,
+        grid_state: mergedGridState,
         time_taken_seconds: serverElapsedSeconds,
         updated_at: new Date().toISOString(),
       },
@@ -1371,7 +1461,7 @@ export async function unbanUser(userId: string) {
 // ==============================================================================
 // 8. KURANGI NYAWA SAAT GAME OVER / MENYERAH (QUIT PENALTY)
 // ==============================================================================
-export async function deductLifeOnGameOverAction() {
+export async function deductLifeOnGameOverAction(levelId?: string) {
   try {
     const supabase = await createHubServerClient();
     const {
@@ -1400,6 +1490,22 @@ export async function deductLifeOnGameOverAction() {
         })
         .eq('id', user.id);
 
+      if (levelId) {
+        await dbClient
+          .from('tts_user_progress')
+          .update({
+            status: 'in_progress',
+            score_earned: 0,
+            combo_multiplier: 1.0,
+            time_taken_seconds: 0,
+            completed_words: [],
+            grid_state: { _session_started_at: Date.now() },
+            updated_at: new Date().toISOString(),
+          })
+          .eq('user_id', user.id)
+          .eq('level_id', levelId);
+      }
+
       return { success: true, remainingLives };
     }
 
@@ -1411,6 +1517,40 @@ export async function deductLifeOnGameOverAction() {
 }
 
 export const quitLevelPenaltyAction = deductLifeOnGameOverAction;
+
+export async function resetLevelProgressAction({ levelId }: { levelId: string }): Promise<{ success: boolean; error?: string }> {
+  try {
+    const supabase = await createHubServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) return { success: false, error: 'Unauthorized' };
+
+    const dbClient = isRealServiceRoleKey(process.env.SUPABASE_HUB_SERVICE_ROLE_KEY)
+      ? createHubAdminClient()
+      : supabase;
+
+    await dbClient
+      .from('tts_user_progress')
+      .update({
+        status: 'in_progress',
+        score_earned: 0,
+        combo_multiplier: 1.0,
+        time_taken_seconds: 0,
+        completed_words: [],
+        grid_state: { _session_started_at: Date.now() },
+        updated_at: new Date().toISOString(),
+      })
+      .eq('user_id', user.id)
+      .eq('level_id', levelId);
+
+    return { success: true };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : 'Gagal mereset progress level';
+    return { success: false, error: msg };
+  }
+}
 
 // ==============================================================================
 // 9. REFILL NYAWA PENUH DENGAN KOIN (SERVER-SIDE VALIDATION)

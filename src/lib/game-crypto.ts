@@ -19,11 +19,15 @@ const SECRET_KEY =
  * Mencegah manipulasi payload, penembakan API via Postman tanpa sesi,
  * serta memvalidasi waktu pengerjaan asli dari sisi server (Speedhack Prevention).
  */
-export function createGameSessionToken(userId: string, levelId: string): string {
+export function createGameSessionToken(
+  userId: string,
+  levelId: string,
+  startedAtMs?: number
+): string {
   const payload: GameSessionPayload = {
     userId,
     levelId,
-    startedAt: Date.now(),
+    startedAt: typeof startedAtMs === 'number' && Number.isFinite(startedAtMs) ? startedAtMs : Date.now(),
     nonce: crypto.randomBytes(8).toString('hex'),
   };
 

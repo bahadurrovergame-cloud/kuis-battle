@@ -20,6 +20,7 @@ import {
   completeLevelAction,
   triggerAntiCheatExecution,
   deductLifeOnGameOverAction,
+  resetLevelProgressAction,
 } from '../actions';
 import { updatePathOptimisticCompletion, invalidatePathCache } from '@/lib/path-store';
 import {
@@ -222,13 +223,30 @@ function TTSGameContent() {
     return actualWords[0] ? { r: actualWords[0].start_row, c: actualWords[0].start_col } : null;
   });
 
-  // Timers & Decay
-  const [elapsedSeconds, setElapsedSeconds] = useState(() => initialCache?.progress?.time_taken_seconds || 0);
+  // Timers & Decay (Sinkronisasi Sesi Waktu Absolut)
+  const initialStartedAt =
+    initialCache?.startedAtMs ||
+    (initialCache?.progress?.grid_state as any)?._session_started_at ||
+    (initialCache?.progress?.time_taken_seconds
+      ? Date.now() - initialCache.progress.time_taken_seconds * 1000
+      : 0);
+
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => {
+    if (initialCache?.serverElapsedSeconds !== undefined) return initialCache.serverElapsedSeconds;
+    if (initialCache?.progress?.time_taken_seconds !== undefined) return initialCache.progress.time_taken_seconds;
+    if (initialStartedAt > 0) return Math.max(0, Math.floor((Date.now() - initialStartedAt) / 1000));
+    return 0;
+  });
+
   const [hardTimerRemaining, setHardTimerRemaining] = useState<number | null>(() => {
-    if (initialCache?.level?.is_hard_zone) {
-      return initialCache.level.hard_timer_override || initialCache.settings?.hard_timer_seconds || 60;
-    }
-    return 180;
+    const maxTime = initialCache?.level?.is_hard_zone
+      ? (initialCache.level.hard_timer_override || initialCache.settings?.hard_timer_seconds || 60)
+      : 180;
+    const initElapsed =
+      initialCache?.serverElapsedSeconds ??
+      initialCache?.progress?.time_taken_seconds ??
+      (initialStartedAt > 0 ? Math.max(0, Math.floor((Date.now() - initialStartedAt) / 1000)) : 0);
+    return Math.max(0, maxTime - initElapsed);
   });
   const [showQuitModal, setShowQuitModal] = useState(false);
   const [isQuitting, setIsQuitting] = useState(false);
@@ -269,7 +287,7 @@ function TTSGameContent() {
   const cheatModalTypeRef = useRef<1 | 2 | 3 | null>(null);
   const lastViolationTimeRef = useRef(0);
   const isExecutingTerminationRef = useRef(false);
-  const levelStartTimeRef = useRef<number>(0);
+  const levelStartTimeRef = useRef<number>(initialStartedAt || 0);
   const freezeBonusSecondsRef = useRef<number>(0);
   const freezeActiveUntilRef = useRef<number | null>(null);
 
@@ -302,21 +320,39 @@ function TTSGameContent() {
       if (res.profile) setProfile(res.profile);
       if (res.settings) setSettings(res.settings);
 
+      // Inisialisasi/Sinkronisasi Sesi Waktu Absolut Server (Anti-F5 Reset & Cross-Session Sync)
+      const serverStartedAt =
+        res.startedAtMs ||
+        (res.progress?.grid_state as any)?._session_started_at ||
+        (res.progress?.time_taken_seconds
+          ? Date.now() - res.progress.time_taken_seconds * 1000
+          : null);
+
+      if (serverStartedAt && typeof serverStartedAt === 'number') {
+        levelStartTimeRef.current = serverStartedAt;
+      } else if (!levelStartTimeRef.current) {
+        levelStartTimeRef.current = Date.now();
+      }
+
+      const currentElapsed =
+        res.serverElapsedSeconds ??
+        (res.progress?.time_taken_seconds !== undefined
+          ? res.progress.time_taken_seconds
+          : Math.max(0, Math.floor((Date.now() - levelStartTimeRef.current) / 1000)));
+
+      setElapsedSeconds(currentElapsed);
+
       if (res.level) {
         setLevel(res.level);
-        if (res.level.is_hard_zone) {
-          setHardTimerRemaining(res.level.hard_timer_override || res.settings?.hard_timer_seconds || 60);
-        } else {
-          setHardTimerRemaining(180);
-        }
+        const maxTime = res.level.is_hard_zone
+          ? (res.level.hard_timer_override || res.settings?.hard_timer_seconds || 60)
+          : 180;
+        setHardTimerRemaining(Math.max(0, maxTime - currentElapsed));
       }
 
       const actualWords = res.words && res.words.length > 0 ? res.words : FALLBACK_WORDS;
       setWords(actualWords);
       wordsRef.current = actualWords;
-      if (!levelStartTimeRef.current) {
-        levelStartTimeRef.current = Date.now();
-      }
       if (actualWords.length > 0) {
         setSelectedWordId((prev) => prev || actualWords[0].id);
         setSelectedCell((prev) => prev || { r: actualWords[0].start_row, c: actualWords[0].start_col });
@@ -330,7 +366,7 @@ function TTSGameContent() {
         completedWordIdsRef.current = completed;
         if (prog.score_earned) setScoreEarned(prog.score_earned);
         if (prog.combo_multiplier) setComboMultiplier(prog.combo_multiplier);
-        if (prog.time_taken_seconds) setElapsedSeconds(prog.time_taken_seconds);
+        if (prog.time_taken_seconds !== undefined) setElapsedSeconds(prog.time_taken_seconds);
 
         const allWordsDone = actualWords.length > 0 && actualWords.every((w) => completed.includes(w.id));
         if (allWordsDone) {
@@ -361,10 +397,6 @@ function TTSGameContent() {
 
     const init = async () => {
       try {
-        if (!levelStartTimeRef.current) {
-          levelStartTimeRef.current = Date.now();
-        }
-
         // Ambil dari promise in-flight (jika diprefetch dari modal), atau trigger prefetch baru
         const inFlight = getInFlightTTSGamePromise(levelId);
         const res = inFlight ? await inFlight : await prefetchTTSGame(levelId);
@@ -478,14 +510,14 @@ function TTSGameContent() {
       if (remainingHardTime <= 0) {
         setIsGameOver(true);
         sounds.playTimeUp();
-        deductLifeOnGameOverAction().catch((err) =>
+        deductLifeOnGameOverAction(levelId).catch((err) =>
           console.error('Failed to deduct life on game over:', err)
         );
       } else if (remainingHardTime <= 10) {
         sounds.playTick(true);
       }
     }
-  }, [loading, isGameOver, isVictory, isAccountTerminated, maxLevelTime]);
+  }, [loading, isGameOver, isVictory, isAccountTerminated, maxLevelTime, levelId]);
 
   useEffect(() => {
     if (loading || isGameOver || isVictory || isAccountTerminated) return;
@@ -595,6 +627,7 @@ function TTSGameContent() {
         const currentActiveWords = wordsRef.current;
         const gridToSave = {
           ...newGrid,
+          _session_started_at: levelStartTimeRef.current || Date.now(),
           ...(currentActiveWords && currentActiveWords.length > 0
             ? {
                 _active_words: currentActiveWords,
@@ -1016,8 +1049,15 @@ function TTSGameContent() {
   );
 
   // Transisi Peta Optimistik (0 ms) & Force Clear Modal Level
-  const handleReturnToPath = useCallback(() => {
-    if (isVictory) {
+  const handleReturnToPath = useCallback(async () => {
+    if (isGameOver) {
+      try {
+        await resetLevelProgressAction({ levelId });
+      } catch (err) {
+        console.error('Failed to reset level progress on return to path:', err);
+      }
+      invalidateTTSGameCache(levelId);
+    } else if (isVictory) {
       updatePathOptimisticCompletion(
         levelId,
         victoryData?.score || scoreEarned,
@@ -1028,7 +1068,7 @@ function TTSGameContent() {
     // Force refresh client router cache Next.js agar /path langsung render state terbaru
     router.refresh();
     router.replace('/path');
-  }, [isVictory, levelId, victoryData, scoreEarned, router]);
+  }, [isVictory, isGameOver, levelId, victoryData, scoreEarned, router]);
 
   // Tombol Kembali dengan Quit Penalty (Tahap 4)
   const handleBackButtonClick = useCallback(() => {
@@ -1043,7 +1083,7 @@ function TTSGameContent() {
   const handleConfirmQuit = useCallback(async () => {
     setIsQuitting(true);
     try {
-      await deductLifeOnGameOverAction();
+      await deductLifeOnGameOverAction(levelId);
       invalidateTTSGameCache(levelId);
     } catch (err) {
       console.error('Failed to deduct life on quit:', err);
@@ -1052,6 +1092,17 @@ function TTSGameContent() {
       router.replace('/path');
     }
   }, [levelId, router]);
+
+  // Ulangi Level Setelah Game Over (Reset Sesi & Timer Bersih)
+  const handleRetryLevel = useCallback(async () => {
+    try {
+      await resetLevelProgressAction({ levelId });
+      invalidateTTSGameCache(levelId);
+    } catch (err) {
+      console.error('Failed to reset level on retry:', err);
+    }
+    window.location.reload();
+  }, [levelId]);
 
   // Navigasi Soal Sebelumnya / Selanjutnya
   const handleCycleClue = useCallback(
@@ -1793,7 +1844,7 @@ function TTSGameContent() {
                 Peta
               </button>
               <button
-                onClick={() => window.location.reload()}
+                onClick={handleRetryLevel}
                 className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs transition-all shadow-lg shadow-rose-600/30 flex items-center justify-center gap-2"
               >
                 <RotateCcw className="w-4 h-4" />
