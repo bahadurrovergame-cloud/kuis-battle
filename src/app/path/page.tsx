@@ -20,6 +20,7 @@ import {
   getOptimisticCompletions,
   clearOptimisticCompletion,
 } from '@/lib/path-store';
+import { prefetchTTSGame } from '@/lib/tts-cache';
 import {
   Heart,
   Coins,
@@ -463,6 +464,10 @@ export default function ThePathPage() {
       return;
     }
 
+    // 🚀 Zero-Delay Prefetching: Jalankan prefetch bundle route & data game TTS seketika saat modal dibuka
+    router.prefetch(`/tts/${level.id}`);
+    prefetchTTSGame(level.id);
+
     setSelectedNode({
       level,
       unit,
@@ -473,7 +478,8 @@ export default function ThePathPage() {
   };
 
   const handleStartLevel = (levelId: string) => {
-    // Tutup paksa modal sebelum navigasi agar tidak nge-flash saat user kembali ke peta
+    // Pastikan data diprefetch dan tutup modal
+    prefetchTTSGame(levelId);
     setSelectedNode(null);
     router.push(`/tts/${levelId}`);
   };
@@ -767,6 +773,12 @@ export default function ThePathPage() {
                         <button
                           type="button"
                           onClick={() => handleNodeClick(level, unit)}
+                          onMouseEnter={() => {
+                            if (status.isUnlocked) {
+                              router.prefetch(`/tts/${level.id}`);
+                              prefetchTTSGame(level.id);
+                            }
+                          }}
                           className={`w-20 h-20 rounded-full flex flex-col items-center justify-center relative transition-all active:translate-y-1.5 ${
                             isHard
                               ? status.isUnlocked

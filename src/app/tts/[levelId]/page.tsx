@@ -22,6 +22,13 @@ import {
   deductLifeOnGameOverAction,
 } from '../actions';
 import { updatePathOptimisticCompletion, invalidatePathCache } from '@/lib/path-store';
+import {
+  getCachedTTSGame,
+  getInFlightTTSGamePromise,
+  prefetchTTSGame,
+  invalidateTTSGameCache,
+  TTSGameInitResult,
+} from '@/lib/tts-cache';
 import { useAntiCheat } from '@/hooks/useAntiCheat';
 import { sounds } from '@/lib/sound';
 import confetti from 'canvas-confetti';
@@ -179,36 +186,58 @@ function TTSGameContent() {
   const params = useParams();
   const levelId = (params?.levelId as string) || '';
 
+  // 🚀 Zero-Delay Synchronous Cache Initialization
+  const initialCache = useMemo(() => getCachedTTSGame(levelId), [levelId]);
+
   // Data Game & User
-  const [profile, setProfile] = useState<Profile | null>(null);
-  const [settings, setSettings] = useState<GameSettings | null>(null);
-  const [level, setLevel] = useState<TTSLevel | null>(null);
-  const [words, setWords] = useState<TTSWord[]>(FALLBACK_WORDS);
-  const wordsRef = useRef<TTSWord[]>(FALLBACK_WORDS);
-  const [loading, setLoading] = useState(true);
+  const [profile, setProfile] = useState<Profile | null>(() => initialCache?.profile || null);
+  const [settings, setSettings] = useState<GameSettings | null>(() => initialCache?.settings || null);
+  const [level, setLevel] = useState<TTSLevel | null>(() => initialCache?.level || null);
+  const [words, setWords] = useState<TTSWord[]>(() => {
+    return initialCache?.words && initialCache.words.length > 0 ? initialCache.words : FALLBACK_WORDS;
+  });
+  const wordsRef = useRef<TTSWord[]>(words);
+  const [loading, setLoading] = useState<boolean>(() => !initialCache?.success);
 
   // Grid State: key "row,col" => char
-  const [gridState, setGridState] = useState<Record<string, string>>({});
-  const [completedWordIds, setCompletedWordIds] = useState<string[]>([]);
-  const completedWordIdsRef = useRef<string[]>([]);
-  const [scoreEarned, setScoreEarned] = useState(0);
-  const [comboMultiplier, setComboMultiplier] = useState(1.0);
+  const [gridState, setGridState] = useState<Record<string, string>>(() => {
+    return (initialCache?.progress?.grid_state as Record<string, string>) || {};
+  });
+  const [completedWordIds, setCompletedWordIds] = useState<string[]>(() => {
+    return Array.isArray(initialCache?.progress?.completed_words)
+      ? (initialCache.progress.completed_words as string[])
+      : [];
+  });
+  const completedWordIdsRef = useRef<string[]>(completedWordIds);
+  const [scoreEarned, setScoreEarned] = useState(() => initialCache?.progress?.score_earned || 0);
+  const [comboMultiplier, setComboMultiplier] = useState(() => initialCache?.progress?.combo_multiplier || 1.0);
 
   // Active Selection
-  const [selectedWordId, setSelectedWordId] = useState<string>('');
-  const [selectedCell, setSelectedCell] = useState<{ r: number; c: number } | null>(null);
+  const [selectedWordId, setSelectedWordId] = useState<string>(() => {
+    const actualWords = initialCache?.words && initialCache.words.length > 0 ? initialCache.words : FALLBACK_WORDS;
+    return actualWords[0]?.id || '';
+  });
+  const [selectedCell, setSelectedCell] = useState<{ r: number; c: number } | null>(() => {
+    const actualWords = initialCache?.words && initialCache.words.length > 0 ? initialCache.words : FALLBACK_WORDS;
+    return actualWords[0] ? { r: actualWords[0].start_row, c: actualWords[0].start_col } : null;
+  });
 
   // Timers & Decay
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [hardTimerRemaining, setHardTimerRemaining] = useState<number | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => initialCache?.progress?.time_taken_seconds || 0);
+  const [hardTimerRemaining, setHardTimerRemaining] = useState<number | null>(() => {
+    if (initialCache?.level?.is_hard_zone) {
+      return initialCache.level.hard_timer_override || initialCache.settings?.hard_timer_seconds || 60;
+    }
+    return null;
+  });
   const [freezeRemaining, setFreezeRemaining] = useState(0);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isVictory, setIsVictory] = useState(false);
   const [victoryData, setVictoryData] = useState<{ score: number; coins: number; nextLevelId?: string } | null>(null);
 
   // Anti-Cheat Cryptographic Session Token & Execution Locks (Spam-Click Defense)
-  const sessionTokenRef = useRef<string>('');
-  const [sessionToken, setSessionToken] = useState<string>('');
+  const sessionTokenRef = useRef<string>(initialCache?.sessionToken || '');
+  const [sessionToken, setSessionToken] = useState<string>(initialCache?.sessionToken || '');
   const evaluatingWordIdsRef = useRef<Set<string>>(new Set());
   const [isPendingHint, setIsPendingHint] = useState(false);
   const [isPendingFreeze, setIsPendingFreeze] = useState(false);
@@ -253,76 +282,93 @@ function TTSGameContent() {
     }
   }, []);
 
-  // 1. Fetch Inisialisasi Data Level & User (High-Speed Unified Action)
+  // 1. Fetch Inisialisasi Data Level & User (High-Speed Unified Action dengan In-Flight Prefetch)
   useEffect(() => {
     sounds.prewarm();
     let isMounted = true;
 
+    const applyGameData = (res: TTSGameInitResult) => {
+      if (!isMounted) return;
+
+      if (res.sessionToken) {
+        setSessionToken(res.sessionToken);
+        sessionTokenRef.current = res.sessionToken;
+      }
+      if (res.profile) setProfile(res.profile);
+      if (res.settings) setSettings(res.settings);
+
+      if (res.level) {
+        setLevel(res.level);
+        if (res.level.is_hard_zone) {
+          setHardTimerRemaining(res.level.hard_timer_override || res.settings?.hard_timer_seconds || 60);
+        }
+      }
+
+      const actualWords = res.words && res.words.length > 0 ? res.words : FALLBACK_WORDS;
+      setWords(actualWords);
+      wordsRef.current = actualWords;
+      if (!levelStartTimeRef.current) {
+        levelStartTimeRef.current = Date.now();
+      }
+      if (actualWords.length > 0) {
+        setSelectedWordId((prev) => prev || actualWords[0].id);
+        setSelectedCell((prev) => prev || { r: actualWords[0].start_row, c: actualWords[0].start_col });
+      }
+
+      const prog = res.progress;
+      if (prog) {
+        if (prog.grid_state) setGridState(prog.grid_state as Record<string, string>);
+        const completed: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
+        setCompletedWordIds(completed);
+        completedWordIdsRef.current = completed;
+        if (prog.score_earned) setScoreEarned(prog.score_earned);
+        if (prog.combo_multiplier) setComboMultiplier(prog.combo_multiplier);
+        if (prog.time_taken_seconds) setElapsedSeconds(prog.time_taken_seconds);
+
+        const allWordsDone = actualWords.length > 0 && actualWords.every((w) => completed.includes(w.id));
+        if (allWordsDone) {
+          setIsVictory(true);
+          if (res.sessionToken) {
+            completeLevelAction({
+              levelId,
+              sessionToken: res.sessionToken,
+            }).then((vRes) => {
+              if (vRes.success) {
+                setVictoryData({
+                  score: vRes.scoreEarned ?? prog.score_earned ?? 0,
+                  coins: vRes.coinsEarned ?? 20,
+                  nextLevelId: vRes.nextLevelId,
+                });
+                updatePathOptimisticCompletion(
+                  levelId,
+                  vRes.scoreEarned ?? prog.score_earned ?? 0,
+                  vRes.coinsEarned ?? 20
+                );
+              }
+            });
+          }
+        }
+      }
+      setLoading(false);
+    };
+
     const init = async () => {
       try {
-        const res = await initTTSGameAction({ levelId });
+        if (!levelStartTimeRef.current) {
+          levelStartTimeRef.current = Date.now();
+        }
+
+        // Ambil dari promise in-flight (jika diprefetch dari modal), atau trigger prefetch baru
+        const inFlight = getInFlightTTSGamePromise(levelId);
+        const res = inFlight ? await inFlight : await prefetchTTSGame(levelId);
+
         if (!res.success) {
           showNotice(res.error || 'Gagal mempersiapkan papan TTS.', 'error');
           setTimeout(() => router.push('/path'), 2500);
           return;
         }
 
-        if (!isMounted) return;
-
-        if (res.sessionToken) setSessionToken(res.sessionToken);
-        if (res.profile) setProfile(res.profile);
-        if (res.settings) setSettings(res.settings);
-
-        if (res.level) {
-          setLevel(res.level);
-          if (res.level.is_hard_zone) {
-            setHardTimerRemaining(res.level.hard_timer_override || res.settings?.hard_timer_seconds || 60);
-          }
-        }
-
-        const actualWords = res.words && res.words.length > 0 ? res.words : FALLBACK_WORDS;
-        setWords(actualWords);
-        wordsRef.current = actualWords;
-        levelStartTimeRef.current = Date.now(); // Catat waktu mulai asli untuk proteksi speedhack
-        if (actualWords.length > 0) {
-          setSelectedWordId(actualWords[0].id);
-          setSelectedCell({ r: actualWords[0].start_row, c: actualWords[0].start_col });
-        }
-
-        const prog = res.progress;
-        if (prog) {
-          if (prog.grid_state) setGridState(prog.grid_state as Record<string, string>);
-          const completed: string[] = Array.isArray(prog.completed_words) ? prog.completed_words : [];
-          setCompletedWordIds(completed);
-          completedWordIdsRef.current = completed;
-          if (prog.score_earned) setScoreEarned(prog.score_earned);
-          if (prog.combo_multiplier) setComboMultiplier(prog.combo_multiplier);
-          if (prog.time_taken_seconds) setElapsedSeconds(prog.time_taken_seconds);
-
-          const allWordsDone = actualWords.length > 0 && actualWords.every((w) => completed.includes(w.id));
-          if (allWordsDone) {
-            setIsVictory(true);
-            if (res.sessionToken) {
-              completeLevelAction({
-                levelId,
-                sessionToken: res.sessionToken,
-              }).then((vRes) => {
-                if (vRes.success) {
-                  setVictoryData({
-                    score: vRes.scoreEarned ?? prog.score_earned ?? 0,
-                    coins: vRes.coinsEarned ?? 20,
-                    nextLevelId: vRes.nextLevelId,
-                  });
-                  updatePathOptimisticCompletion(
-                    levelId,
-                    vRes.scoreEarned ?? prog.score_earned ?? 0,
-                    vRes.coinsEarned ?? 20
-                  );
-                }
-              });
-            }
-          }
-        }
+        applyGameData(res);
       } catch (err) {
         console.error('Error loading TTS game:', err);
       } finally {
@@ -449,6 +495,7 @@ function TTSGameContent() {
         updateCheatModalType(3);
         setIsAccountTerminated(true);
         invalidatePathCache(); // Bersihkan seluruh cache & bintang optimistik peta agar pemain banned tidak memiliki status 'selesai'
+        invalidateTTSGameCache();
 
         try {
           await triggerAntiCheatExecution(reason || 'Terdeteksi manipulasi game/pindah layar 3x');
@@ -918,6 +965,7 @@ function TTSGameContent() {
         victoryData?.score || scoreEarned,
         victoryData?.coins || 20
       );
+      invalidateTTSGameCache(levelId);
     }
     // Force refresh client router cache Next.js agar /path langsung render state terbaru
     router.refresh();
