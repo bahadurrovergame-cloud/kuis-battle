@@ -228,8 +228,11 @@ function TTSGameContent() {
     if (initialCache?.level?.is_hard_zone) {
       return initialCache.level.hard_timer_override || initialCache.settings?.hard_timer_seconds || 60;
     }
-    return null;
+    return 180;
   });
+  const [showQuitModal, setShowQuitModal] = useState(false);
+  const [isQuitting, setIsQuitting] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
   const [freezeRemaining, setFreezeRemaining] = useState(0);
   const [isGameOver, setIsGameOver] = useState(false);
   const [isVictory, setIsVictory] = useState(false);
@@ -303,6 +306,8 @@ function TTSGameContent() {
         setLevel(res.level);
         if (res.level.is_hard_zone) {
           setHardTimerRemaining(res.level.hard_timer_override || res.settings?.hard_timer_seconds || 60);
+        } else {
+          setHardTimerRemaining(180);
         }
       }
 
@@ -429,7 +434,7 @@ function TTSGameContent() {
     if (level?.is_hard_zone) {
       return level.hard_timer_override || settings?.hard_timer_seconds || 60;
     }
-    return null;
+    return 180; // Batas waktu default level normal: 180 detik (3 menit)
   }, [level, settings]);
 
   // Estimasi Poin Live Kata Aktif (Sinkron dengan formula kalkulasi server)
@@ -1025,6 +1030,29 @@ function TTSGameContent() {
     router.replace('/path');
   }, [isVictory, levelId, victoryData, scoreEarned, router]);
 
+  // Tombol Kembali dengan Quit Penalty (Tahap 4)
+  const handleBackButtonClick = useCallback(() => {
+    if (!isVictory && !isGameOver) {
+      setShowQuitModal(true);
+      return;
+    }
+    handleReturnToPath();
+  }, [isVictory, isGameOver, handleReturnToPath]);
+
+  // Konfirmasi Menyerah (Potong 1 Nyawa)
+  const handleConfirmQuit = useCallback(async () => {
+    setIsQuitting(true);
+    try {
+      await deductLifeOnGameOverAction();
+      invalidateTTSGameCache(levelId);
+    } catch (err) {
+      console.error('Failed to deduct life on quit:', err);
+    } finally {
+      router.refresh();
+      router.replace('/path');
+    }
+  }, [levelId, router]);
+
   // Navigasi Soal Sebelumnya / Selanjutnya
   const handleCycleClue = useCallback(
     (direction: 'next' | 'prev') => {
@@ -1299,13 +1327,14 @@ function TTSGameContent() {
       {/* ==================================================================== */}
       <header className="w-full max-w-md bg-[#0f172a] border-b-2 border-slate-800 px-3 py-2 flex items-center justify-between shadow-md shrink-0 z-30">
         <button
-          onClick={handleReturnToPath}
+          onClick={handleBackButtonClick}
           className="w-8 h-8 rounded-xl bg-slate-800 border-b-2 border-slate-950 hover:bg-slate-700 flex items-center justify-center text-slate-200 active:translate-y-0.5 transition-all"
+          title="Kembali ke Peta"
         >
           <ArrowLeft className="w-4 h-4" />
         </button>
 
-        {/* Info Level & Hard Timer */}
+        {/* Info Level & Countdown Timer */}
         <div className="flex flex-col items-center">
           <span className="text-[10px] font-black uppercase tracking-widest text-emerald-400 flex items-center gap-1">
             {level?.is_hard_zone ? (
@@ -1317,30 +1346,36 @@ function TTSGameContent() {
             )}
           </span>
 
-          {/* Hard Timer Countdown */}
-          {hardTimerRemaining !== null ? (
-            <div
-              className={`text-sm font-mono font-black ${
-                hardTimerRemaining <= 15 ? 'text-rose-400 animate-pulse' : 'text-amber-400'
-              }`}
-            >
-              ⏱️ {hardTimerRemaining}s
-              <span className="text-[10px] text-slate-400 ml-1 font-normal font-sans">
-                / {maxLevelTime || 60}s
-              </span>
-            </div>
-          ) : (
-            <span className="text-xs font-mono font-bold text-slate-300">⏱️ {elapsedSeconds}s</span>
-          )}
+          {/* Hard / Normal Timer Countdown */}
+          <div
+            className={`text-sm font-mono font-black ${
+              (hardTimerRemaining ?? 180) <= 15 ? 'text-rose-400 animate-pulse' : 'text-amber-400'
+            }`}
+          >
+            ⏱️ {hardTimerRemaining ?? 180}s
+            <span className="text-[10px] text-slate-400 ml-1 font-normal font-sans">
+              / {maxLevelTime}s
+            </span>
+          </div>
         </div>
 
-        {/* Combo Multiplier & Stats */}
-        <div className="flex items-center gap-2">
+        {/* Combo Multiplier, Aturan & Stats */}
+        <div className="flex items-center gap-1.5">
           {comboMultiplier > 1.0 && (
             <div className="px-2 py-0.5 rounded-xl bg-amber-500 text-slate-950 text-[10px] font-mono font-black shadow-sm">
               🔥 x{comboMultiplier.toFixed(1)}
             </div>
           )}
+
+          <button
+            type="button"
+            onClick={() => setShowRulesModal(true)}
+            className="flex items-center gap-1 bg-[#1e293b] hover:bg-slate-800 border-b-2 border-slate-950 px-2 py-1 rounded-xl text-xs font-mono font-bold text-cyan-300 active:translate-y-0.5 transition-all cursor-pointer"
+            title="Lihat Peraturan Permainan"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden xs:inline text-[10px]">Aturan</span>
+          </button>
 
           <button
             type="button"
@@ -1350,7 +1385,6 @@ function TTSGameContent() {
           >
             <Coins className="w-3.5 h-3.5 fill-amber-400 group-hover:scale-110 transition-transform" />
             <span>{profile?.coins ?? 0}</span>
-            <HelpCircle className="w-3 h-3 text-amber-400/70 ml-0.5" />
           </button>
         </div>
       </header>
@@ -1862,6 +1896,101 @@ function TTSGameContent() {
             >
               Saya Mengerti & Lanjut Main
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 7: PERATURAN PERMAINAN (RULES MODAL - TAHAP 4)                 */}
+      {/* ==================================================================== */}
+      {showRulesModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-sm rounded-3xl p-5 bg-slate-900 border-2 border-slate-700 shadow-2xl relative text-slate-200 animate-in zoom-in-95">
+            <button
+              type="button"
+              onClick={() => setShowRulesModal(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-xl bg-slate-800"
+            >
+              ✕
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-3.5">
+              <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 font-black text-lg">
+                📜
+              </div>
+              <div>
+                <h3 className="text-sm font-black text-white">Peraturan Permainan</h3>
+                <p className="text-[10px] text-slate-400">Panduan skor, waktu & nyawa</p>
+              </div>
+            </div>
+
+            <div className="space-y-2.5 text-xs leading-relaxed text-slate-300 max-h-[60vh] overflow-y-auto pr-1">
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <span className="font-black text-white block mb-0.5">🎮 1. Cara Bermain & Batas Waktu</span>
+                Isi kotak teka-teki silang dengan memilih petunjuk (mendatar/menurun). Selesaikan seluruh kata sebelum waktu maksimal berakhir ({maxLevelTime}s).
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <span className="font-black text-amber-400 block mb-0.5">📉 2. Poin & Pembusukan (Decay)</span>
+                Setiap kata memiliki Poin Dasar. Nilai kata akan berkurang (-{effectiveDecayRate} Pts/s) seiring berjalannya waktu. Menjawab lebih cepat memberikan skor lebih tinggi!
+              </div>
+
+              <div className="p-3 rounded-2xl bg-slate-950/80 border border-slate-800">
+                <span className="font-black text-rose-400 block mb-0.5">❤️ 3. Sistem Penalti Nyawa</span>
+                Nyawa Anda akan berkurang 1 (satu) apabila:
+                <ul className="list-disc list-inside mt-1 space-y-0.5 text-slate-400">
+                  <li>Waktu pengerjaan level habis (Game Over).</li>
+                  <li>Keluar atau menyerah saat permainan sedang berlangsung.</li>
+                </ul>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowRulesModal(false)}
+              className="w-full mt-4 py-2.5 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-white font-bold text-xs transition shadow-md"
+            >
+              Saya Paham
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* MODAL 8: QUIT PENALTY CONFIRMATION (PENALTI MENYERAH - TAHAP 4)      */}
+      {/* ==================================================================== */}
+      {showQuitModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-sm animate-in fade-in duration-150">
+          <div className="w-full max-w-sm rounded-3xl p-6 bg-slate-900 border-2 border-rose-600/70 shadow-2xl relative text-center animate-in zoom-in-95">
+            <div className="w-14 h-14 mx-auto mb-3 rounded-2xl bg-rose-500/20 border-2 border-rose-500/60 flex items-center justify-center text-3xl">
+              💔
+            </div>
+
+            <h3 className="text-lg font-black text-white">Yakin Ingin Menyerah?</h3>
+
+            <p className="text-xs text-slate-300 mt-2 leading-relaxed">
+              Permainan sedang berlangsung. Keluar sekarang akan{' '}
+              <b className="text-rose-400">menghanguskan 1 nyawa (❤️)</b> dan progres level ini tidak akan disimpan.
+            </p>
+
+            <div className="flex items-center gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setShowQuitModal(false)}
+                disabled={isQuitting}
+                className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold text-xs transition"
+              >
+                Lanjut Bermain
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmQuit}
+                disabled={isQuitting}
+                className="flex-1 py-3 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-black text-xs transition shadow-md shadow-rose-900/40 disabled:opacity-50"
+              >
+                {isQuitting ? 'Menyerah...' : 'Ya, Menyerah (-1 ❤️)'}
+              </button>
+            </div>
           </div>
         </div>
       )}

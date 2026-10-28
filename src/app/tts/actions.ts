@@ -1369,7 +1369,7 @@ export async function unbanUser(userId: string) {
 }
 
 // ==============================================================================
-// 8. KURANGI NYAWA SAAT GAME OVER (HARD TIMER HABIS)
+// 8. KURANGI NYAWA SAAT GAME OVER / MENYERAH (QUIT PENALTY)
 // ==============================================================================
 export async function deductLifeOnGameOverAction() {
   try {
@@ -1409,6 +1409,8 @@ export async function deductLifeOnGameOverAction() {
     return { success: false, error: msg };
   }
 }
+
+export const quitLevelPenaltyAction = deductLifeOnGameOverAction;
 
 // ==============================================================================
 // 9. REFILL NYAWA PENUH DENGAN KOIN (SERVER-SIDE VALIDATION)
