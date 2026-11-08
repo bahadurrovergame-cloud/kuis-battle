@@ -21,6 +21,30 @@ import {
   Sparkles,
 } from 'lucide-react';
 
+// Pisahkan komponen input agar tidak re-render saat state di atasnya berubah drastis
+const InputField = ({ icon: Icon, type, value, onChange, placeholder, required = true, showPassword, togglePassword }: any) => (
+  <div className="relative">
+    <Icon className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+    <input
+      type={type}
+      required={required}
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder}
+      className={`w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 ${togglePassword ? 'pr-10' : 'pr-4'} py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-medium transition-all`}
+    />
+    {togglePassword && (
+      <button
+        type="button"
+        onClick={togglePassword}
+        className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
+      >
+        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+      </button>
+    )}
+  </div>
+);
+
 function LoginContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -43,8 +67,6 @@ function LoginContent() {
   const [successMsg, setSuccessMsg] = useState('');
   const [registrationSent, setRegistrationSent] = useState(false);
   const [resetSent, setResetSent] = useState(false);
-
-
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,8 +235,6 @@ function LoginContent() {
       }
 
       const supabase = createHubBrowserClient();
-      
-      // Dynamic origin agar cocok baik saat running di localhost:3000 maupun di domain production
       const origin = typeof window !== 'undefined' ? window.location.origin : 'http://localhost:3000';
       const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
         redirectTo: `${origin}/auth/callback?next=/reset-password`,
@@ -380,17 +400,13 @@ function LoginContent() {
                   <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                     Email
                   </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="nama@email.com"
-                      className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-medium transition-all"
-                    />
-                  </div>
+                  <InputField
+                    icon={Mail}
+                    type="email"
+                    value={email}
+                    onChange={(e: any) => setEmail(e.target.value)}
+                    placeholder="nama@email.com"
+                  />
                 </div>
 
                 <div>
@@ -406,24 +422,15 @@ function LoginContent() {
                       Lupa password?
                     </button>
                   </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-medium transition-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <InputField
+                    icon={Lock}
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e: any) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    showPassword={showPassword}
+                    togglePassword={() => setShowPassword(!showPassword)}
+                  />
                 </div>
 
                 <button
@@ -443,17 +450,13 @@ function LoginContent() {
                   <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                     Username Pemain
                   </label>
-                  <div className="relative">
-                    <User className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="text"
-                      required
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value)}
-                      placeholder="contoh: jagoan_tts"
-                      className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-mono transition-all"
-                    />
-                  </div>
+                  <InputField
+                    icon={User}
+                    type="text"
+                    value={username}
+                    onChange={(e: any) => setUsername(e.target.value)}
+                    placeholder="contoh: jagoan_tts"
+                  />
                   <span className="text-[10px] text-slate-400 mt-1 block">
                     Akan tampil di papan klasemen & profil Anda.
                   </span>
@@ -463,41 +466,28 @@ function LoginContent() {
                   <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                     Email Aktif
                   </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="nama@email.com"
-                      className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-medium transition-all"
-                    />
-                  </div>
+                  <InputField
+                    icon={Mail}
+                    type="email"
+                    value={email}
+                    onChange={(e: any) => setEmail(e.target.value)}
+                    placeholder="nama@email.com"
+                  />
                 </div>
 
                 <div>
                   <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                     Kata Sandi (min. 6 karakter)
                   </label>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-10 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-medium transition-all"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-white"
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
+                  <InputField
+                    icon={Lock}
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={(e: any) => setPassword(e.target.value)}
+                    placeholder="••••••••"
+                    showPassword={showPassword}
+                    togglePassword={() => setShowPassword(!showPassword)}
+                  />
                 </div>
 
                 <button
@@ -517,17 +507,13 @@ function LoginContent() {
                   <label className="block text-[11px] font-black text-slate-300 uppercase tracking-wider mb-1.5">
                     Email Terdaftar
                   </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="nama@email.com"
-                      className="w-full bg-[#090d16] border-2 border-slate-700 rounded-xl pl-10 pr-4 py-2.5 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-emerald-400 font-medium transition-all"
-                    />
-                  </div>
+                  <InputField
+                    icon={Mail}
+                    type="email"
+                    value={email}
+                    onChange={(e: any) => setEmail(e.target.value)}
+                    placeholder="nama@email.com"
+                  />
                 </div>
 
                 <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-[11px] text-amber-200/90 leading-relaxed space-y-1">
@@ -565,7 +551,6 @@ function LoginContent() {
         )}
 
         <div className="mt-6 pt-4 border-t-2 border-slate-800 text-center">
-          
           <Link
             href="/"
             className="text-xs text-slate-500 hover:text-slate-300 transition-all font-bold"
@@ -591,4 +576,3 @@ export default function LoginPage() {
     </Suspense>
   );
 }
-
